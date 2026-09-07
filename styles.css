@@ -53,7 +53,7 @@ main {
       rgba(255, 255, 255, 0.03),
       rgba(255, 255, 255, 0.10)
     ),
-    url("hero.jpg") center / cover no-repeat;
+    url("hero.PNG") center / cover no-repeat;
 }
 
 .eyebrow {
