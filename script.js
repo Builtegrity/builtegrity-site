@@ -1,5 +1,11 @@
+const FORM_ENDPOINT =
+  "https://docs.google.com/forms/d/e/1FAIpQLSd_95rK_6rrwu0H8L_O4tbBEwD36MHkcLIJQYasMXuY8SQodg/formResponse";
+
 const lead = {
   projectType: "",
+  propertyType: "",
+  roofingSystem: "",
+  projectDescription: "",
   propertyAddress: "",
   timing: "",
   name: "",
@@ -33,7 +39,7 @@ function scrollToFunnel() {
 }
 
 function escapeHTML(value) {
-  return value
+  return String(value)
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -45,8 +51,13 @@ startButton.addEventListener("click", scrollToFunnel);
 
 function showStep1() {
   updateProgress(1);
+  showRoofingNeed();
+}
 
-  stepCard.innerHTML = `
+function showRoofingNeed() {
+  updateProgress(1);
+
+  stepCard.innerHTML = ` `
     <h2>What type of roofing help do you need?</h2>
 
     <button type="button" data-value="Roof Replacement">
@@ -73,9 +84,103 @@ function showStep1() {
   stepCard.querySelectorAll("[data-value]").forEach(button => {
     button.addEventListener("click", () => {
       lead.projectType = button.dataset.value;
+      showPropertyType();
+    });
+  });
+}
+
+function showPropertyType() {
+  updateProgress(1);
+
+  stepCard.innerHTML = ` `
+    <h2>What type of property is this?</h2>
+
+    <button type="button" data-value="Single-Family Home">
+      Single-Family Home
+    </button>
+
+    <button type="button" data-value="Multi-Family Home">
+      Multi-Family Home
+    </button>
+
+    <button type="button" data-value="Commercial Property">
+      Commercial Property
+    </button>
+
+    <button type="button" data-value="Other">
+      Other
+    </button>
+
+    <button type="button" class="back-button" id="back-property-type">
+      Back
+    </button>
+  `;
+
+  stepCard.querySelectorAll("[data-value]").forEach(button => {
+    button.addEventListener("click", () => {
+      lead.propertyType = button.dataset.value;
+      showRoofingSystem();
+    });
+  });
+
+  document
+    .querySelector("#back-property-type")
+    .addEventListener("click", showRoofingNeed);
+}
+
+function showRoofingSystem() {
+  updateProgress(1);
+
+  stepCard.innerHTML = `
+    <h2>What type of roofing system are you interested in?</h2>
+
+    <button type="button" data-value="Asphalt Shingles">
+      Asphalt Shingles
+    </button>
+
+    <button type="button" data-value="Metal Roofing">
+      Metal Roofing
+    </button>
+
+    <button type="button" data-value="Slate Roofing">
+      Slate Roofing
+    </button>
+
+    <button type="button" data-value="Flat / Low-Slope Roofing">
+      Flat / Low-Slope Roofing
+    </button>
+
+    <button type="button" data-value="Rubber / EPDM">
+      Rubber / EPDM
+    </button>
+
+    <button type="button" data-value="TPO / PVC">
+      TPO / PVC
+    </button>
+
+    <button type="button" data-value="Not Sure">
+      Not Sure
+    </button>
+
+    <button type="button" data-value="Other">
+      Other
+    </button>
+
+    <button type="button" class="back-button" id="back-roofing-system">
+      Back
+    </button>
+  `;
+
+  stepCard.querySelectorAll("[data-value]").forEach(button => {
+    button.addEventListener("click", () => {
+      lead.roofingSystem = button.dataset.value;
       showStep2();
     });
   });
+
+  document
+    .querySelector("#back-roofing-system")
+    .addEventListener("click", showPropertyType);
 }
 
 function showStep2() {
@@ -95,6 +200,16 @@ function showStep2() {
       autocomplete="street-address"
     >
 
+    <p class="step-help">
+      Anything we should know about the roof?
+    </p>
+
+    <textarea
+      id="project-description"
+      placeholder="Optional — leaks, roof age, damage, concerns, or other details"
+      rows="4"
+    ></textarea>
+
     <button type="button" id="continue-step-2">
       Continue
     </button>
@@ -110,18 +225,23 @@ function showStep2() {
       const address =
         document.querySelector("#property-address").value.trim();
 
+      const description =
+        document.querySelector("#project-description").value.trim();
+
       if (!address) {
         alert("Please enter the property address.");
         return;
       }
 
       lead.propertyAddress = address;
+      lead.projectDescription = description;
+
       showStep3();
     });
 
   document
     .querySelector("#back-step-2")
-    .addEventListener("click", showStep1);
+    .addEventListener("click", showRoofingSystem);
 }
 
 function showStep3() {
@@ -194,7 +314,9 @@ function showStep4() {
       autocomplete="email"
     >
 
-    <p class="step-help">Best way to contact you:</p>
+    <p class="step-help">
+      What's the best way to contact you?
+    </p>
 
     <div class="contact-options">
       <label>
@@ -225,9 +347,15 @@ function showStep4() {
   document
     .querySelector("#continue-step-4")
     .addEventListener("click", () => {
-      const name = document.querySelector("#lead-name").value.trim();
-      const phone = document.querySelector("#lead-phone").value.trim();
-      const email = document.querySelector("#lead-email").value.trim();
+      const name =
+        document.querySelector("#lead-name").value.trim();
+
+      const phone =
+        document.querySelector("#lead-phone").value.trim();
+
+      const email =
+        document.querySelector("#lead-email").value.trim();
+
       const contact = document.querySelector(
         'input[name="contact"]:checked'
       );
@@ -263,9 +391,30 @@ function showStep5() {
       </p>
 
       <p>
+        <strong>Property type:</strong>
+        ${escapeHTML(lead.propertyType)}
+      </p>
+
+      <p>
+        <strong>Roofing system:</strong>
+        ${escapeHTML(lead.roofingSystem)}
+      </p>
+
+      <p>
         <strong>Property:</strong>
         ${escapeHTML(lead.propertyAddress)}
       </p>
+
+      ${
+        lead.projectDescription
+          ? `
+            <p>
+              <strong>Roof details:</strong>
+              ${escapeHTML(lead.projectDescription)}
+            </p>
+          `
+          : ""
+      }
 
       <p>
         <strong>Timing:</strong>
@@ -314,25 +463,91 @@ function showStep5() {
 
   document
     .querySelector("#submit-request")
-    .addEventListener("click", () => {
-      const consent =
-        document.querySelector("#consent-checkbox").checked;
-
-      if (!consent) {
-        alert("Please agree before submitting your request.");
-        return;
-      }
-
-      lead.consent = true;
-
-      alert(
-        "The funnel is working. Next we will connect this button to Builtegrity's lead system."
-      );
-    });
+    .addEventListener("click", submitLead);
 
   document
     .querySelector("#back-step-5")
     .addEventListener("click", showStep4);
+}
+
+async function submitLead() {
+  const consent =
+    document.querySelector("#consent-checkbox").checked;
+
+  if (!consent) {
+    alert("Please agree before submitting your request.");
+    return;
+  }
+
+  lead.consent = true;
+
+  const submitButton =
+    document.querySelector("#submit-request");
+
+  submitButton.disabled = true;
+  submitButton.textContent = "Submitting...";
+
+  const formData = new URLSearchParams();
+
+  formData.append("entry.1843216824", lead.propertyType);
+  formData.append("entry.1447183842", lead.roofingSystem);
+  formData.append("entry.601359630", lead.projectType);
+  formData.append("entry.398908205", lead.projectDescription);
+  formData.append("entry.1756618627", lead.propertyAddress);
+  formData.append("entry.948050577", lead.timing);
+  formData.append("entry.25475913", lead.name);
+  formData.append("entry.1091292774", lead.phone);
+  formData.append("entry.569954132", lead.email);
+  formData.append(
+    "entry.1118299552",
+    lead.contactPreference
+  );
+  formData.append("entry.197004301", "I Agree");
+
+  try {
+    await fetch(FORM_ENDPOINT, {
+      method: "POST",
+      mode: "no-cors",
+      headers: {
+        "Content-Type":
+          "application/x-www-form-urlencoded"
+      },
+      body: formData.toString()
+    });
+
+    showSuccess();
+  } catch (error) {
+    console.error("Lead submission failed:", error);
+
+    submitButton.disabled = false;
+    submitButton.textContent = "Submit My Request";
+
+    alert(
+      "We couldn't submit your request. Please try again."
+    );
+  }
+}
+
+function showSuccess() {
+  progressLabel.textContent = "Request received";
+  progressBar.value = 5;
+
+  stepCard.innerHTML = `
+    <h2>You're all set.</h2>
+
+    <p class="step-help">
+      We received your roofing request.
+      Builtegrity will review the information you provided
+      and follow up using your preferred contact method.
+    </p>
+
+    <p>
+      <strong>Questions?</strong><br>
+      hello@builtegrity.com
+    </p>
+  `;
+
+  scrollToFunnel();
 }
 
 showStep1();
