@@ -57,7 +57,7 @@ function showStep1() {
 function showRoofingNeed() {
   updateProgress(1);
 
-  stepCard.innerHTML = ` `
+  stepCard.innerHTML = ` 
     <h2>What type of roofing help do you need?</h2>
 
     <button type="button" data-value="Roof Replacement">
@@ -92,7 +92,7 @@ function showRoofingNeed() {
 function showPropertyType() {
   updateProgress(1);
 
-  stepCard.innerHTML = ` `
+  stepCard.innerHTML = ` 
     <h2>What type of property is this?</h2>
 
     <button type="button" data-value="Single-Family Home">
