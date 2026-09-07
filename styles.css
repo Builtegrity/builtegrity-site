@@ -50,8 +50,8 @@ main {
   padding: 52px 22px 34px;
   background:
     linear-gradient(
-      rgba(255, 255, 255, 0.10),
-      rgba(255, 255, 255, 0.22)
+      rgba(255, 255, 255, 0.03),
+      rgba(255, 255, 255, 0.10)
     ),
     url("hero.jpg") center / cover no-repeat;
 }
