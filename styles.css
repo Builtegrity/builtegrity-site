@@ -97,7 +97,9 @@ h1 {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 10px;
-  margin-top: 20px;
+  padding: 14px 22px;
+  background: var(--surface);
+  color: var(--text);
   font-size: 0.82rem;
   font-weight: 700;
   text-align: center;
