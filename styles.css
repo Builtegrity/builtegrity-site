@@ -49,11 +49,11 @@ main {
 .hero {
   padding: 52px 22px 34px;
   background:
-    linear-gradient(
-      rgba(255, 255, 255, 0.82),
-      rgba(255, 255, 255, 0.92)
-    ),
-    url("hero.jpg") center / cover no-repeat;
+  linear-gradient(
+    rgba(255, 255, 255, 0.58),
+    rgba(255, 255, 255, 0.76)
+  ),
+  url("hero.jpg") center / cover no-repeat;
 }
 
 .eyebrow {
