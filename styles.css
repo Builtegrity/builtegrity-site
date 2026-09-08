@@ -75,9 +75,12 @@ h1 {
 .hero-copy {
   max-width: 430px;
   margin: 18px 0 24px;
+  padding: 12px 14px;
   font-size: 1.02rem;
   line-height: 1.45;
   color: #334155;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 12px;
 }
 
 #start-request {
