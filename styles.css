@@ -47,7 +47,7 @@ main {
 }
 
 .hero {
-  padding: 52px 22px 34px;
+  padding: 40px 22px 34px;
   background:
   linear-gradient(
     rgba(255, 255, 255, 0.28),
@@ -74,7 +74,7 @@ h1 {
 .hero-copy {
   width: fit-content;
   max-width: calc(100% - 44px);
-  margin: -10px auto 24px 22px;
+  margin: -10px auto 24px;
   font-size: 1.02rem;
   line-height: 1.30;
   color: #334155;
