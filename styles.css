@@ -60,6 +60,7 @@ main {
   font-size: 0.78rem;
   font-weight: 800;
   letter-spacing: 0.14em;
+  text-align: center;
 }
 
 h1 {
@@ -67,11 +68,13 @@ h1 {
   font-size: clamp(2.25rem, 9vw, 4.5rem);
   line-height: 0.98;
   letter-spacing: -0.04em;
+  text-align: center;
 }
 
 .hero-copy {
   max-width: 430px;
   margin: 18px auto 24px;
+transform: translateX(-24px);
   font-size: 1.02rem;
   line-height: 1.45;
   color: #334155;
