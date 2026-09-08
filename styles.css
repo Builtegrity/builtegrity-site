@@ -74,9 +74,9 @@ h1 {
 .hero-copy {
   max-width: 430px;
   margin: 18px auto 24px;
-transform: translateX(-105px);
+transform: translateX(-60px);
   font-size: 1.02rem;
-  line-height: 1.45;
+  line-height: 1.30;
   color: #334155;
   text-align: center;
 }
