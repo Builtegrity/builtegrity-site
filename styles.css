@@ -50,12 +50,9 @@ main {
   padding: 52px 22px 34px;
   background:
   linear-gradient(
-  90deg,
-  rgba(255, 255, 255, 0.90) 0%,
-  rgba(255, 255, 255, 0.82) 62%,
-  rgba(255, 255, 255, 0.55) 82%,
-  rgba(255, 255, 255, 0.15) 100%
-),
+    rgba(255, 255, 255, 0.28),
+    rgba(255, 255, 255, 0.28)
+  ),
   url("hero.PNG") center / cover no-repeat;
 }
 .eyebrow {
