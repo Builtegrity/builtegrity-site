@@ -45,8 +45,9 @@ header {
 }
 
 .brand-logo {
-  height: 82px;
-  width: auto;
+  width: 260px;
+  max-width: 78vw;
+  height: auto;
   display: block;
 }
 
