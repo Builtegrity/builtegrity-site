@@ -188,7 +188,7 @@ progress {
   text-align: left;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: white;
+  background: #f8fafc;
   color: var(--text);
   font-size: 1rem;
   font-weight: 700;
