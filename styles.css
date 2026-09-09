@@ -28,7 +28,7 @@ body {
 header {
   background: var(--surface);
   border-bottom: 1px solid var(--border);
-  padding: 8px 22px;
+  padding: 0 22px;
   position: sticky;
   top: 0;
   z-index: 20;
