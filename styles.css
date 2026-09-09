@@ -194,7 +194,7 @@ progress {
   font-weight: 700;
   cursor: pointer;
 }
-.form-step input,
+.form-step input:not([type="radio"]):not([type="checkbox"]),
 .form-step textarea {
   width: 100%;
   margin-top: 10px;
