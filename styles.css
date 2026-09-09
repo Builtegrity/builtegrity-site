@@ -200,7 +200,10 @@ footer {
 footer p {
   margin: 4px 0;
 }
-
+footer a {
+  color: white;
+  text-decoration: none;
+}
 @media (min-width: 768px) {
   .hero {
     border-radius: 0 0 24px 24px;
