@@ -543,7 +543,7 @@ function showSuccess() {
 
     <p>
       <strong>Questions?</strong><br>
-      hello@builtegrity.com
+      <a href="mailto:hello@builtegrity.com">hello@builtegrity.com</a>
     </p>
   `;
 
