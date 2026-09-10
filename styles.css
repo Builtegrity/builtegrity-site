@@ -210,6 +210,27 @@ progress {
   min-height: 110px;
   resize: vertical;
 }
+.contact-options {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.contact-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.contact-options input[type="radio"] {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+  padding: 0;
+  accent-color: var(--primary);
+}
 .form-step button:hover {
   border-color: var(--primary);
   background: #eff6ff;
