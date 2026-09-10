@@ -91,6 +91,12 @@ h1 {
   color: #334155;
   text-align: center;
 }
+.hero .eyebrow,
+.hero h1,
+.hero .hero-copy {
+  position: relative;
+  left: -10px;
+}
 
 #start-request {
   width: 100%;
