@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+Disallow: /request/complete/
+
+Sitemap: https://builtegrity.com/sitemap.xml
