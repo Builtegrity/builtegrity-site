@@ -10,16 +10,26 @@
   <link rel="apple-touch-icon" href="/Icon.PNG">
   <meta name="apple-mobile-web-app-title" content="Builtegrity">
   <script src="/attribution.js?v=1"></script>
+  <script src="/navigation.js?v=1" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to main content</a>
   <header class="site-header">
     <div class="header-inner">
       <a class="brand" href="/" aria-label="Builtegrity home"><img src="/Logo-tight.PNG" alt="Builtegrity — Built on Integrity" class="brand-logo"></a>
-      <nav class="desktop-nav" aria-label="Primary navigation">
-        <a href="#how-it-works">How it works</a><a href="#standards">Our standards</a><a href="#questions">Questions</a>
-      </nav>
-      <a class="button button-small" href="/request/">Start My Request</a>
+      <details class="site-menu">
+        <summary aria-label="Open homepage navigation">
+          <span class="menu-dots" aria-hidden="true"><span></span><span></span><span></span></span>
+        </summary>
+        <nav class="site-menu-panel" aria-label="Homepage navigation">
+          <a class="menu-primary" href="/request/">Start My Request</a>
+          <a href="#how-it-works">How it works</a>
+          <a href="#standards">Our standards</a>
+          <a href="#roofing-needs">Roofing needs</a>
+          <a href="#launch-transparency">Launch transparency</a>
+          <a href="#questions">Common questions</a>
+        </nav>
+      </details>
     </div>
   </header>
   <main id="main-content">
@@ -29,7 +39,7 @@
         <div class="hero-content">
           <h1>Roofing help, handled with integrity.</h1>
           <p class="hero-copy">Tell us what is happening with your roof. We’ll review your request and help connect you with one appropriate roofing professional at a time.</p>
-          <div class="hero-actions"><a class="button button-large" href="/request/">Start My Request</a><span>No obligation to proceed</span></div>
+          <div class="hero-actions"><a class="button button-large" href="/request/">Start My Request</a></div>
         </div>
         <aside class="hero-panel" aria-label="What to expect">
           <p class="panel-label">A clearer way to get started</p>
@@ -41,11 +51,11 @@
     <section class="trust-row" aria-label="Service principles"><div class="page-shell trust-grid"><div><strong>Guided</strong><span>Tell us what you know</span></div><div><strong>Thoughtful</strong><span>We review project fit</span></div><div><strong>Respectful</strong><span>No broad lead blast</span></div></div></section>
     <section class="section" id="how-it-works">
       <div class="page-shell">
-        <div class="section-heading"><p class="eyebrow">HOW BUILTEGRITY WORKS</p><h2>A roofing request should feel like a process—not a handoff into the unknown.</h2><p>We collect the details needed to understand the project, review the request and coordinate an appropriate next step.</p></div>
+        <div class="section-heading"><p class="eyebrow">HOW BUILTEGRITY WORKS</p><h2>A roofing request should feel like a simple process—not a handoff into the unknown.</h2><p>We collect the details needed to understand the project, review the request and coordinate an appropriate next step.</p></div>
         <div class="step-grid">
           <article class="step-card"><span class="step-number">01</span><h3>Describe the project</h3><p>Share the property, roofing need, timing and the best way to reach you.</p></article>
           <article class="step-card"><span class="step-number">02</span><h3>We review the request</h3><p>We check whether the request is genuine, serviceable and appropriate for an available roofing professional.</p></article>
-          <article class="step-card"><span class="step-number">03</span><h3>Know the next step</h3><p>If there is a fit, we coordinate one introduction and tell you which roofing company may contact you.</p></article>
+          <article class="step-card"><span class="step-number">03</span><h3>Know the next step</h3><p>If there is a fit, we coordinate one introduction and tell you which roofing company will contact you.</p></article>
         </div>
       </div>
     </section>
@@ -55,8 +65,8 @@
         <div class="standards-card"><h3>Partner eligibility is designed to consider</h3><ul class="plain-list"><li>Business identity and authorized contact</li><li>Applicable registrations or licenses</li><li>Current insurance documentation</li><li>Service area and roofing capabilities</li><li>Availability and project fit</li><li>Conduct, communication and outcome history</li></ul></div>
       </div>
     </section>
-    <section class="section"><div class="page-shell"><div class="section-heading compact-heading"><p class="eyebrow">ROOFING NEEDS</p><h2>Start with the problem you are actually facing.</h2><p>You do not need to diagnose the roof yourself. Choose “Not sure” and describe what you see.</p></div><div class="service-grid"><article><span aria-hidden="true">↗</span><h3>Roof replacement</h3><p>For aging, failing or planned replacement projects.</p></article><article><span aria-hidden="true">⌁</span><h3>Roof repair</h3><p>For localized damage, wear or a known repair need.</p></article><article><span aria-hidden="true">⚡</span><h3>Leaks and storm damage</h3><p>For active water entry, wind damage or urgent concerns.</p></article><article><span aria-hidden="true">◎</span><h3>Inspection and uncertainty</h3><p>For condition questions, planning or help identifying the next step.</p></article></div></div></section>
-    <section class="section launch-section"><div class="page-shell launch-card"><div><p class="eyebrow">LAUNCH TRANSPARENCY</p><h2>Starting locally. Building carefully.</h2></div><div><p>Builtegrity is beginning in Rhode Island through the founder’s existing independent sales relationship with Prime State Roofing. Eligible requests may initially be referred to Prime State based on service area, project type and availability.</p><p>Prime State Roofing—not Builtegrity—would inspect, estimate, contract and perform any roofing work. Builtegrity does not promise that every request will be assigned.</p></div></div></section>
+    <section class="section" id="roofing-needs"><div class="page-shell"><div class="section-heading compact-heading"><p class="eyebrow">ROOFING NEEDS</p><h2>Start with the problem you are actually facing.</h2><p>You do not need to diagnose the roof yourself. Choose “Not sure” and describe what you see.</p></div><div class="service-grid"><article><span aria-hidden="true">↗</span><h3>Roof replacement</h3><p>For aging, failing or planned replacement projects.</p></article><article><span aria-hidden="true">⌁</span><h3>Roof repair</h3><p>For localized damage, wear or a known repair need.</p></article><article><span aria-hidden="true">⚡</span><h3>Leaks and storm damage</h3><p>For active water entry, wind damage or urgent concerns.</p></article><article><span aria-hidden="true">◎</span><h3>Inspection and uncertainty</h3><p>For condition questions, planning or help identifying the next step.</p></article></div></div></section>
+    <section class="section launch-section" id="launch-transparency"><div class="page-shell launch-card"><div><p class="eyebrow">LAUNCH TRANSPARENCY</p><h2>Starting locally. Building carefully.</h2></div><div><p>Builtegrity is beginning in Rhode Island through the founder’s existing independent sales relationship with Prime State Roofing. Eligible requests may initially be referred to Prime State based on service area, project type and availability.</p><p>Prime State Roofing—not Builtegrity—would inspect, estimate, contract and perform any roofing work. Builtegrity does not promise that every request will be assigned.</p></div></div></section>
     <section class="section faq-section" id="questions"><div class="page-shell faq-layout"><div><p class="eyebrow">COMMON QUESTIONS</p><h2>Know what happens before you submit.</h2></div><div class="faq-list">
       <details><summary>Is Builtegrity a roofing contractor?</summary><p>No. Builtegrity organizes, reviews and coordinates roofing requests. The roofing professional is responsible for inspection, technical advice, pricing, contracts and construction.</p></details>
       <details><summary>Will my information be sent to several companies?</summary><p>Builtegrity’s launch process is designed around one active partner introduction at a time—not a broad distribution of your request.</p></details>
