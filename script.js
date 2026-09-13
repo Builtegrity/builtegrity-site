@@ -147,25 +147,24 @@ function createRequestReference() {
   return `BG-R-${year}-${time}${random}`;
 }
 
-function sourceSummary() {
-  const params = new URLSearchParams(location.search);
-  const fields = ["utm_source", "utm_medium", "utm_campaign", "utm_content"];
-  const values = fields.map(field => params.get(field) ? `${field}=${params.get(field)}` : "").filter(Boolean);
-  return values.join("; ") || document.referrer || "Direct / unknown";
-}
-
 async function submitLead() {
   if (!document.querySelector("#consent-checkbox").checked) return showError("Please authorize contact and information sharing before submitting.", "#consent-checkbox");
   lead.consent = true;
   const button = document.querySelector("#submit-request");
   button.disabled = true; button.textContent = "Submitting…";
   const requestReference = createRequestReference();
-  const combinedDescription = [lead.projectDescription || "No additional roof details provided", `Related exterior needs: ${lead.relatedNeeds.join(", ") || "None selected"}`, `Builtegrity reference: ${requestReference}`, `Attribution: ${sourceSummary()}`].join("\n");
+  const attribution = window.builtegrityAttribution || { source: "Direct / unknown" };
   const formData = new URLSearchParams();
   formData.append("entry.1843216824", lead.propertyType);
   formData.append("entry.1447183842", lead.roofingSystem);
   formData.append("entry.601359630", lead.projectType);
-  formData.append("entry.398908205", combinedDescription);
+  formData.append("entry.398908205", lead.projectDescription);
+  formData.append("entry.2122069102", lead.relatedNeeds.join(", ") || "None selected");
+  formData.append("entry.1366848857", requestReference);
+  formData.append("entry.568624020", attribution.source || "Direct / unknown");
+  formData.append("entry.430553536", attribution.utm_medium || "");
+  formData.append("entry.843210747", attribution.utm_campaign || "");
+  formData.append("entry.164856092", attribution.utm_content || "");
   formData.append("entry.1756618627", lead.propertyAddress);
   formData.append("entry.948050577", lead.timing);
   formData.append("entry.25475913", lead.name);
@@ -175,7 +174,7 @@ async function submitLead() {
   formData.append("entry.197004301", "I Agree");
   try {
     await fetch(FORM_ENDPOINT, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body:formData.toString() });
-    sessionStorage.setItem("builtegrityRequestRef", requestReference);
+    try { sessionStorage.setItem("builtegrityRequestRef", requestReference); } catch {}
     location.assign(`/request/complete/?ref=${encodeURIComponent(requestReference)}`);
   } catch (error) {
     console.error("Request submission failed", error);
