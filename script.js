@@ -47,7 +47,7 @@ function bindOptions(next) {
 function showRoofingNeed() {
   updateProgress(1);
   stepCard.innerHTML = `<h2>What type of roofing help do you need?</h2><p class="step-help">Choose the option closest to what is happening.</p><div class="option-grid">${[
-    "Roof Replacement", "Roof Repair", "Leak / Storm Damage", "Roof Inspection", "Not Sure"
+    "Roof Replacement", "Roof Repair", "Leak/Storm Damage", "Roof Inspection", "Not Sure"
   ].map(value => optionButton(value)).join("")}</div>`;
   bindOptions(value => { lead.projectType = value; showPropertyType(); });
 }
@@ -64,8 +64,8 @@ function showPropertyType() {
 function showRoofingSystem() {
   updateProgress(1);
   stepCard.innerHTML = `<h2>What kind of roof are you looking for?</h2><p class="step-help">It is okay if you are unsure. A roofing professional must make the technical determination.</p><div class="option-grid">${[
-    "Asphalt Shingles", "Metal Roofing", "Slate Roofing", "Flat / Low-Slope Roofing",
-    "Rubber / EPDM", "TPO / PVC", "Not Sure", "Other"
+    "Asphalt Shingles", "Metal Roofing", "Slate Roofing", "Flat/Low Slope Roofing",
+    "Rubber/EPDM", "TPO/ PVC", "Not Sure", "Other"
   ].map(value => optionButton(value)).join("")}</div><div class="form-actions"><button class="back-button" type="button" id="back">Back</button></div>`;
   bindOptions(value => { lead.roofingSystem = value; showStep2(); });
   document.querySelector("#back").addEventListener("click", showPropertyType);
@@ -97,7 +97,7 @@ function showStep2() {
 function showStep3() {
   updateProgress(3);
   stepCard.innerHTML = `<h2>How soon are you looking to get this handled?</h2><p class="step-help">Choose the timing that best reflects your plans.</p><div class="option-grid">${[
-    "As Soon As Possible", "Within 30 Days", "1–3 Months", "3+ Months", "Just Researching"
+    "As Soon As Possible", "Within 30 Days", "1-3 Months", "3+ Months", "Just Researching"
   ].map(value => optionButton(value)).join("")}</div><div class="form-actions"><button class="back-button" type="button" id="back">Back</button></div>`;
   bindOptions(value => { lead.timing = value; showStep4(); });
   document.querySelector("#back").addEventListener("click", showStep2);
