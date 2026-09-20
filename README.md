@@ -1,6 +1,6 @@
 # Builtegrity site
 
-Static GitHub Pages site for Builtegrity's Rhode Island roofing-request launch.
+Static GitHub Pages site for Builtegrity's Rhode Island and Massachusetts Phase 1 roofing-request launch.
 
 ## Routes
 
@@ -11,13 +11,14 @@ Static GitHub Pages site for Builtegrity's Rhode Island roofing-request launch.
 - `/privacy/`
 - `/terms/`
 
-The request currently posts to the established Google Form endpoint. The generated
-Builtegrity request reference, related exterior needs and campaign attribution are
-included in the project-description response until a dedicated backend is introduced.
+The request currently posts to the established Google Form endpoint. The generated Builtegrity request reference, related exterior needs and campaign
+attribution are posted to their established Google Form fields. The request flow
+requires Rhode Island or Massachusetts and appends the selected state to the stored
+property address without changing the working form-entry mapping.
 
 ## Publication gates
 
 - Confirm written permission for the Prime State launch disclosure
 - Confirm current partner credentials and insurance documentation
 - Obtain legal review of Privacy Notice, Terms and request consent
-- Complete a real end-to-end submission and Sheet reconciliation
+- Complete one Rhode Island and one Massachusetts end-to-end submission and Sheet reconciliation

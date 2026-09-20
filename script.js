@@ -2,7 +2,7 @@ const FORM_ENDPOINT = "https://docs.google.com/forms/d/e/1FAIpQLSd_95rK_6rrwu0H8
 
 const lead = {
   projectType: "", propertyType: "", roofingSystem: "", projectDescription: "",
-  propertyAddress: "", relatedNeeds: [], timing: "", name: "", phone: "",
+  serviceState: "", propertyAddress: "", relatedNeeds: [], timing: "", name: "", phone: "",
   email: "", contactPreference: "", consent: false
 };
 
@@ -75,16 +75,26 @@ function showStep2() {
   updateProgress(2);
   const needs = ["Siding", "Gutters", "Fascia / Trim", "Skylights", "Chimney / Flashing", "None", "Not Sure"];
   stepCard.innerHTML = `<h2>Where is the property?</h2>
-    <label class="form-label" for="property-address">Property address</label>
-    <input class="text-input" id="property-address" type="text" value="${escapeHTML(lead.propertyAddress)}" autocomplete="street-address" placeholder="Street, city, state and ZIP">
+    <label class="form-label" for="service-state">State</label>
+    <select class="text-input" id="service-state" autocomplete="address-level1">
+      <option value="">Choose a state</option>
+      <option value="Rhode Island" ${lead.serviceState === "Rhode Island" ? "selected" : ""}>Rhode Island</option>
+      <option value="Massachusetts" ${lead.serviceState === "Massachusetts" ? "selected" : ""}>Massachusetts</option>
+    </select>
+    <p class="field-note">Phase 1 currently accepts properties in Rhode Island and Massachusetts.</p>
+    <label class="form-label" for="property-address">Street address, city and ZIP</label>
+    <input class="text-input" id="property-address" type="text" value="${escapeHTML(lead.propertyAddress)}" autocomplete="street-address" placeholder="Street, city and ZIP">
     <p class="field-note">Please enter the location where roofing help is needed.</p>
     <label class="form-label" for="project-description">What should we know about the roof?</label>
     <textarea class="text-area" id="project-description" placeholder="Optional — leaks, roof age, damage, concerns or other details">${escapeHTML(lead.projectDescription)}</textarea>
     <fieldset class="fieldset-reset"><legend class="form-label">Any related exterior needs?</legend><div class="checkbox-grid">${needs.map(value => `<label class="choice-label"><input type="checkbox" name="related" value="${value}" ${lead.relatedNeeds.includes(value) ? "checked" : ""}><span>${value}</span></label>`).join("")}</div></fieldset>
     ${errorRegion()}<div class="form-actions"><button class="button" type="button" id="continue">Continue</button><button class="back-button" type="button" id="back">Back</button></div>`;
   document.querySelector("#continue").addEventListener("click", () => {
+    const serviceState = document.querySelector("#service-state").value;
     const address = document.querySelector("#property-address").value.trim();
+    if (!serviceState) return showError("Please choose Rhode Island or Massachusetts.", "#service-state");
     if (!address) return showError("Please enter the complete property address.", "#property-address");
+    lead.serviceState = serviceState;
     lead.propertyAddress = address;
     lead.projectDescription = document.querySelector("#project-description").value.trim();
     lead.relatedNeeds = [...document.querySelectorAll('input[name="related"]:checked')].map(input => input.value);
@@ -133,7 +143,7 @@ function reviewRow(label, value) {
 function showStep5() {
   updateProgress(5);
   stepCard.innerHTML = `<h2>Review your request</h2><p class="step-help">Confirm the information before submitting.</p><div class="review">
-    ${reviewRow("Roofing need", lead.projectType)}${reviewRow("Property type", lead.propertyType)}${reviewRow("Roof type", lead.roofingSystem)}${reviewRow("Property", lead.propertyAddress)}${reviewRow("Roof details", lead.projectDescription)}${reviewRow("Related needs", lead.relatedNeeds.join(", ") || "None selected")}${reviewRow("Timing", lead.timing)}${reviewRow("Name", lead.name)}${reviewRow("Phone", lead.phone)}${reviewRow("Email", lead.email)}${reviewRow("Preferred contact", lead.contactPreference)}</div>
+    ${reviewRow("Roofing need", lead.projectType)}${reviewRow("Property type", lead.propertyType)}${reviewRow("Roof type", lead.roofingSystem)}${reviewRow("State", lead.serviceState)}${reviewRow("Property", lead.propertyAddress)}${reviewRow("Roof details", lead.projectDescription)}${reviewRow("Related needs", lead.relatedNeeds.join(", ") || "None selected")}${reviewRow("Timing", lead.timing)}${reviewRow("Name", lead.name)}${reviewRow("Phone", lead.phone)}${reviewRow("Email", lead.email)}${reviewRow("Preferred contact", lead.contactPreference)}</div>
     <label class="consent"><input type="checkbox" id="consent-checkbox"><span>I authorize Builtegrity to contact me about this request and to share my request information with one roofing professional selected to evaluate the opportunity. I have read the <a href="/privacy/" target="_blank">Privacy Notice</a> and <a href="/terms/" target="_blank">Terms</a>.</span></label>
     ${errorRegion()}<div class="form-actions"><button class="button" type="button" id="submit-request">Submit My Request</button><button class="back-button" type="button" id="back">Back</button></div>`;
   document.querySelector("#submit-request").addEventListener("click", submitLead);
@@ -165,7 +175,9 @@ async function submitLead() {
   formData.append("entry.430553536", attribution.utm_medium || "");
   formData.append("entry.843210747", attribution.utm_campaign || "");
   formData.append("entry.164856092", attribution.utm_content || "");
-  formData.append("entry.1756618627", lead.propertyAddress);
+  const addressWithoutState = lead.propertyAddress.replace(/,?\s*(Rhode Island|Massachusetts|RI|MA)\s*$/i, "").trim();
+  const fullPropertyAddress = `${addressWithoutState}, ${lead.serviceState}`;
+  formData.append("entry.1756618627", fullPropertyAddress);
   formData.append("entry.948050577", lead.timing);
   formData.append("entry.25475913", lead.name);
   formData.append("entry.1091292774", lead.phone);
