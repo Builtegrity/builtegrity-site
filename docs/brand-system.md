@@ -37,11 +37,15 @@ Contrast mode means identity, emphasis, memorability, and action.
 5. Keep the request funnel mostly light.
 6. Builtegrity must not visually or verbally imply it is the roofing contractor.
 7. Public regional scope during Phase 1 is Rhode Island & Massachusetts.
-8. Reuse the process language: Submit → Review → Connect.
+8. Reuse the core process language: Submit → Review → Connect.
+9. Quote comparison is an optional capability after review, not a promise of multiple contractor quotes.
+10. Never broadcast a homeowner request to a contractor list. One selected introduction at a time remains the default.
+11. An additional introduction requires homeowner request or consent plus actual eligible-partner availability.
+12. Comparison language must remain neutral: organize documented scope, materials, allowances, exclusions, warranty and pricing differences; do not choose a winning contractor or promise the lowest price.
 
 ## Core messaging
 Primary positioning:
-Builtegrity helps homeowners start roofing projects, reviews the request, and coordinates an introduction to a roofing professional.
+Builtegrity helps homeowners start roofing projects, reviews the request, organizes documented differences between roofing quotes when requested, and coordinates controlled roofing-company introductions.
 
 Process:
 Submit → Review → Connect
@@ -93,3 +97,16 @@ Builtegrity is an independent roofing project intake, matching, and coordination
 - Black contrast CTA template
 - Mixed carousel template
 - Favicon/app icon
+
+
+## Comparison capability — September 20, 2026 update
+
+Builtegrity may help homeowners compare quotes they already possess. This is an organizational service, not a technical verification or contractor recommendation. The homeowner remains the decision-maker.
+
+Approved homeowner options in the request flow:
+- Find me a roofing company
+- Help me compare quotes I already have
+- I’d like to discuss another roofing option
+- I’m not sure yet
+
+Additional contractor options are intentionally controlled. Builtegrity may consider a second introduction only when requested or consented to and when an eligible partner is available. No broad lead blast.
