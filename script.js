@@ -77,7 +77,7 @@ function showHelpPreference() {
     "Find me a roofing company", "Help me compare quotes I already have", "I’d like to discuss another roofing option", "I’m not sure yet"
   ].map(value => optionButton(value)).join("")}</div><div class="form-actions"><button class="back-button" type="button" id="back">Back</button></div>`;
   bindOptions(value => { lead.helpPreference = value; showStep2(); });
-  document.querySelector("#back").addEventListener("click", showHelpPreference);
+  document.querySelector("#back").addEventListener("click", showRoofingSystem);
 }
 
 function showStep2() {
@@ -114,7 +114,7 @@ function showStep2() {
     if (lead.relatedNeeds.includes("None") && lead.relatedNeeds.length > 1) return showError("Choose either None or the related needs that apply.");
     showStep3();
   });
-  document.querySelector("#back").addEventListener("click", showRoofingSystem);
+  document.querySelector("#back").addEventListener("click", showHelpPreference);
 }
 
 function showStep3() {
