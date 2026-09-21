@@ -21,7 +21,7 @@ property address without changing the working form-entry mapping.
 - Confirm written permission for the Prime State launch disclosure
 - Confirm current partner credentials and insurance documentation
 - Obtain legal review of Privacy Notice, Terms and request consent
-- Complete one Rhode Island and one Massachusetts end-to-end submission and Sheet reconciliation
+- Maintain the validated Rhode Island/Massachusetts submission-and-reconciliation controls; the September 20 controlled E2E test passed all four homeowner-goal paths
 
 
 ## Comparison model
@@ -32,3 +32,11 @@ property address without changing the working form-entry mapping.
 - Contractor introductions remain controlled: one selected roofing company at a time.
 - An additional contractor introduction is considered only when the homeowner requests or consents to it and an eligible partner is available.
 - The request must never be broadcast to a contractor list.
+
+
+## Operating safeguards
+
+- `System Reconciliation` identifies raw Form Responses that have not yet reached Lead Dashboard and alerts after five minutes.
+- Lead Dashboard records comparison status, additional-option status, quote-document state, named-partner consent, consent timestamp and release timestamp.
+- An introduced additional option must pass the Handoff Gate; incomplete consent/release records produce BLOCK.
+- Quote documents are kept in the restricted Builtegrity Quote Comparison Documents Drive workflow, not in public or contractor-shared folders.
