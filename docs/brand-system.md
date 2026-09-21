@@ -54,7 +54,7 @@ Regional scope:
 Rhode Island & Massachusetts
 
 Business-model clarity:
-Builtegrity is an independent roofing project intake, matching, and coordination service. Builtegrity is not the roofing contractor.
+Builtegrity is an independent roofing project intake, comparison-support, matching and coordination service. Builtegrity is not the roofing contractor.
 
 ## Channel system
 - Website: 80–90% light; 10–20% contrast.
@@ -81,7 +81,7 @@ Roofing help made simpler.
 
 ## Email footer
 Builtegrity
-Roofing help for Rhode Island & Massachusetts homeowners
+Roofing help from request through comparison for Rhode Island & Massachusetts homeowners
 Builtegrity.com
 Submit → Review → Connect
 Builtegrity is an independent roofing project intake, matching, and coordination service. Builtegrity is not the roofing contractor.
