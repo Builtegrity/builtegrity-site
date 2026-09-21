@@ -1,1 +1,0 @@
-Controlled E2E form submission trigger. Safe to delete after validation.
