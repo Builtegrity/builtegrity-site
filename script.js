@@ -1,7 +1,7 @@
 const FORM_ENDPOINT = "https://docs.google.com/forms/d/e/1FAIpQLSd_95rK_6rrwu0H8L_O4tbBEwD36MHkcLIJQYasMXuY8SQodg/formResponse";
 
 const lead = {
-  projectType: "", propertyType: "", roofingSystem: "", projectDescription: "",
+  projectType: "", propertyType: "", roofingSystem: "", helpPreference: "", projectDescription: "",
   serviceState: "", propertyAddress: "", relatedNeeds: [], timing: "", name: "", phone: "",
   email: "", contactPreference: "", consent: false
 };
@@ -67,13 +67,24 @@ function showRoofingSystem() {
     "Asphalt Shingles", "Metal Roofing", "Slate Roofing", "Flat/Low Slope Roofing",
     "Rubber/EPDM", "TPO/ PVC", "Not Sure", "Other"
   ].map(value => optionButton(value)).join("")}</div><div class="form-actions"><button class="back-button" type="button" id="back">Back</button></div>`;
-  bindOptions(value => { lead.roofingSystem = value; showStep2(); });
+  bindOptions(value => { lead.roofingSystem = value; showHelpPreference(); });
   document.querySelector("#back").addEventListener("click", showPropertyType);
+}
+
+function showHelpPreference() {
+  updateProgress(1);
+  stepCard.innerHTML = `<h2>What would be most helpful?</h2><p class="step-help">Choose what you want from the process. This does not lock you into a contractor or guarantee multiple options.</p><div class="option-grid">${[
+    "Find me a roofing company", "Help me compare quotes I already have", "I’d like to discuss another roofing option", "I’m not sure yet"
+  ].map(value => optionButton(value)).join("")}</div><div class="form-actions"><button class="back-button" type="button" id="back">Back</button></div>`;
+  bindOptions(value => { lead.helpPreference = value; showStep2(); });
+  document.querySelector("#back").addEventListener("click", showHelpPreference);
 }
 
 function showStep2() {
   updateProgress(2);
   const needs = ["Siding", "Gutters", "Fascia / Trim", "Skylights", "Chimney / Flashing", "None", "Not Sure"];
+  const comparisonHelp = lead.helpPreference === "Help me compare quotes I already have";
+  const anotherOption = lead.helpPreference === "I’d like to discuss another roofing option";
   stepCard.innerHTML = `<h2>Where is the property?</h2>
     <label class="form-label" for="service-state">State</label>
     <select class="text-input" id="service-state" autocomplete="address-level1">
@@ -85,8 +96,10 @@ function showStep2() {
     <label class="form-label" for="property-address">Street address, city and ZIP</label>
     <input class="text-input" id="property-address" type="text" value="${escapeHTML(lead.propertyAddress)}" autocomplete="street-address" placeholder="Street, city and ZIP">
     <p class="field-note">Please enter the location where roofing help is needed.</p>
-    <label class="form-label" for="project-description">What should we know about the roof?</label>
-    <textarea class="text-area" id="project-description" placeholder="Optional — leaks, roof age, damage, concerns or other details">${escapeHTML(lead.projectDescription)}</textarea>
+    <label class="form-label" for="project-description">${comparisonHelp ? "What would you like help comparing?" : "What should we know about the roof?"}</label>
+    <textarea class="text-area" id="project-description" placeholder="${comparisonHelp ? "Optional — contractor names, quoted prices, materials, scope differences, warranties or questions" : "Optional — leaks, roof age, damage, concerns or other details"}">${escapeHTML(lead.projectDescription)}</textarea>
+    ${comparisonHelp ? '<p class="field-note">You can describe the quotes here. If copies of estimates would help, we may ask you to reply with them after submission. Do not include payment-card or bank information.</p>' : ""}
+    ${anotherOption ? '<p class="field-note">An additional roofing-company option depends on service area, project fit and partner availability. It is not guaranteed and will not be shared without your consent.</p>' : ""}
     <fieldset class="fieldset-reset"><legend class="form-label">Any related exterior needs?</legend><div class="checkbox-grid">${needs.map(value => `<label class="choice-label"><input type="checkbox" name="related" value="${value}" ${lead.relatedNeeds.includes(value) ? "checked" : ""}><span>${value}</span></label>`).join("")}</div></fieldset>
     ${errorRegion()}<div class="form-actions"><button class="button" type="button" id="continue">Continue</button><button class="back-button" type="button" id="back">Back</button></div>`;
   document.querySelector("#continue").addEventListener("click", () => {
@@ -143,8 +156,8 @@ function reviewRow(label, value) {
 function showStep5() {
   updateProgress(5);
   stepCard.innerHTML = `<h2>Review your request</h2><p class="step-help">Confirm the information before submitting.</p><div class="review">
-    ${reviewRow("Roofing need", lead.projectType)}${reviewRow("Property type", lead.propertyType)}${reviewRow("Roof type", lead.roofingSystem)}${reviewRow("State", lead.serviceState)}${reviewRow("Property", lead.propertyAddress)}${reviewRow("Roof details", lead.projectDescription)}${reviewRow("Related needs", lead.relatedNeeds.join(", ") || "None selected")}${reviewRow("Timing", lead.timing)}${reviewRow("Name", lead.name)}${reviewRow("Phone", lead.phone)}${reviewRow("Email", lead.email)}${reviewRow("Preferred contact", lead.contactPreference)}</div>
-    <label class="consent"><input type="checkbox" id="consent-checkbox"><span>I authorize Builtegrity to contact me about this request and to share my request information with one roofing professional selected to evaluate the opportunity. I have read the <a href="/privacy/" target="_blank">Privacy Notice</a> and <a href="/terms/" target="_blank">Terms</a>.</span></label>
+    ${reviewRow("Roofing need", lead.projectType)}${reviewRow("Property type", lead.propertyType)}${reviewRow("Roof type", lead.roofingSystem)}${reviewRow("Help requested", lead.helpPreference)}${reviewRow("State", lead.serviceState)}${reviewRow("Property", lead.propertyAddress)}${reviewRow("Roof details", lead.projectDescription)}${reviewRow("Related needs", lead.relatedNeeds.join(", ") || "None selected")}${reviewRow("Timing", lead.timing)}${reviewRow("Name", lead.name)}${reviewRow("Phone", lead.phone)}${reviewRow("Email", lead.email)}${reviewRow("Preferred contact", lead.contactPreference)}</div>
+    <label class="consent"><input type="checkbox" id="consent-checkbox"><span>I authorize Builtegrity to contact me about this request. If I request a roofing-company introduction, I authorize Builtegrity to share my request information with one selected roofing professional at a time. Any additional introduction will be made only if I request or consent to it. If I request quote-comparison help, I understand Builtegrity organizes documented differences but does not choose a contractor for me or guarantee pricing, technical accuracy or outcome. I have read the <a href="/privacy/" target="_blank">Privacy Notice</a> and <a href="/terms/" target="_blank">Terms</a>.</span></label>
     ${errorRegion()}<div class="form-actions"><button class="button" type="button" id="submit-request">Submit My Request</button><button class="back-button" type="button" id="back">Back</button></div>`;
   document.querySelector("#submit-request").addEventListener("click", submitLead);
   document.querySelector("#back").addEventListener("click", showStep4);
@@ -168,7 +181,8 @@ async function submitLead() {
   formData.append("entry.1843216824", lead.propertyType);
   formData.append("entry.1447183842", lead.roofingSystem);
   formData.append("entry.601359630", lead.projectType);
-  formData.append("entry.398908205", lead.projectDescription);
+  const comparisonContext = `Builtegrity help requested: ${lead.helpPreference || "Not specified"}${lead.projectDescription ? `\n\nHomeowner notes: ${lead.projectDescription}` : ""}`;
+  formData.append("entry.398908205", comparisonContext);
   formData.append("entry.2122069102", lead.relatedNeeds.join(", ") || "None selected");
   formData.append("entry.1366848857", requestReference);
   formData.append("entry.568624020", attribution.source || "Direct / unknown");
@@ -186,8 +200,8 @@ async function submitLead() {
   formData.append("entry.197004301", "I Agree");
   try {
     await fetch(FORM_ENDPOINT, { method:"POST", mode:"no-cors", headers:{"Content-Type":"application/x-www-form-urlencoded"}, body:formData.toString() });
-    try { sessionStorage.setItem("builtegrityRequestRef", requestReference); } catch {}
-    location.assign(`/request/complete/?ref=${encodeURIComponent(requestReference)}`);
+    try { sessionStorage.setItem("builtegrityRequestRef", requestReference); sessionStorage.setItem("builtegrityHelpPreference", lead.helpPreference || ""); } catch {}
+    location.assign(`/request/complete/?ref=${encodeURIComponent(requestReference)}&mode=${encodeURIComponent(lead.helpPreference || "")}`);
   } catch (error) {
     console.error("Request submission failed", error);
     button.disabled = false; button.textContent = "Submit My Request";
