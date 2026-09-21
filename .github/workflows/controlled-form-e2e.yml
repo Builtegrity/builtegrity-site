@@ -1,0 +1,59 @@
+name: Controlled Builtegrity Form E2E Test
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  submit-controlled-tests:
+    if: contains(github.event.head_commit.message, '[RUN E2E FORM TEST]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Submit controlled Google Form paths
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          ENDPOINT="https://docs.google.com/forms/d/e/1FAIpQLSd_95rK_6rrwu0H8L_O4tbBEwD36MHkcLIJQYasMXuY8SQodg/formResponse"
+
+          submit() {
+            local ref="$1"
+            local help="$2"
+            local campaign="$3"
+            local content="$4"
+
+            local code
+            code=$(curl -sS -L -o "/tmp/${ref}.html" -w "%{http_code}" -X POST "$ENDPOINT" \
+              --data-urlencode "entry.1843216824=Single-Family Home" \
+              --data-urlencode "entry.1447183842=Not Sure" \
+              --data-urlencode "entry.601359630=Roof Inspection" \
+              --data-urlencode "entry.398908205=Builtegrity help requested: ${help}
+
+CONTROLLED E2E TEST — no homeowner or contractor action." \
+              --data-urlencode "entry.2122069102=None" \
+              --data-urlencode "entry.1366848857=${ref}" \
+              --data-urlencode "entry.568624020=Internal E2E Test" \
+              --data-urlencode "entry.430553536=github_actions" \
+              --data-urlencode "entry.843210747=${campaign}" \
+              --data-urlencode "entry.164856092=${content}" \
+              --data-urlencode "entry.1756618627=1 E2E TEST Street, Providence 02903, Rhode Island" \
+              --data-urlencode "entry.948050577=Just Researching" \
+              --data-urlencode "entry.25475913=BUILTEGRITY E2E TEST" \
+              --data-urlencode "entry.1091292774=401-555-0100" \
+              --data-urlencode "entry.569954132=zac@builtegrity.com" \
+              --data-urlencode "entry.1118299552=Email" \
+              --data-urlencode "entry.197004301=I Agree")
+
+            echo "${ref}: HTTP ${code}"
+            if [[ "$code" -lt 200 || "$code" -ge 400 ]]; then
+              echo "Submission failed for ${ref}" >&2
+              exit 1
+            fi
+          }
+
+          submit "BG-R-2026-E2ECMP201" "Help me compare quotes I already have" "comparison_e2e_full" "compare_path"
+          submit "BG-R-2026-E2EOPT201" "I’d like to discuss another roofing option" "option_e2e_full" "option_path"
+          submit "BG-R-2026-E2EFIN201" "Find me a roofing company" "find_e2e_full" "find_path"
+          submit "BG-R-2026-E2EUNS201" "I’m not sure yet" "unsure_e2e_full" "unsure_path"
