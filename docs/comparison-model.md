@@ -54,6 +54,15 @@ This preserves the established Google Form and Apps Script automation while addi
 - Comparison Status — manual workflow status
 - Additional Option Status — manual workflow status
 - Quote Documents Received — manual workflow status
+- Additional Option Consent — manual consent status
+- Consent Timestamp — required before an additional release
+- Authorized Additional Partner — the specific second company the homeowner authorized
+- Additional Release Timestamp — when homeowner data was actually released
+- Handoff Gate — formula control; must read PASS for an introduced additional option
+- Attention Flag — formula exception control
+- Quote Document Location — controlled Drive location for homeowner-supplied proposals
+- Quote Retention Review Date — internal review checkpoint
+- Comparison Review Notes — neutral findings and unanswered questions
 
 ## Comparison workflow
 
@@ -72,3 +81,29 @@ Builtegrity, its operator or representatives may have compensation relationships
 ## Phase 1 limitation
 
 Prime State Roofing may be the only active fulfillment option for some Rhode Island and Massachusetts requests. If no second eligible partner exists, say so plainly and continue offering comparison help on estimates the homeowner obtains independently.
+
+
+## Quote document storage
+
+Canonical Drive folder: **Builtegrity Quote Comparison Documents**
+
+Workflow:
+1. New documents → `01 Pending Review`
+2. Active comparison documents → `02 Reviewed - Active`
+3. Closed-request documents requiring a retention decision → `03 Retention Review`
+
+Do not use social-media tools, public folders, or contractor-shared folders as the source of record for homeowner proposals. Do not request bank credentials, payment-card data, passwords, Social Security numbers, or other unnecessary sensitive information.
+
+At closure, set an internal retention-review checkpoint for 90 days later. The checkpoint is for review, not automatic deletion; legal, tax, insurance, complaint, dispute, or other legitimate recordkeeping needs may justify longer retention.
+
+## Additional-option consent gate
+
+Before homeowner information is released to a second roofing company:
+1. Additional Option Consent = Confirmed
+2. Consent Timestamp is recorded
+3. Authorized Additional Partner identifies the exact company
+4. Only then may the information be released
+5. Additional Release Timestamp is recorded immediately after release
+6. Handoff Gate must read PASS
+
+If Handoff Gate reads BLOCK, stop the handoff and correct the consent/release record first.
