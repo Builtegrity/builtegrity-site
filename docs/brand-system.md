@@ -1,4 +1,4 @@
-# Builtegrity Brand Operating System — V1
+# Builtegrity Brand Operating System — V1.1
 
 Effective: September 20, 2026
 
