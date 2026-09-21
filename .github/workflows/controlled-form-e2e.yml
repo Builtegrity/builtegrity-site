@@ -15,7 +15,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           ENDPOINT="https://docs.google.com/forms/d/e/1FAIpQLSd_95rK_6rrwu0H8L_O4tbBEwD36MHkcLIJQYasMXuY8SQodg/formResponse"
 
           submit() {
@@ -23,15 +22,15 @@ jobs:
             local help="$2"
             local campaign="$3"
             local content="$4"
+            local details
+            details=$(printf 'Builtegrity help requested: %s\n\nCONTROLLED E2E TEST — no homeowner or contractor action.' "$help")
 
             local code
             code=$(curl -sS -L -o "/tmp/${ref}.html" -w "%{http_code}" -X POST "$ENDPOINT" \
               --data-urlencode "entry.1843216824=Single-Family Home" \
               --data-urlencode "entry.1447183842=Not Sure" \
               --data-urlencode "entry.601359630=Roof Inspection" \
-              --data-urlencode "entry.398908205=Builtegrity help requested: ${help}
-
-CONTROLLED E2E TEST — no homeowner or contractor action." \
+              --data-urlencode "entry.398908205=${details}" \
               --data-urlencode "entry.2122069102=None" \
               --data-urlencode "entry.1366848857=${ref}" \
               --data-urlencode "entry.568624020=Internal E2E Test" \
