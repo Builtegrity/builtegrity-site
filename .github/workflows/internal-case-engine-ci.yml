@@ -1,0 +1,83 @@
+name: Internal Case Engine CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - atlas/internal-case-engine
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check case-engine JavaScript syntax
+        run: |
+          node --check worker/src/cases.js
+          node --check worker/src/case-router.js
+          node --check worker/src/stripe-account-events.js
+          node --check worker/src/runtime.js
+          node --check public/console/app.js
+
+      - name: Build full D1 schema and seed TX-0001
+        run: |
+          rm -f /tmp/builtegrity-cases.db
+          for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+            echo "Applying $file"
+            sqlite3 /tmp/builtegrity-cases.db < "$file"
+          done
+          sqlite3 /tmp/builtegrity-cases.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify finite internal case catalog
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_types;")" = "13"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_actions;")" -ge "30"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COALESCE(MAX(action_count),0) FROM (SELECT COUNT(*) action_count FROM internal_case_actions WHERE enabled=1 AND requires_human=1 GROUP BY case_type_code);")" -le "3"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_types WHERE code='UNKNOWN_EXCEPTION';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_types WHERE code='CATASTROPHIC_INCIDENT';")" = "1"
+
+      - name: Verify database rejects a fourth human action
+        run: |
+          if sqlite3 /tmp/builtegrity-cases.db "INSERT INTO internal_case_actions(case_type_code,action_code,label,action_kind,action_handler,sequence,requires_human) VALUES('UNKNOWN_EXCEPTION','FOURTH_ACTION','Forbidden fourth action','OPERATOR','EXTERNAL_CONFIRMATION',4,1);" 2>/tmp/fourth-action-error.txt; then
+            echo "Expected D1 schema to reject a fourth enabled human action"
+            exit 1
+          fi
+          grep -q 'at most three' /tmp/fourth-action-error.txt
+
+      - name: Verify catastrophic kill switch defaults safe and enabled
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT transaction_creation_enabled || ':' || payment_creation_enabled || ':' || merchant_onboarding_enabled FROM platform_controls WHERE id='GLOBAL';")" = "1:1:1"
+          sqlite3 /tmp/builtegrity-cases.db "UPDATE platform_controls SET transaction_creation_enabled=0,payment_creation_enabled=0,merchant_onboarding_enabled=0,reason='CI incident' WHERE id='GLOBAL';"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT transaction_creation_enabled || ':' || payment_creation_enabled || ':' || merchant_onboarding_enabled FROM platform_controls WHERE id='GLOBAL';")" = "0:0:0"
+
+      - name: Verify action audit history and human metrics
+        run: |
+          sqlite3 /tmp/builtegrity-cases.db "INSERT INTO internal_cases(id,case_type_code,status,severity,subject_type,subject_id,transaction_id,merchant_id,source_type,source_ref,summary,recommended_action,runbook_version,escalation_target,first_human_at) VALUES('CASE-900001','PROCESSOR_RECORD_MISMATCH','OPEN','CRITICAL','TRANSACTION','TX-0001','TX-0001','MER-0001','CI','ci:processor-mismatch','CI processor mismatch','Reconcile from Stripe','V1','ENGINEERING',CURRENT_TIMESTAMP);"
+          sqlite3 /tmp/builtegrity-cases.db "INSERT INTO internal_case_action_runs(id,case_id,action_code,actor_type,actor_ref,status,human_seconds,finished_at) VALUES('CAR-900001','CASE-900001','REBUILD_DERIVED_STATE','OPERATOR','ci-operator','SUCCEEDED',75,CURRENT_TIMESTAMP);"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT human_touched_transactions FROM internal_operations_metrics;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT human_seconds_total FROM internal_operations_metrics;")" = "75"
+          if sqlite3 /tmp/builtegrity-cases.db "UPDATE internal_case_action_runs SET human_seconds=99 WHERE id='CAR-900001';" 2>/tmp/immutable-action-error.txt; then
+            echo "Expected finished case action history to be immutable"
+            exit 1
+          fi
+          grep -q 'append-only' /tmp/immutable-action-error.txt
+
+      - name: Verify merchant-first routing and account remediation
+        run: |
+          grep -q "tx:payout-failed:" worker/src/case-router.js
+          grep -q "owner: 'MERCHANT'" worker/src/case-router.js
+          grep -q "account.updated" worker/src/runtime.js
+          grep -q "RESOLVE_WITH_STRIPE" worker/src/stripe-account-events.js
+          grep -q "RECONNECT_STRIPE" worker/src/stripe-account-events.js
+          grep -q "merchant.status === 'PAUSED'" worker/src/stripe-account-events.js
+
+      - name: Verify operator simplicity and machine verification
+        run: |
+          grep -q "syncInternalCasesFromWatchdogs" worker/src/runtime.js
+          grep -q "verifyInternalCase" worker/src/runtime.js
+          grep -q "human_minutes_per_1000_transactions" migrations/0010_internal_case_engine.sql
+          grep -q "max_three_human" migrations/0010_internal_case_engine.sql
+          grep -q "Allowed actions" public/console/app.js
+          grep -q "human_seconds" public/console/app.js
