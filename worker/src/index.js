@@ -12,7 +12,7 @@ import {
   retrieveCheckoutSession,
   verifyStripeSignature,
 } from './stripe.js';
-import { processStripeWebhook } from './webhooks.js';
+import { processStripeWebhook } from './webhook-runtime.js';
 import { createTransactionRequest } from './transaction-create.js';
 import { verifyMerchantStripe } from './merchant-stripe.js';
 import { publicTurnstileConfig, requireTurnstile } from './turnstile.js';
