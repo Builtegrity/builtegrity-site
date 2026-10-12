@@ -1,6 +1,9 @@
 # Copy to .dev.vars for local development. Never commit real secrets.
+# Production owner/admin auth uses Cloudflare Access, so no Builtegrity password secret is required.
 STRIPE_SECRET_KEY=sk_test_REPLACE_ME
 STRIPE_WEBHOOK_SECRET=whsec_REPLACE_ME
 STRIPE_CONNECT_CLIENT_ID=ca_REPLACE_ME
-OWNER_PASSWORD=replace-with-a-strong-owner-password
-OWNER_SESSION_SECRET=replace-with-a-long-random-session-secret
+
+# Only needed if deliberately switching AUTH_PROVIDER back to OWNER_SESSION for portability/testing:
+# OWNER_PASSWORD=replace-with-a-strong-owner-password
+# OWNER_SESSION_SECRET=replace-with-a-long-random-session-secret
