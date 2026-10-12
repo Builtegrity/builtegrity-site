@@ -15,6 +15,7 @@ import {
 import { processStripeWebhook } from './webhooks.js';
 import { createTransactionRequest } from './transaction-create.js';
 import { verifyMerchantStripe } from './merchant-stripe.js';
+import { publicTurnstileConfig, requireTurnstile } from './turnstile.js';
 
 export default {
   async fetch(request, env) {
@@ -107,6 +108,7 @@ async function handlePublicPayment(env, token) {
   const tx = await findByPaymentToken(env, token);
   if (!tx) return json({ error: 'Payment link not found' }, 404);
   if (isExpired(tx.payment_access_expires_at)) return json({ error: 'Payment link expired' }, 410);
+  const turnstile = publicTurnstileConfig(env);
 
   return json({
     transaction_id: tx.id,
@@ -124,6 +126,8 @@ async function handlePublicPayment(env, token) {
     consent_accepted: Boolean(tx.consent_accepted),
     lifecycle_status: tx.lifecycle_status,
     payment_status: tx.payment_status,
+    turnstile_required: turnstile.required,
+    turnstile_site_key: turnstile.site_key,
   });
 }
 
@@ -139,6 +143,7 @@ async function handleConsent(request, env, token) {
   const body = await readJson(request);
   if (body.accepted !== true) return json({ error: 'Explicit acceptance is required' }, 400);
   if (!tx.terms_snapshot) return json({ error: 'No terms snapshot exists for this transaction' }, 409);
+  await requireTurnstile(request, env, body.turnstile_token, 'payment_consent');
 
   if (!Number(tx.consent_accepted)) {
     const termsHash = await sha256Hex(tx.terms_snapshot);
