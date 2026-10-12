@@ -2,25 +2,43 @@ const rows = document.querySelector('#transactionRows');
 const detail = document.querySelector('#detail');
 const stats = document.querySelector('#stats');
 const empty = document.querySelector('#empty');
-const tokenInput = document.querySelector('#adminToken');
 const refreshButton = document.querySelector('#refresh');
+const signOutButton = document.querySelector('#signOut');
+const sessionLabel = document.querySelector('#sessionLabel');
 
-tokenInput.value = sessionStorage.getItem('builtegrity_admin_token') || '';
-tokenInput.addEventListener('change', () => {
-  sessionStorage.setItem('builtegrity_admin_token', tokenInput.value.trim());
-  loadTransactions();
-});
 refreshButton.addEventListener('click', loadTransactions);
+signOutButton?.addEventListener('click', async () => {
+  signOutButton.disabled = true;
+  try {
+    await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+  } finally {
+    location.assign('/login/');
+  }
+});
 
 async function api(path, options = {}) {
   const headers = new Headers(options.headers || {});
-  const token = sessionStorage.getItem('builtegrity_admin_token');
-  if (token) headers.set('X-Builtegrity-Admin', token);
   if (options.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
-  const response = await fetch(path, { ...options, headers });
+  const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
+  if (response.status === 401) {
+    const returnTo = encodeURIComponent(`${location.pathname}${location.search}`);
+    location.assign(`/login/?return_to=${returnTo}`);
+    throw new Error('Authentication required');
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
+}
+
+async function loadSession() {
+  try {
+    const session = await api('/auth/session');
+    if (sessionLabel && session.principal) {
+      sessionLabel.textContent = `${session.principal.role || 'Operator'} · ${session.principal.provider || 'session'}`;
+    }
+  } catch {
+    // api() handles redirect for unauthenticated sessions.
+  }
 }
 
 async function loadTransactions() {
@@ -168,4 +186,5 @@ function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 }
 
-loadTransactions();
+await loadSession();
+await loadTransactions();
