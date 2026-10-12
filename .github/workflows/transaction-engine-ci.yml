@@ -17,6 +17,7 @@ jobs:
 
       - name: Check JavaScript syntax
         run: |
+          node --check worker/src/cloudflare-access.js
           node --check worker/src/auth.js
           node --check worker/src/db.js
           node --check worker/src/stripe.js
@@ -40,8 +41,12 @@ jobs:
             echo "Persistent internal admin tokens are not allowed"
             exit 1
           fi
-          grep -q 'AUTH_PROVIDER = "OWNER_SESSION"' wrangler.toml.example
-          grep -q 'OWNER_SESSION_SECRET' .dev.vars.example
+          grep -q 'AUTH_PROVIDER = "CLOUDFLARE_ACCESS"' wrangler.toml.example
+          grep -q 'ADMIN_HOSTNAME = "admin.builtegrity.com"' wrangler.toml.example
+          grep -q 'CF_ACCESS_TEAM_DOMAIN' wrangler.toml.example
+          grep -q 'CF_ACCESS_AUD' wrangler.toml.example
+          grep -q "Cf-Access-Jwt-Assertion" worker/src/cloudflare-access.js
+          grep -q "RSASSA-PKCS1-v1_5" worker/src/cloudflare-access.js
 
       - name: Build D1-compatible schema in SQLite
         run: |
