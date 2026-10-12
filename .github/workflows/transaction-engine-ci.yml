@@ -31,6 +31,8 @@ jobs:
           node --check worker/src/webhooks.js
           node --check worker/src/watchdogs.js
           node --check worker/src/readiness.js
+          node --check worker/src/transaction-create.js
+          node --check worker/src/merchant-stripe.js
           node --check worker/src/index.js
           node --check worker/src/runtime.js
           node --check public/login/app.js
@@ -73,6 +75,10 @@ jobs:
           grep -q 'payment_integrity' worker/src/db.js
           grep -q 'terms_integrity' worker/src/db.js
           grep -q 'payout_net_integrity' worker/src/db.js
+          grep -q 'Idempotency-Key' worker/src/transaction-create.js
+          grep -q 'DB.batch' worker/src/transaction-create.js
+          grep -q 'verifyMerchantStripe' worker/src/runtime.js
+          grep -q "country === 'US'" worker/src/merchant-stripe.js
 
       - name: Guard watchdog coverage
         run: |
@@ -110,6 +116,15 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='TX_CREATED';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='stripe_checkout_expires_at';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='creation_idempotency_key';")" = "1"
+
+      - name: Verify merchant-scoped creation idempotency
+        run: |
+          sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,creation_idempotency_key) VALUES ('TX-0996','PUR-0001','MER-0001','CUST-0001','PAYMENT','first',100,'USD','terms','retry-key');"
+          if sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,creation_idempotency_key) VALUES ('TX-0997','PUR-0001','MER-0001','CUST-0001','PAYMENT','second',100,'USD','terms','retry-key');" 2>/tmp/idempotency-error.txt; then
+            echo "Expected duplicate merchant-scoped creation key to be rejected"
+            exit 1
+          fi
+          grep -qi "unique" /tmp/idempotency-error.txt
 
       - name: Verify Stripe object identifiers cannot cross transaction records
         run: |
