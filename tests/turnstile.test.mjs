@@ -14,10 +14,19 @@ function env(overrides = {}) {
 }
 
 test('Turnstile is enforced only at PILOT and LIVE stages', () => {
+  assert.equal(turnstileRequired(env({ WATCHDOG_STAGE: 'PREVIEW' })), false);
   assert.equal(turnstileRequired(env({ WATCHDOG_STAGE: 'TEST' })), false);
   assert.equal(turnstileRequired(env({ WATCHDOG_STAGE: 'PILOT' })), true);
   assert.equal(turnstileRequired(env({ WATCHDOG_STAGE: 'LIVE' })), true);
   assert.deepEqual(publicTurnstileConfig(env({ WATCHDOG_STAGE: 'TEST' })), { required: false, site_key: null });
+});
+
+test('unknown runtime stage fails closed and requires public protection', () => {
+  assert.equal(turnstileRequired(env({ WATCHDOG_STAGE: 'LIV' })), true);
+  assert.deepEqual(
+    publicTurnstileConfig(env({ WATCHDOG_STAGE: 'LIV' })),
+    { required: true, site_key: 'site_test' },
+  );
 });
 
 test('missing Turnstile configuration fails closed in protected stages', async () => {
