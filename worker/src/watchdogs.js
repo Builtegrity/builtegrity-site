@@ -1,77 +1,12 @@
 import { openException, recomputeIntegrity, resolveException } from './db.js';
 import { retrieveConnectedAccount } from './stripe.js';
-
-const STAGE_REQUIREMENTS = {
-  PREVIEW: [],
-  TEST: [
-    'STRIPE_SECRET_KEY',
-    'STRIPE_WEBHOOK_SECRET',
-    'STRIPE_CONNECT_CLIENT_ID',
-    'CLERK_JWT_KEY',
-    'CLERK_ISSUER',
-    'CLERK_ADMIN_USER_IDS',
-  ],
-  PILOT: [
-    'STRIPE_SECRET_KEY',
-    'STRIPE_WEBHOOK_SECRET',
-    'STRIPE_CONNECT_CLIENT_ID',
-    'CLERK_JWT_KEY',
-    'CLERK_ISSUER',
-    'CLERK_ADMIN_USER_IDS',
-    'TURNSTILE_SITE_KEY',
-    'TURNSTILE_SECRET_KEY',
-    'RESEND_API_KEY',
-    'ALERT_EMAIL_FROM',
-    'ALERT_EMAIL_TO',
-  ],
-  LIVE: [
-    'STRIPE_SECRET_KEY',
-    'STRIPE_WEBHOOK_SECRET',
-    'STRIPE_CONNECT_CLIENT_ID',
-    'CLERK_JWT_KEY',
-    'CLERK_ISSUER',
-    'CLERK_ADMIN_USER_IDS',
-    'TURNSTILE_SITE_KEY',
-    'TURNSTILE_SECRET_KEY',
-    'RESEND_API_KEY',
-    'ALERT_EMAIL_FROM',
-    'ALERT_EMAIL_TO',
-    'APP_BASE_URL',
-    'ADMIN_BASE_URL',
-    'ADMIN_HOSTNAME',
-  ],
-};
-
-export async function systemReadiness(env) {
-  const stage = watchdogStage(env);
-  const missingConfig = requiredConfig(env, stage);
-  let database = false;
-  let lastWatchdog = null;
-
-  try {
-    if (env.DB) {
-      const row = await env.DB.prepare('SELECT 1 AS ok').first();
-      database = Number(row?.ok || 0) === 1;
-      lastWatchdog = await env.DB.prepare(`
-        SELECT run_kind, status, started_at, finished_at
-        FROM system_watchdog_runs
-        ORDER BY started_at DESC
-        LIMIT 1
-      `).first().catch(() => null);
-    }
-  } catch {
-    database = false;
-  }
-
-  return {
-    ok: database && missingConfig.length === 0 && lastWatchdog?.status !== 'FAIL',
-    stage,
-    database,
-    config_complete: missingConfig.length === 0,
-    missing_config_count: missingConfig.length,
-    last_watchdog: lastWatchdog || null,
-  };
-}
+import {
+  isKnownWatchdogStage,
+  requiredConfig,
+  stageRequirements,
+  systemReadiness,
+  watchdogStage,
+} from './readiness.js';
 
 export async function getWatchdogStatus(env) {
   const [alertsResult, runsResult] = await Promise.all([
@@ -123,6 +58,9 @@ export async function runWatchdogs(env, options = {}) {
     if (kind === 'DEEP' || kind === 'MANUAL') {
       await checkExternalDependencies(env, counters);
     }
+
+    // A previous runner crash must not poison all future healthy runs forever.
+    await resolveAlert(env, 'watchdog:runner-failure');
 
     const counts = await env.DB.prepare(`
       SELECT
@@ -179,7 +117,22 @@ export async function runWatchdogs(env, options = {}) {
 async function checkConfiguration(env, counters) {
   counters.checks += 1;
   const stage = watchdogStage(env);
-  const required = STAGE_REQUIREMENTS[stage] || [];
+
+  if (!isKnownWatchdogStage(stage)) {
+    await setAlert(env, {
+      key: 'config:WATCHDOG_STAGE',
+      category: 'CONFIG',
+      severity: 'CRITICAL',
+      subjectType: 'CONFIG',
+      subjectId: 'WATCHDOG_STAGE',
+      message: `WATCHDOG_STAGE=${stage || '(empty)'} is invalid. Expected PREVIEW, TEST, PILOT, or LIVE.`,
+    });
+  } else {
+    await resolveAlert(env, 'config:WATCHDOG_STAGE');
+  }
+
+  const required = isKnownWatchdogStage(stage) ? stageRequirements(stage) : [];
+  const requiredSet = new Set(required);
   const missing = new Set(requiredConfig(env, stage));
 
   for (const name of required) {
@@ -196,6 +149,17 @@ async function checkConfiguration(env, counters) {
     } else {
       await resolveAlert(env, key);
     }
+  }
+
+  // Resolve alerts that belonged to a stricter prior stage and are no longer required.
+  const openConfig = await env.DB.prepare(`
+    SELECT alert_key, subject_id
+    FROM system_alerts
+    WHERE status = 'OPEN' AND category = 'CONFIG'
+  `).all();
+  for (const alert of openConfig.results || []) {
+    if (alert.subject_id === 'WATCHDOG_STAGE') continue;
+    if (!requiredSet.has(alert.subject_id)) await resolveAlert(env, alert.alert_key);
   }
 }
 
@@ -344,8 +308,9 @@ async function checkTransactionState(env, counters) {
       await resolveAlert(env, feeKey);
     }
 
+    const payoutStatus = String(current.processor_payout_status || '').toLowerCase();
     const payoutFailedKey = `tx:payout-failed:${current.id}`;
-    if (String(current.processor_payout_status || '').toLowerCase() === 'failed') {
+    if (payoutStatus === 'failed') {
       const existed = await hasOpenException(env, current.id, 'PAYOUT_FAILED');
       await openException(env, current.id, 'PAYOUT_FAILED', 'Processor payout is marked failed; watchdog ensured the transaction exception exists.');
       if (!existed) counters.repairs += 1;
@@ -361,8 +326,25 @@ async function checkTransactionState(env, counters) {
       await resolveAlert(env, payoutFailedKey);
     }
 
+    const payoutCanceledKey = `tx:payout-canceled:${current.id}`;
+    if (payoutStatus === 'canceled') {
+      const existed = await hasOpenException(env, current.id, 'PAYOUT_CANCELED');
+      await openException(env, current.id, 'PAYOUT_CANCELED', 'Processor payout is marked canceled; watchdog ensured the transaction exception exists.');
+      if (!existed) counters.repairs += 1;
+      await setAlert(env, {
+        key: payoutCanceledKey,
+        category: 'PAYOUT',
+        severity: 'CRITICAL',
+        subjectType: 'TRANSACTION',
+        subjectId: current.id,
+        message: `${current.id} is attached to a canceled processor payout.`,
+      });
+    } else {
+      await resolveAlert(env, payoutCanceledKey);
+    }
+
     const payoutOverdueKey = `tx:payout-overdue:${current.id}`;
-    const payoutPaid = String(current.processor_payout_status || '').toLowerCase() === 'paid';
+    const payoutPaid = payoutStatus === 'paid';
     const expectedOverdue = current.expected_payout_arrival && !payoutPaid && hoursAgo(current.expected_payout_arrival) >= 12;
     const noPayoutAfterThreeDays = !payoutPaid && !current.stripe_payout_id && Number(current.automatic_payouts_required) === 1 &&
       current.payment_at && hoursAgo(current.payment_at) >= 72;
@@ -395,17 +377,17 @@ async function checkTransactionState(env, counters) {
 async function checkMerchantState(env, counters) {
   counters.checks += 1;
   const result = await env.DB.prepare(`
-    SELECT id, status, processor, processor_account_id
+    SELECT id, status, processor, integration_mode, processor_account_id
     FROM merchants
     WHERE status = 'ACTIVE'
     LIMIT 500
   `).all();
 
   for (const merchant of result.results || []) {
-    const key = `merchant:processor-account:${merchant.id}`;
+    const accountKey = `merchant:processor-account:${merchant.id}`;
     if (merchant.processor === 'STRIPE' && !merchant.processor_account_id) {
       await setAlert(env, {
-        key,
+        key: accountKey,
         category: 'MERCHANT',
         severity: 'CRITICAL',
         subjectType: 'MERCHANT',
@@ -413,7 +395,22 @@ async function checkMerchantState(env, counters) {
         message: `${merchant.id} is ACTIVE but has no Stripe connected account ID.`,
       });
     } else {
-      await resolveAlert(env, key);
+      await resolveAlert(env, accountKey);
+    }
+
+    const v1Key = `merchant:v1-mode:${merchant.id}`;
+    const v1CompatibleMode = merchant.processor === 'STRIPE' && merchant.integration_mode === 'STRIPE_CONNECT';
+    if (!v1CompatibleMode) {
+      await setAlert(env, {
+        key: v1Key,
+        category: 'MERCHANT',
+        severity: 'CRITICAL',
+        subjectType: 'MERCHANT',
+        subjectId: merchant.id,
+        message: `${merchant.id} is ACTIVE but is not configured as a Stripe Connect V1 merchant.`,
+      });
+    } else {
+      await resolveAlert(env, v1Key);
     }
   }
 }
@@ -473,8 +470,19 @@ async function checkExternalDependencies(env, counters) {
       try {
         const account = await retrieveConnectedAccount(env, merchant.processor_account_id);
         const payoutInterval = account.settings?.payouts?.schedule?.interval || null;
-        if (!account.charges_enabled || !account.payouts_enabled || payoutInterval === 'manual') {
-          throw new Error(`charges_enabled=${Boolean(account.charges_enabled)}, payouts_enabled=${Boolean(account.payouts_enabled)}, payout_interval=${payoutInterval || 'unknown'}`);
+        const country = String(account.country || '').toUpperCase();
+        if (
+          !account.charges_enabled ||
+          !account.payouts_enabled ||
+          payoutInterval === 'manual' ||
+          !account.details_submitted ||
+          country !== 'US'
+        ) {
+          throw new Error(
+            `charges_enabled=${Boolean(account.charges_enabled)}, payouts_enabled=${Boolean(account.payouts_enabled)}, ` +
+            `payout_interval=${payoutInterval || 'unknown'}, details_submitted=${Boolean(account.details_submitted)}, ` +
+            `country=${country || 'unknown'}`,
+          );
         }
         await resolveAlert(env, key);
       } catch (error) {
@@ -581,17 +589,18 @@ function shouldNotify(alert) {
   return hoursAgo(alert.last_notified_at) >= 24;
 }
 
-function watchdogStage(env) {
-  const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').trim().toUpperCase();
-  return stage in STAGE_REQUIREMENTS ? stage : 'PREVIEW';
-}
-
-function requiredConfig(env, stage = watchdogStage(env)) {
-  return (STAGE_REQUIREMENTS[stage] || []).filter((name) => !String(env[name] || '').trim());
-}
-
 function hoursAgo(value) {
-  const time = Date.parse(value);
+  const time = parseTimestamp(value);
   if (!Number.isFinite(time)) return 0;
   return Math.max(0, (Date.now() - time) / 3_600_000);
+}
+
+function parseTimestamp(value) {
+  if (!value) return NaN;
+  const text = String(value).trim();
+  if (!text) return NaN;
+  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(text)
+    ? `${text.replace(' ', 'T')}Z`
+    : text;
+  return Date.parse(normalized);
 }
