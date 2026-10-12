@@ -20,11 +20,6 @@ export async function createTransactionRequest(request, env) {
   }
   if (creationKey.length > 200) return json({ error: 'Idempotency-Key must be 200 characters or fewer' }, 400);
 
-  if (creationKey) {
-    const existing = await findExisting(env, merchant.id, creationKey);
-    if (existing) return existingResponse(env, existing);
-  }
-
   const txInput = body.transaction || {};
   if (!Number.isInteger(txInput.amount_cents) || txInput.amount_cents <= 0) {
     return json({ error: 'transaction.amount_cents must be a positive integer' }, 400);
@@ -48,16 +43,70 @@ export async function createTransactionRequest(request, env) {
     return json({ error: 'Builtegrity V1 only supports STRIPE_APPLICATION_FEE fee collection' }, 400);
   }
 
+  const paymentAccessExpiresAt = normalizeExpiry(txInput.payment_access_expires_at);
+  if (txInput.payment_access_expires_at && !paymentAccessExpiresAt) {
+    return json({ error: 'transaction.payment_access_expires_at must be a valid future timestamp when provided' }, 400);
+  }
+
+  const customerInput = body.customer || {};
+  if (!body.customer_id && !customerInput.name) {
+    return json({ error: 'customer.name is required when customer_id is omitted' }, 400);
+  }
+
+  const purchaseInput = body.purchase || {};
+  const purchaseCurrency = String(purchaseInput.currency || txCurrency).toUpperCase();
+  if (!body.purchase_id && purchaseCurrency !== 'USD') {
+    return json({ error: 'Builtegrity V1 purchases must use USD' }, 400);
+  }
+  if (!body.purchase_id && purchaseInput.total_value_cents !== undefined &&
+      (!Number.isInteger(purchaseInput.total_value_cents) || purchaseInput.total_value_cents < 0)) {
+    return json({ error: 'purchase.total_value_cents must be a non-negative integer when provided' }, 400);
+  }
+
+  const requestHash = await sha256Hex(stableStringify({
+    merchant_id: merchant.id,
+    customer_id: body.customer_id || null,
+    customer: body.customer_id ? null : {
+      name: customerInput.name,
+      email: customerInput.email || null,
+      reference: customerInput.reference || null,
+    },
+    purchase_id: body.purchase_id || null,
+    purchase: body.purchase_id ? null : {
+      merchant_reference: purchaseInput.merchant_reference || null,
+      purchase_type: purchaseInput.purchase_type || null,
+      description: purchaseInput.description || txInput.description,
+      total_value_cents: Number.isInteger(purchaseInput.total_value_cents) ? purchaseInput.total_value_cents : null,
+      currency: purchaseCurrency,
+    },
+    transaction: {
+      transaction_type: txInput.transaction_type || 'PAYMENT',
+      description: txInput.description,
+      amount_cents: txInput.amount_cents,
+      currency: txCurrency,
+      terms_version: txInput.terms_version || 'TERMS-001',
+      terms_snapshot: txInput.terms_snapshot,
+      refund_policy_snapshot: txInput.refund_policy_snapshot || null,
+      cancellation_policy_snapshot: txInput.cancellation_policy_snapshot || null,
+      integrity_fee_earned_cents: integrityFee,
+      fee_collection_method: collectionMethod,
+      payment_access_expires_at: paymentAccessExpiresAt,
+    },
+  }));
+
+  if (creationKey) {
+    const existing = await findExisting(env, merchant.id, creationKey);
+    if (existing) return existingResponse(env, existing, requestHash);
+  }
+
   const statements = [];
   let customerId = body.customer_id || null;
   if (!customerId) {
-    const customer = body.customer || {};
-    if (!customer.name) return json({ error: 'customer.name is required when customer_id is omitted' }, 400);
     customerId = await allocateId(env, 'CUST');
     statements.push(env.DB.prepare(`
       INSERT INTO customers (id, merchant_id, name, email, merchant_customer_reference)
       VALUES (?, ?, ?, ?, ?)
-    `).bind(customerId, merchant.id, customer.name, customer.email || null, customer.reference || null));
+    `).bind(customerId, merchant.id, customerInput.name, customerInput.email || null, customerInput.reference || null));
   } else {
     const existing = await env.DB.prepare(`
       SELECT id FROM customers WHERE id = ? AND merchant_id = ?
@@ -67,14 +116,6 @@ export async function createTransactionRequest(request, env) {
 
   let purchaseId = body.purchase_id || null;
   if (!purchaseId) {
-    const purchase = body.purchase || {};
-    const purchaseCurrency = String(purchase.currency || txCurrency).toUpperCase();
-    if (purchaseCurrency !== 'USD') return json({ error: 'Builtegrity V1 purchases must use USD' }, 400);
-    if (purchase.total_value_cents !== undefined &&
-        (!Number.isInteger(purchase.total_value_cents) || purchase.total_value_cents < 0)) {
-      return json({ error: 'purchase.total_value_cents must be a non-negative integer when provided' }, 400);
-    }
-
     purchaseId = await allocateId(env, 'PUR');
     statements.push(env.DB.prepare(`
       INSERT INTO purchases
@@ -84,10 +125,10 @@ export async function createTransactionRequest(request, env) {
       purchaseId,
       merchant.id,
       customerId,
-      purchase.merchant_reference || null,
-      purchase.purchase_type || null,
-      purchase.description || txInput.description,
-      Number.isInteger(purchase.total_value_cents) ? purchase.total_value_cents : null,
+      purchaseInput.merchant_reference || null,
+      purchaseInput.purchase_type || null,
+      purchaseInput.description || txInput.description,
+      Number.isInteger(purchaseInput.total_value_cents) ? purchaseInput.total_value_cents : null,
       purchaseCurrency,
     ));
   } else {
@@ -113,8 +154,9 @@ export async function createTransactionRequest(request, env) {
       terms_version, terms_snapshot, terms_snapshot_sha256,
       refund_policy_snapshot, cancellation_policy_snapshot,
       integrity_fee_earned_cents, fee_collection_method,
-      payment_access_token, payment_access_expires_at, creation_idempotency_key
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      payment_access_token, payment_access_expires_at,
+      creation_idempotency_key, creation_request_sha256
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     txId,
     purchaseId,
@@ -132,8 +174,9 @@ export async function createTransactionRequest(request, env) {
     integrityFee,
     collectionMethod,
     paymentToken,
-    txInput.payment_access_expires_at || null,
+    paymentAccessExpiresAt,
     creationKey || null,
+    requestHash,
   ));
 
   statements.push(env.DB.prepare(`
@@ -144,7 +187,7 @@ export async function createTransactionRequest(request, env) {
     eventId,
     txId,
     sourceEventId,
-    JSON.stringify({ purchase_id: purchaseId, merchant_id: merchant.id }),
+    JSON.stringify({ purchase_id: purchaseId, merchant_id: merchant.id, creation_request_sha256: requestHash }),
   ));
 
   try {
@@ -152,7 +195,7 @@ export async function createTransactionRequest(request, env) {
   } catch (error) {
     if (creationKey) {
       const existing = await findExisting(env, merchant.id, creationKey);
-      if (existing) return existingResponse(env, existing);
+      if (existing) return existingResponse(env, existing, requestHash);
     }
     throw error;
   }
@@ -165,14 +208,21 @@ export async function createTransactionRequest(request, env) {
 
 async function findExisting(env, merchantId, creationKey) {
   return env.DB.prepare(`
-    SELECT id, payment_access_token
+    SELECT id, payment_access_token, creation_request_sha256
     FROM transactions
     WHERE merchant_id = ? AND creation_idempotency_key = ?
     LIMIT 1
   `).bind(merchantId, creationKey).first();
 }
 
-async function existingResponse(env, existing) {
+async function existingResponse(env, existing, requestHash) {
+  if (!existing.creation_request_sha256 || existing.creation_request_sha256 !== requestHash) {
+    return json({
+      error: 'Idempotency-Key was already used for a different transaction request',
+      transaction_id: existing.id,
+    }, 409);
+  }
+
   return json({
     transaction: await getTransaction(env, existing.id),
     payment_path: existing.payment_access_token
@@ -195,6 +245,22 @@ function v1MerchantProblem(merchant, env) {
   if (integrationMode !== 'STRIPE_CONNECT') return 'Builtegrity V1 requires the Stripe Connect integration';
   if (!accountId.startsWith('acct_')) return 'Merchant does not have a usable Stripe connected account';
   return null;
+}
+
+function normalizeExpiry(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const time = Date.parse(String(value));
+  if (!Number.isFinite(time) || time <= Date.now()) return null;
+  return new Date(time).toISOString();
+}
+
+function stableStringify(value) {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    const entries = Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`);
+    return `{${entries.join(',')}}`;
+  }
+  return JSON.stringify(value);
 }
 
 async function sha256Hex(value) {
