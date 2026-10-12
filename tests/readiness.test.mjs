@@ -13,6 +13,7 @@ function completeTestEnv(overrides = {}) {
     STRIPE_SECRET_KEY: 'sk_test_example',
     STRIPE_WEBHOOK_SECRET: 'whsec_example',
     STRIPE_CONNECT_CLIENT_ID: 'ca_example',
+    STRIPE_API_VERSION: '2025-09-30.clover',
     CLERK_PUBLISHABLE_KEY: 'pk_test_example',
     CLERK_JWT_KEY: 'pem',
     CLERK_ISSUER: 'https://example.clerk.accounts.dev',
@@ -48,15 +49,17 @@ function fakeDb({ schema = true, watchdog = null } = {}) {
   };
 }
 
-test('TEST readiness requires configuration used by redirects and Clerk auth', () => {
+test('TEST readiness requires configuration used by redirects, Stripe and Clerk auth', () => {
   const env = completeTestEnv({
     APP_BASE_URL: '',
+    STRIPE_API_VERSION: '',
     CLERK_PUBLISHABLE_KEY: '',
     CLERK_AUTHORIZED_PARTIES: '',
     CLERK_SIGN_IN_URL: '',
   });
   const missing = requiredConfig(env, 'TEST');
   assert.ok(missing.includes('APP_BASE_URL'));
+  assert.ok(missing.includes('STRIPE_API_VERSION'));
   assert.ok(missing.includes('CLERK_PUBLISHABLE_KEY'));
   assert.ok(missing.includes('CLERK_AUTHORIZED_PARTIES'));
   assert.ok(missing.includes('CLERK_SIGN_IN_URL'));
