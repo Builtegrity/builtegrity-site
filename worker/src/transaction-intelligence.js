@@ -225,23 +225,56 @@ export async function recordTransactionSourceObject(env, input = {}) {
   if (!tx) throw notFound(`Transaction not found: ${input.transaction_id}`);
   if (!input.external_id || !input.object_type) throw badRequest('object_type and external_id are required');
 
-  const id = await allocateId(env, 'SRC', 8);
-  const result = await env.DB.prepare(`
-    INSERT OR IGNORE INTO transaction_source_objects
-      (id, transaction_id, merchant_id, source_system, object_type, external_id, external_parent_id, metadata_json, observed_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
-  `).bind(
-    id,
-    tx.id,
-    tx.merchant_id,
-    String(input.source_system || 'BUILTEGRITY').toUpperCase(),
-    String(input.object_type).toUpperCase(),
-    String(input.external_id),
-    input.external_parent_id || null,
-    JSON.stringify(input.metadata || {}),
-    input.observed_at || null,
-  ).run();
-  return { id, inserted: Number(result.meta?.changes || 0) > 0 };
+  const sourceSystem = String(input.source_system || 'BUILTEGRITY').toUpperCase();
+  const objectType = String(input.object_type).toUpperCase();
+  const externalId = String(input.external_id);
+  let object = await env.DB.prepare(`
+    SELECT id FROM source_objects
+    WHERE merchant_id = ? AND source_system = ? AND object_type = ? AND external_id = ?
+    LIMIT 1
+  `).bind(tx.merchant_id, sourceSystem, objectType, externalId).first();
+
+  let created = false;
+  if (!object) {
+    const id = await allocateId(env, 'OBJ', 8);
+    const result = await env.DB.prepare(`
+      INSERT OR IGNORE INTO source_objects
+        (id, merchant_id, source_system, object_type, external_id, external_parent_id, metadata_json, first_observed_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+    `).bind(
+      id,
+      tx.merchant_id,
+      sourceSystem,
+      objectType,
+      externalId,
+      input.external_parent_id || null,
+      JSON.stringify(input.metadata || {}),
+      input.observed_at || null,
+    ).run();
+    created = Number(result.meta?.changes || 0) > 0;
+    object = created
+      ? { id }
+      : await env.DB.prepare(`
+          SELECT id FROM source_objects
+          WHERE merchant_id = ? AND source_system = ? AND object_type = ? AND external_id = ?
+          LIMIT 1
+        `).bind(tx.merchant_id, sourceSystem, objectType, externalId).first();
+  }
+
+  if (!object) throw new Error('Unable to resolve source object');
+  const relationshipType = String(input.relationship_type || relationshipForObjectType(objectType)).toUpperCase();
+  const linkResult = await env.DB.prepare(`
+    INSERT OR IGNORE INTO transaction_source_object_links
+      (transaction_id, source_object_id, relationship_type, linked_at)
+    VALUES (?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP))
+  `).bind(tx.id, object.id, relationshipType, input.observed_at || null).run();
+
+  return {
+    id: object.id,
+    created,
+    linked: Number(linkResult.meta?.changes || 0) > 0,
+    relationship_type: relationshipType,
+  };
 }
 
 export async function getMerchantTransactionProfile(env, merchantId) {
@@ -288,7 +321,13 @@ export async function getTransactionGraph(env, transactionId) {
   const [components, artifacts, objects] = await Promise.all([
     env.DB.prepare(`SELECT * FROM transaction_component_stream WHERE transaction_id = ? ORDER BY observed_at, id`).bind(transactionId).all(),
     env.DB.prepare(`SELECT * FROM transaction_artifacts WHERE transaction_id = ? ORDER BY observed_at, id`).bind(transactionId).all(),
-    env.DB.prepare(`SELECT * FROM transaction_source_objects WHERE transaction_id = ? ORDER BY observed_at, id`).bind(transactionId).all(),
+    env.DB.prepare(`
+      SELECT so.*, l.relationship_type, l.linked_at
+      FROM transaction_source_object_links l
+      JOIN source_objects so ON so.id = l.source_object_id
+      WHERE l.transaction_id = ?
+      ORDER BY l.linked_at, so.object_type, so.id
+    `).bind(transactionId).all(),
   ]);
 
   const componentRows = (components.results || []).map((row) => ({ ...row }));
@@ -461,6 +500,21 @@ function rejectTruthMutation(body) {
     if (Object.prototype.hasOwnProperty.call(body, key)) {
       throw badRequest(`Merchant preferences cannot modify accounting truth: ${key}`);
     }
+  }
+}
+
+function relationshipForObjectType(objectType) {
+  switch (objectType) {
+    case 'CHECKOUT_SESSION': return 'CREATED_BY';
+    case 'PAYMENT_INTENT':
+    case 'CHARGE':
+    case 'BALANCE_TRANSACTION': return 'PAYMENT';
+    case 'APPLICATION_FEE': return 'FEE';
+    case 'REFUND': return 'REFUND';
+    case 'DISPUTE': return 'DISPUTE';
+    case 'PAYOUT': return 'PAYOUT';
+    case 'RECEIPT': return 'EVIDENCE';
+    default: return 'RELATED';
   }
 }
 
