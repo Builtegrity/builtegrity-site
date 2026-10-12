@@ -23,6 +23,7 @@ jobs:
           node --check worker/src/index.js
           node --check worker/src/runtime.js
           node --check public/console/app.js
+          node --check public/console/stripe-controls.js
           node --check public/pay/app.js
           node --check public/pay/success/app.js
 
