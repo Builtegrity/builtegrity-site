@@ -5,6 +5,9 @@ import {
   deauthorizeStripeAccount,
   exchangeStripeOAuthCode,
 } from './stripe-oauth.js';
+import { verifyStripeSignature } from './stripe.js';
+import { processStripeWebhook } from './webhooks.js';
+import { processStripeAccountWebhook } from './stripe-account-events.js';
 import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
 import { handlePublicRecordRoute, serveOperatorTransactionPdf } from './records.js';
 import {
@@ -46,6 +49,12 @@ export default {
           missing_config_count: readiness.missing_config_count,
           last_watchdog: readiness.last_watchdog,
         }, readiness.ok ? 200 : 503);
+      }
+
+      // Production webhook entrypoint. Account-level events are routed to merchant self-service;
+      // transaction events continue through the transaction engine's idempotent processor.
+      if (path === '/api/webhooks/stripe' && request.method === 'POST') {
+        return handleRuntimeStripeWebhook(request, env);
       }
 
       const authResponse = await handleAuthRoute(request, env);
@@ -125,6 +134,19 @@ export default {
         const principal = await requireOperatorOrRedirect(request, env, url);
         if (principal instanceof Response) return principal;
         return env.ASSETS.fetch(request);
+      }
+
+      // Catastrophic controls are enforced before requests enter the core engine.
+      if (path === '/api/transactions' && request.method === 'POST') {
+        await requireOperator(request, env);
+        await requirePlatformControl(env, 'transaction_creation_enabled', 'New transaction creation');
+        return forwardAuthenticatedToCore(request, env, ctx);
+      }
+
+      const publicCheckoutMatch = path.match(/^\/api\/payments\/[^/]+\/checkout$/);
+      if (publicCheckoutMatch && request.method === 'POST') {
+        await requirePlatformControl(env, 'payment_creation_enabled', 'New payment creation');
+        return core.fetch(request, env, ctx);
       }
 
       if (isInternalApi(path)) {
@@ -215,11 +237,24 @@ async function requireOperatorOrRedirect(request, env, url) {
   }
 }
 
+async function handleRuntimeStripeWebhook(request, env) {
+  if (!env.STRIPE_WEBHOOK_SECRET) return json({ error: 'Stripe webhook secret is not configured' }, 503);
+  const rawBody = await request.text();
+  const signature = request.headers.get('Stripe-Signature');
+  const valid = await verifyStripeSignature(rawBody, signature, env.STRIPE_WEBHOOK_SECRET);
+  if (!valid) return json({ error: 'Invalid Stripe signature' }, 400);
+
+  let event;
+  try { event = JSON.parse(rawBody); } catch { return json({ error: 'Invalid JSON' }, 400); }
+  const accountEvent = event.type === 'account.updated' || event.type === 'account.application.deauthorized';
+  const result = accountEvent
+    ? await processStripeAccountWebhook(env, event)
+    : await processStripeWebhook(env, event);
+  return json({ received: true, ...result });
+}
+
 async function handleConnectUrl(env, merchantId) {
-  const controls = await env.DB.prepare(`SELECT merchant_onboarding_enabled, reason FROM platform_controls WHERE id = 'GLOBAL'`).first().catch(() => null);
-  if (controls && Number(controls.merchant_onboarding_enabled) !== 1) {
-    return json({ error: 'Merchant onboarding is temporarily paused by Builtegrity safety controls', reason: controls.reason || null }, 503);
-  }
+  await requirePlatformControl(env, 'merchant_onboarding_enabled', 'Merchant onboarding');
 
   const merchant = await env.DB.prepare(`SELECT id, email FROM merchants WHERE id = ?`).bind(merchantId).first();
   if (!merchant) return json({ error: 'Merchant not found' }, 404);
@@ -311,6 +346,16 @@ async function handleDisconnect(env, merchantId) {
   `).bind(merchantId).run();
 
   return json({ disconnected: true, stripe_user_id: result.stripe_user_id || null });
+}
+
+async function requirePlatformControl(env, column, label) {
+  const allowed = new Set(['transaction_creation_enabled', 'payment_creation_enabled', 'merchant_onboarding_enabled']);
+  if (!allowed.has(column)) throw new Error(`Unknown platform control: ${column}`);
+  const controls = await env.DB.prepare(`SELECT ${column} AS enabled, reason FROM platform_controls WHERE id = 'GLOBAL'`).first().catch(() => null);
+  if (!controls || Number(controls.enabled) === 1) return;
+  const error = new Error(`${label} is temporarily paused by Builtegrity safety controls${controls.reason ? `: ${controls.reason}` : ''}`);
+  error.status = 503;
+  throw error;
 }
 
 function redirectToConsole(env, values) {
