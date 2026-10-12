@@ -171,18 +171,34 @@ export async function recomputeIntegrity(env, transactionId) {
   `).bind(transactionId).first();
   if (!tx) throw new Error(`Transaction not found: ${transactionId}`);
 
-  const open = await env.DB.prepare(`
-    SELECT COUNT(*) AS count
-    FROM transaction_exceptions
-    WHERE transaction_id = ? AND status = 'OPEN'
-  `).bind(transactionId).first();
+  const [open, closedDisputes] = await Promise.all([
+    env.DB.prepare(`
+      SELECT COUNT(*) AS count
+      FROM transaction_exceptions
+      WHERE transaction_id = ? AND status = 'OPEN'
+    `).bind(transactionId).first(),
+    env.DB.prepare(`
+      SELECT event_data_json
+      FROM transaction_events
+      WHERE transaction_id = ? AND event_type = 'DISPUTE_CLOSED'
+      ORDER BY event_at ASC, created_at ASC
+    `).bind(transactionId).all(),
+  ]);
 
   const hasOpenExceptions = Number(open?.count || 0) > 0;
+  const hasAdverseClosedDispute = (closedDisputes.results || []).some((event) => {
+    const data = parseJson(event.event_data_json);
+    const status = String(data?.status || '').toLowerCase();
+    return status && status !== 'won';
+  });
+
   const expectedTermsHash = tx.terms_snapshot ? await sha256Hex(tx.terms_snapshot) : null;
   const termsIntegrity = Number(tx.consent_accepted) === 1 &&
     Boolean(expectedTermsHash) &&
     expectedTermsHash === tx.terms_snapshot_sha256;
-  const paymentIntegrity = String(tx.payment_status || '').toLowerCase() === 'succeeded';
+  const paymentStatus = String(tx.payment_status || '').toLowerCase();
+  const paymentIntegrity = paymentStatus === 'succeeded';
+  const refunded = paymentStatus === 'refunded' || paymentStatus === 'partially_refunded';
   const amountIntegrity = Number(tx.customer_paid_cents) === Number(tx.amount_cents);
   const feeIntegrity = tx.fee_collection_method !== 'STRIPE_APPLICATION_FEE' ||
     Number(tx.integrity_fee_collected_cents || 0) >= Number(tx.integrity_fee_earned_cents || 0);
@@ -191,6 +207,7 @@ export async function recomputeIntegrity(env, transactionId) {
     tx.actual_merchant_net_cents !== null &&
     tx.actual_merchant_net_cents !== undefined &&
     Number(tx.actual_merchant_net_cents) === Number(tx.expected_merchant_net_cents);
+  const postSettlementReviewRequired = refunded || hasAdverseClosedDispute;
 
   const fullyAccounted =
     tx.lifecycle_status === 'COMPLETE' &&
@@ -199,6 +216,7 @@ export async function recomputeIntegrity(env, transactionId) {
     amountIntegrity &&
     feeIntegrity &&
     payoutNetIntegrity &&
+    !postSettlementReviewRequired &&
     Boolean(tx.stripe_payment_intent_id) &&
     Boolean(tx.stripe_charge_id) &&
     Boolean(tx.stripe_balance_transaction_id) &&
@@ -206,8 +224,9 @@ export async function recomputeIntegrity(env, transactionId) {
     Number(tx.payout_accounted) === 1 &&
     String(tx.processor_payout_status || '').toLowerCase() === 'paid';
 
-  const exceptionStatus = hasOpenExceptions ? 'NEEDS_ATTENTION' : 'NONE';
-  const integrityStatus = hasOpenExceptions
+  const needsAttention = hasOpenExceptions || postSettlementReviewRequired;
+  const exceptionStatus = needsAttention ? 'NEEDS_ATTENTION' : 'NONE';
+  const integrityStatus = needsAttention
     ? 'NEEDS_ATTENTION'
     : fullyAccounted
       ? 'ACCOUNTED'
@@ -230,6 +249,7 @@ export async function recomputeIntegrity(env, transactionId) {
       amount_integrity: amountIntegrity,
       fee_integrity: feeIntegrity,
       payout_net_integrity: payoutNetIntegrity,
+      post_settlement_review_required: postSettlementReviewRequired,
     },
   };
 }
