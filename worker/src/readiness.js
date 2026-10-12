@@ -153,11 +153,28 @@ export function isKnownWatchdogStage(stage) {
 
 export function requiredConfig(env, stage = watchdogStage(env)) {
   if (!isKnownWatchdogStage(stage)) return ['WATCHDOG_STAGE'];
-  return stageRequirements(stage).filter((name) => !String(env[name] || '').trim());
+  return stageRequirements(stage).filter((name) => !isConfiguredValue(env[name]));
 }
 
 export function watchdogStage(env) {
   return String(env.WATCHDOG_STAGE || 'PREVIEW').trim().toUpperCase();
+}
+
+export function transactionStageProblem(env) {
+  const stage = watchdogStage(env);
+  if (!isKnownWatchdogStage(stage)) {
+    return `Builtegrity runtime stage ${stage || '(empty)'} is invalid`;
+  }
+  if (stage === 'PREVIEW') {
+    return 'Builtegrity is in PREVIEW and protected payment operations are disabled';
+  }
+  return null;
+}
+
+function isConfiguredValue(value) {
+  const text = String(value || '').trim();
+  if (!text) return false;
+  return !/(?:REPLACE(?:_|\.|$)|CHANGE_ME|YOUR_)/i.test(text);
 }
 
 function watchdogMaxAgeMinutes(env) {
