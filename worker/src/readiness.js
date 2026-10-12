@@ -75,10 +75,21 @@ export async function systemReadiness(env) {
       const row = await env.DB.prepare('SELECT 1 AS ok').first();
       database = Number(row?.ok || 0) === 1;
 
-      // This column only exists after the current migration chain. Querying it is a
-      // cheap fail-closed check that the transaction schema is not merely an empty D1.
-      await env.DB.prepare('SELECT stripe_checkout_expires_at FROM transactions LIMIT 1').first();
+      // Fail closed unless the current migration chain, including atomic audit
+      // evidence triggers, is actually present in D1.
+      await env.DB.prepare('SELECT stripe_checkout_expires_at, creation_idempotency_key FROM transactions LIMIT 1').first();
       await env.DB.prepare('SELECT id FROM system_watchdog_runs LIMIT 1').first();
+      const consentTrigger = await env.DB.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'trigger' AND name = 'transactions_consent_audit_evidence'
+      `).first();
+      const checkoutTrigger = await env.DB.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'trigger' AND name = 'transactions_checkout_audit_evidence'
+      `).first();
+      if (!consentTrigger || !checkoutTrigger) {
+        throw new Error('atomic audit evidence triggers are missing');
+      }
       schemaReady = true;
 
       lastWatchdog = await env.DB.prepare(`
