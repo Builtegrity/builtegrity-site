@@ -1,6 +1,6 @@
 # Builtegrity provider-independence rule
 
-Builtegrity must remain operable if ChatGPT, Work, a connector, an authentication provider, or a hosting vendor is removed.
+Builtegrity must remain operable if ChatGPT, Work, a connector, an authentication provider, a payment processor adapter, or a hosting vendor is removed.
 
 ## Canonical ownership
 
@@ -8,19 +8,32 @@ Builtegrity must remain operable if ChatGPT, Work, a connector, an authenticatio
 - Runtime accounts, domains, secrets, databases, payment-platform accounts, and backups belong to Builtegrity/the owner rather than an AI workspace.
 - ChatGPT and Work may assist with engineering and operations, but they are not runtime dependencies.
 
+## Locked V1 service boundaries
+
+- GitHub: source code, migrations, CI, technical documentation and infrastructure configuration.
+- Cloudflare Workers + Static Assets: frontend/site delivery, APIs, Stripe webhooks and transaction-processing runtime. Cloudflare Pages is not a separate V1 dependency.
+- Cloudflare D1: operational relational database and live system of record.
+- Stripe Connect: Processor Adapter #1 and processor financial truth.
+- Clerk: primary application identity/session provider.
+- Resend: transactional email adapter.
+- Cloudflare Turnstile: public-route bot/abuse protection where appropriate.
+- Google Drive / Sheets: company planning and human-readable admin artifacts only; never the transaction backend.
+
 ## Authentication boundary
 
-The Worker runtime owns authentication before requests reach the transaction engine.
+Clerk is the primary V1 identity provider, but it is not the authorization database.
+
+The Worker validates the Clerk session/JWT at the application edge. Builtegrity's own D1 data model owns merchant memberships, roles, tenant boundaries and record permissions. This separation prevents the transaction system from becoming structurally dependent on Clerk-specific tenancy semantics.
 
 Current provider:
 
-- `AUTH_PROVIDER=OWNER_SESSION`
-- owner password is stored as a runtime secret (`OWNER_PASSWORD`)
-- session signing uses a separate runtime secret (`OWNER_SESSION_SECRET`)
-- the browser receives only an HttpOnly signed session cookie
-- no admin/access key is stored in sessionStorage/localStorage or typed into the transaction console
+- `AUTH_PROVIDER=CLERK`
+- Clerk supplies the application identity/session.
+- `worker/src/clerk-auth.js` verifies RS256 JWT signatures using Clerk public verification material and validates issuer/authorized-party constraints.
+- owner/admin access can be restricted to configured Clerk user IDs initially; this should graduate to D1-backed user/role/membership records as merchant multi-tenancy is introduced.
+- Builtegrity never stores the user's Clerk password.
 
-Future providers can be added in `worker/src/auth.js` (for example an OIDC/SSO adapter) without changing transaction, payment, event, exception, or Stripe business logic.
+Alternative identity providers remain adapter-level replacements. The existing Cloudflare Access adapter may be retained for optional infrastructure defense-in-depth but is not the primary product login. The local owner-session adapter exists only as a portability/development fallback.
 
 Unsupported providers fail closed.
 
@@ -53,6 +66,14 @@ Disconnecting ChatGPT must not interrupt the product.
 
 Stripe is Processor Adapter #1, not the identity of the product. Transaction records store normalized processor identifiers and lifecycle state. Additional adapters (Stripe App, Partner API, Square, other processors) should feed the same core transaction/event/exception model rather than creating a second product architecture.
 
+## Email boundary
+
+Resend is an outbound delivery adapter. Transaction state must never depend on successful email delivery. Payment lifecycle and webhook processing complete independently; notification failures are observed/retried separately.
+
+## Abuse-protection boundary
+
+Turnstile may protect appropriate public form or action entry points. It must never be used as authentication and must not sit in front of processor webhook endpoints such as Stripe webhooks.
+
 ## Hosting/data boundary
 
 Cloudflare Workers + D1 are the initial runtime target, not a permanent business dependency. Keep:
@@ -64,6 +85,10 @@ Cloudflare Workers + D1 are the initial runtime target, not a permanent business
 - domain ownership independent from the hosting provider
 
 A future hosting/database migration should change infrastructure adapters, not the transaction model.
+
+## Secret-location rule
+
+Secrets remain inside owner-controlled provider/runtime secret stores. Google Drive, Google Sheets, GitHub source, and chat may document the *name and intended location* of a credential, but never the credential value itself.
 
 ## Switching rule
 

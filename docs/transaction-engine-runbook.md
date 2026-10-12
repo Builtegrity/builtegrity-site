@@ -2,13 +2,17 @@
 
 ## Current architecture
 
-The V1 runtime is a Cloudflare Worker with static assets plus a D1 database. Stripe remains the payment processor. Builtegrity stores transaction context, consent, normalized Stripe references, event history, exceptions, economics, and automatic-payout reconciliation.
+The V1 runtime is a Cloudflare Worker with Static Assets plus a D1 database. The same Worker is the frontend/site and backend runtime; Cloudflare Pages is not a separate dependency. Stripe remains the payment processor. Clerk is the application identity/session provider. Resend is the transactional-email adapter, and Cloudflare Turnstile is the public-route abuse-protection adapter.
+
+Builtegrity stores transaction context, consent, normalized Stripe references, event history, exceptions, economics, and automatic-payout reconciliation in D1.
 
 Core hierarchy:
 
 `Partner -> Merchant -> merchant-scoped Customer -> Purchase -> Transaction -> Events / Exceptions`
 
 `PARTNER-0001` is the system-owned house channel for direct merchants.
+
+Identity and authorization are deliberately separate: Clerk proves who the user is; Builtegrity/D1 decides which merchant, role, and records that identity can access.
 
 ## Local setup
 
@@ -19,13 +23,35 @@ Core hierarchy:
    - `STRIPE_SECRET_KEY`
    - `STRIPE_WEBHOOK_SECRET`
    - `STRIPE_CONNECT_CLIENT_ID`
-   - `INTERNAL_ADMIN_TOKEN`
-5. Run `npm install`.
-6. Run `npm run db:migrate:local`.
-7. Run `npm run db:seed:local`.
-8. Run `npm run dev`.
-9. Open `/console/` for the internal console.
-10. Open `/pay/?token=test-tx-0001-token` for the fake customer payment page.
+5. Add the Clerk development/test application values from the owner-controlled Clerk application:
+   - `CLERK_JWT_KEY`
+   - `CLERK_ISSUER`
+   - `CLERK_PUBLISHABLE_KEY`
+   - `CLERK_AUTHORIZED_PARTIES`
+   - `CLERK_ADMIN_USER_IDS`
+   - `CLERK_SIGN_IN_URL`
+   - `CLERK_USER_URL`
+6. Resend and Turnstile values are optional until their pilot integration pass; never commit their secrets.
+7. Run `npm install`.
+8. Run `npm run db:migrate:local`.
+9. Run `npm run db:seed:local`.
+10. Run `npm run dev`.
+11. Open `/console/` for the internal console.
+12. Open `/pay/?token=test-tx-0001-token` for the fake customer payment page.
+
+No persistent `INTERNAL_ADMIN_TOKEN` is configured. The runtime creates a one-request in-memory bridge value only after application authentication succeeds.
+
+## Application authentication
+
+Primary V1 provider: Clerk.
+
+- `/login/` hands interactive sign-in to the configured Clerk Account Portal.
+- the Worker verifies the Clerk JWT/session signature and issuer before allowing authenticated application access;
+- `CLERK_AUTHORIZED_PARTIES` restricts approved application origins/parties where applicable;
+- `CLERK_ADMIN_USER_IDS` is the temporary pre-multi-tenant owner/operator allowlist;
+- merchant membership and role authorization must move into D1 before real merchant multi-tenancy.
+
+Cloudflare Access remains an optional defense-in-depth adapter for infrastructure/internal surfaces. It is not the primary product identity system.
 
 ## Stripe Connect onboarding
 
@@ -73,13 +99,15 @@ Public payment URLs use only the random token, never a guessable TX ID.
 6. Card data is entered only into Stripe-hosted Checkout.
 7. Browser return does not mark the payment successful; Stripe server-side events do.
 
+Turnstile may be added to appropriate public pre-payment or abuse-sensitive actions. It must never replace customer consent, authentication, or Stripe webhook verification.
+
 ## Stripe event handling
 
 The webhook endpoint is:
 
 `POST /api/webhooks/stripe`
 
-It verifies the raw Stripe payload against `Stripe-Signature` and `STRIPE_WEBHOOK_SECRET` before processing.
+It verifies the raw Stripe payload against `Stripe-Signature` and `STRIPE_WEBHOOK_SECRET` before processing. Turnstile and Clerk must not sit in front of the Stripe webhook route.
 
 Important events handled in V1:
 
@@ -97,6 +125,19 @@ Important events handled in V1:
 - `payout.failed`
 
 Webhook receipts are idempotent, and transaction events are append-only.
+
+## Transactional email
+
+Resend is an outbound notification adapter only. A failed confirmation/alert email must never rewrite or block payment truth, transaction lifecycle, or payout reconciliation.
+
+Initial intended messages:
+
+- customer payment/transaction confirmation;
+- merchant payment confirmation;
+- exception / needs-attention alert;
+- selected operational notifications.
+
+Use a Builtegrity-owned Resend setup and sending domain. Store `RESEND_API_KEY` only in the Cloudflare Worker secret store.
 
 ## Lifecycle
 
@@ -143,12 +184,15 @@ Do not treat these as supported without a new design review:
 
 Before the first live payment:
 
-- deploy the Worker under an HTTPS Builtegrity domain;
+- deploy the Worker + Static Assets under HTTPS Builtegrity domain(s);
 - create the production D1 database and apply migrations;
 - set `DEV_MODE=false`;
-- replace temporary internal-token access with production authentication before outside users receive console access;
+- configure Clerk production application/authorized origins and D1-backed tenant authorization before merchant multi-tenancy;
 - configure the Stripe Connect redirect URI exactly;
 - configure the Stripe Connect webhook endpoint;
+- store Stripe, Resend, Turnstile and other secrets only in Cloudflare/provider secret stores;
+- configure a Builtegrity-owned Resend sending domain before depending on transactional email;
+- add Turnstile only to appropriate public surfaces;
 - use live-mode Stripe keys only after the production readiness gate is passed;
 - establish backup/export and outage-recovery procedures;
 - review merchant agreement, Privacy Notice, Terms, fee disclosure, refund-fee treatment, and the exact definition of `ACCOUNTED`.

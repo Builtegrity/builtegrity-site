@@ -3,8 +3,7 @@ name: Transaction Engine CI
 on:
   push:
     branches:
-      - engine-runtime-v1
-      - provider-independent-auth
+      - realign-v1-stack
       - main
   pull_request:
   workflow_dispatch:
@@ -17,6 +16,7 @@ jobs:
 
       - name: Check JavaScript syntax
         run: |
+          node --check worker/src/clerk-auth.js
           node --check worker/src/cloudflare-access.js
           node --check worker/src/auth.js
           node --check worker/src/db.js
@@ -31,7 +31,7 @@ jobs:
           node --check public/pay/app.js
           node --check public/pay/success/app.js
 
-      - name: Guard provider-independent admin access
+      - name: Guard V1 auth and provider independence
         run: |
           if grep -R "builtegrity_admin_token\|X-Builtegrity-Admin" public .dev.vars.example wrangler.toml.example; then
             echo "Browser/admin-key authentication must not be reintroduced"
@@ -41,12 +41,13 @@ jobs:
             echo "Persistent internal admin tokens are not allowed"
             exit 1
           fi
-          grep -q 'AUTH_PROVIDER = "CLOUDFLARE_ACCESS"' wrangler.toml.example
-          grep -q 'ADMIN_HOSTNAME = "admin.builtegrity.com"' wrangler.toml.example
-          grep -q 'CF_ACCESS_TEAM_DOMAIN' wrangler.toml.example
-          grep -q 'CF_ACCESS_AUD' wrangler.toml.example
-          grep -q "Cf-Access-Jwt-Assertion" worker/src/cloudflare-access.js
-          grep -q "RSASSA-PKCS1-v1_5" worker/src/cloudflare-access.js
+          grep -q 'AUTH_PROVIDER = "CLERK"' wrangler.toml.example
+          grep -q 'CLERK_ADMIN_USER_IDS' wrangler.toml.example
+          grep -q 'CLERK_AUTHORIZED_PARTIES' wrangler.toml.example
+          grep -q 'RSASSA-PKCS1-v1_5' worker/src/clerk-auth.js
+          grep -q 'STRIPE_CONNECT_CLIENT_ID' wrangler.toml.example
+          grep -q 'TURNSTILE_SITE_KEY' wrangler.toml.example
+          grep -q 'RESEND_API_KEY' .dev.vars.example
 
       - name: Build D1-compatible schema in SQLite
         run: |

@@ -1,9 +1,21 @@
 # Copy to .dev.vars for local development. Never commit real secrets.
-# Production owner/admin auth uses Cloudflare Access, so no Builtegrity password secret is required.
+
+# Stripe
 STRIPE_SECRET_KEY=sk_test_REPLACE_ME
 STRIPE_WEBHOOK_SECRET=whsec_REPLACE_ME
 STRIPE_CONNECT_CLIENT_ID=ca_REPLACE_ME
 
-# Only needed if deliberately switching AUTH_PROVIDER back to OWNER_SESSION for portability/testing:
+# Clerk
+# CLERK_JWT_KEY is the PEM public JWT verification key from Clerk. It is not a password,
+# but keep environment-specific configuration out of source control anyway.
+CLERK_JWT_KEY=-----BEGIN PUBLIC KEY-----\nREPLACE_ME\n-----END PUBLIC KEY-----
+
+# Resend
+RESEND_API_KEY=re_REPLACE_ME
+
+# Cloudflare Turnstile
+TURNSTILE_SECRET_KEY=REPLACE_ME
+
+# Optional local-only portability fallback if deliberately setting AUTH_PROVIDER=OWNER_SESSION:
 # OWNER_PASSWORD=replace-with-a-strong-owner-password
 # OWNER_SESSION_SECRET=replace-with-a-long-random-session-secret

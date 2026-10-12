@@ -6,11 +6,26 @@ The original Builtegrity roofing-lead concept is retired. Builtegrity is current
 
 Builtegrity does not process card data itself. Stripe remains the processor. The V1 engine connects commercial context and customer consent to Stripe payment, fee, balance-transaction, payout, refund, dispute, and exception records.
 
+## Locked V1 stack
+
+- GitHub — canonical source for code, migrations, CI, technical docs, and infrastructure configuration.
+- Cloudflare Workers + Static Assets — frontend/site hosting, API runtime, Stripe webhooks, and transaction processing logic. Pages is not a separate dependency.
+- Cloudflare D1 — operational relational database for partners, merchants, users/relationships, customers, purchases, transactions, events, exceptions, and processor references.
+- Stripe Connect — Processor Adapter #1, merchant connection, Checkout/direct-charge flow, application fees, processor financial records, and payout data.
+- Clerk — primary application identity/session layer for owner/staff and future merchant users. Builtegrity retains authorization/tenant relationships in its own database.
+- Resend — transactional email delivery such as payment confirmations, exception alerts, and merchant notifications.
+- Cloudflare Turnstile — abuse/bot protection on appropriate public entry points.
+- Google Drive/Sheets — company strategy, planning, economics, pilot pipeline, compliance planning, and human-readable specifications only; never the live transaction system.
+
+Optional/future adapters such as Cloudflare Access, R2, Queues, Square, and partner APIs may be added without changing the core transaction model.
+
 ## V1 data model
 
 `Partner -> Merchant -> merchant-scoped Customer -> Purchase -> Transaction -> Events / Exceptions`
 
 `PARTNER-0001` is the internal house channel for direct merchants. Customers are deliberately merchant-scoped. Purchases and transactions are separate because one purchase can have multiple payments. Transaction events are append-only.
+
+Identity is intentionally separate from tenancy. Clerk proves who a user is; Builtegrity decides which merchant(s), roles, and records that identity may access.
 
 ## V1 lifecycle
 
@@ -30,12 +45,14 @@ The current implementation targets:
 
 - Cloudflare Worker
 - Cloudflare D1
-- static Worker assets for the internal console and customer payment pages
+- Worker Static Assets for the internal console and customer payment pages
+- Clerk JWT verification at the application edge
 - Stripe Connect direct charges for compatible existing Stripe merchants
 - Stripe-hosted Checkout
 - Connect application fees as the first fee-collection rail
+- Resend/Turnstile configuration hooks for the next integration pass
 
-The code also keeps `integration_mode` and `fee_collection_method` separate so Stripe Apps, partner APIs, Square, or other future adapters do not require rebuilding the transaction model.
+The code also keeps `integration_mode`, authentication adapters, and `fee_collection_method` separate so Stripe Apps, partner APIs, Square, replacement identity providers, or other future adapters do not require rebuilding the transaction model.
 
 ## TX-0001
 
@@ -52,6 +69,7 @@ It starts at `CREATED / INCOMPLETE` and can be exercised through the development
 
 ## Important paths
 
+- `/login/` — application sign-in handoff to Clerk
 - `/console/` — internal transaction console
 - `/pay/?token=...` — customer transaction/terms page
 - `/api/webhooks/stripe` — signed Stripe webhook endpoint
@@ -59,6 +77,7 @@ It starts at `CREATED / INCOMPLETE` and can be exercised through the development
 - `transaction-engine/seed-tx-0001.sql` — fake proving transaction
 - `docs/transaction-engine-runbook.md` — setup and operating runbook
 - `docs/production-readiness-gate.md` — hard gate before any live payment
+- `docs/provider-independence.md` — provider/ownership boundary
 
 ## Status
 

@@ -3,23 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Builtegrity Owner Sign In</title>
+  <title>Builtegrity Sign In</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main class="shell" style="max-width:560px;padding-top:12vh">
     <section class="panel">
-      <p class="eyebrow">Builtegrity · Owner access</p>
+      <p class="eyebrow">Builtegrity · Secure access</p>
       <h1>Sign in</h1>
-      <p class="muted">Authentication is handled by the active provider. No ChatGPT connection or browser-stored admin key is required.</p>
-      <form id="loginForm">
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required>
-        <div class="actions">
-          <button id="loginButton" type="submit">Sign in</button>
-        </div>
-        <p id="loginStatus" class="muted"></p>
-      </form>
+      <p class="muted">Builtegrity uses Clerk for application identity. Builtegrity does not store your login password.</p>
+      <div class="actions">
+        <button id="loginButton" type="button">Continue to secure sign in</button>
+      </div>
+      <p id="loginStatus" class="muted"></p>
     </section>
   </main>
   <script type="module" src="/login/app.js"></script>
