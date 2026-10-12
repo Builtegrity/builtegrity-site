@@ -6,6 +6,7 @@ on:
       - engine-runtime-v1
       - main
   pull_request:
+  workflow_dispatch:
 
 jobs:
   validate:
@@ -17,8 +18,10 @@ jobs:
         run: |
           node --check worker/src/db.js
           node --check worker/src/stripe.js
+          node --check worker/src/stripe-oauth.js
           node --check worker/src/webhooks.js
           node --check worker/src/index.js
+          node --check worker/src/runtime.js
           node --check public/console/app.js
           node --check public/pay/app.js
           node --check public/pay/success/app.js
@@ -30,6 +33,7 @@ jobs:
           sqlite3 /tmp/builtegrity.db < migrations/0003_public_payment_tokens.sql
           sqlite3 /tmp/builtegrity.db < migrations/0004_checkout_resume.sql
           sqlite3 /tmp/builtegrity.db < migrations/0005_merchant_runtime_timestamp.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0006_stripe_oauth_states.sql
           sqlite3 /tmp/builtegrity.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify TX-0001 hierarchy and state
@@ -38,7 +42,7 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM merchants WHERE id='MER-0001' AND partner_id='PARTNER-0001';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM customers WHERE id='CUST-0001' AND merchant_id='MER-0001';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM purchases WHERE id='PUR-0001' AND customer_id='CUST-0001';")" = "1"
-          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transactions WHERE id='TX-0001' AND lifecycle_status='CREATED' AND integrity_status='INCOMPLETE';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transactions WHERE id='TX-0001' AND lifecycle_status='CREATED' AND integrity_status='INCOMPLETE' AND payment_access_token='test-tx-0001-token';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='TX_CREATED';")" = "1"
 
       - name: Verify event history is append-only
