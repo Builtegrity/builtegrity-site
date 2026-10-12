@@ -14,6 +14,19 @@ import {
   verifyStripeSignature,
 } from './stripe.js';
 import { processStripeWebhook } from './webhooks.js';
+import { priceTransaction } from './pricing.js';
+
+const FORBIDDEN_TRANSACTION_PRICING_INPUTS = [
+  'integrity_fee_earned_cents',
+  'fee_collection_method',
+  'pricing_version_id',
+  'pricing_percentage_bps',
+  'pricing_minimum_cents',
+  'pricing_maximum_cents',
+  'pricing_density_band_id',
+  'pricing_calculated_cents',
+  'pricing_locked_at',
+];
 
 export default {
   async fetch(request, env) {
@@ -194,12 +207,27 @@ async function handleCreateTransaction(request, env) {
   if (!merchant) return json({ error: 'Merchant not found' }, 404);
 
   const txInput = body.transaction || {};
+  const pricingOverrides = FORBIDDEN_TRANSACTION_PRICING_INPUTS.filter((key) =>
+    Object.prototype.hasOwnProperty.call(txInput, key)
+  );
+  if (pricingOverrides.length > 0) {
+    return json({
+      error: 'Builtegrity pricing is server-owned and cannot be supplied by the caller',
+      forbidden_fields: pricingOverrides,
+    }, 400);
+  }
   if (!Number.isInteger(txInput.amount_cents) || txInput.amount_cents <= 0) {
     return json({ error: 'transaction.amount_cents must be a positive integer' }, 400);
   }
   if (!txInput.description || !txInput.terms_snapshot) {
     return json({ error: 'transaction.description and transaction.terms_snapshot are required' }, 400);
   }
+
+  const currency = String(txInput.currency || 'USD').toUpperCase();
+  const pricing = await priceTransaction(env, txInput.amount_cents, { currency });
+  const collectionMethod = merchant.integration_mode === 'STRIPE_CONNECT'
+    ? 'STRIPE_APPLICATION_FEE'
+    : 'AUTOMATIC_USAGE';
 
   let customerId = body.customer_id || null;
   if (!customerId) {
@@ -233,7 +261,7 @@ async function handleCreateTransaction(request, env) {
       purchase.purchase_type || null,
       purchase.description || txInput.description,
       Number.isInteger(purchase.total_value_cents) ? purchase.total_value_cents : null,
-      String(purchase.currency || txInput.currency || 'USD').toUpperCase(),
+      String(purchase.currency || currency).toUpperCase(),
     ).run();
   } else {
     const existing = await env.DB.prepare(`
@@ -245,8 +273,6 @@ async function handleCreateTransaction(request, env) {
   const txId = await allocateId(env, 'TX');
   const paymentToken = randomToken();
   const termsHash = await sha256Hex(txInput.terms_snapshot);
-  const collectionMethod = txInput.fee_collection_method ||
-    (merchant.integration_mode === 'STRIPE_CONNECT' ? 'STRIPE_APPLICATION_FEE' : 'AUTOMATIC_USAGE');
 
   await env.DB.prepare(`
     INSERT INTO transactions (
@@ -255,8 +281,11 @@ async function handleCreateTransaction(request, env) {
       terms_version, terms_snapshot, terms_snapshot_sha256,
       refund_policy_snapshot, cancellation_policy_snapshot,
       integrity_fee_earned_cents, fee_collection_method,
-      payment_access_token, payment_access_expires_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      payment_access_token, payment_access_expires_at,
+      pricing_version_id, pricing_percentage_bps, pricing_minimum_cents,
+      pricing_maximum_cents, pricing_density_band_id, pricing_calculated_cents,
+      pricing_locked_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     txId,
     purchaseId,
@@ -265,21 +294,30 @@ async function handleCreateTransaction(request, env) {
     txInput.transaction_type || 'PAYMENT',
     txInput.description,
     txInput.amount_cents,
-    String(txInput.currency || 'USD').toUpperCase(),
+    currency,
     txInput.terms_version || 'TERMS-001',
     txInput.terms_snapshot,
     termsHash,
     txInput.refund_policy_snapshot || null,
     txInput.cancellation_policy_snapshot || null,
-    Number.isInteger(txInput.integrity_fee_earned_cents) ? txInput.integrity_fee_earned_cents : 0,
+    pricing.integrity_fee_earned_cents,
     collectionMethod,
     paymentToken,
     txInput.payment_access_expires_at || null,
+    pricing.pricing_version_id,
+    pricing.pricing_percentage_bps,
+    pricing.pricing_minimum_cents,
+    pricing.pricing_maximum_cents,
+    pricing.pricing_density_band_id,
+    pricing.pricing_calculated_cents,
+    pricing.pricing_locked_at,
   ).run();
 
   await recordEvent(env, txId, 'TX_CREATED', 'BUILTEGRITY', null, {
     purchase_id: purchaseId,
     merchant_id: merchant.id,
+    pricing_version_id: pricing.pricing_version_id,
+    integrity_fee_earned_cents: pricing.integrity_fee_earned_cents,
   });
 
   return json({
