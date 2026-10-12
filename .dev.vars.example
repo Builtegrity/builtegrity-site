@@ -2,4 +2,5 @@
 STRIPE_SECRET_KEY=sk_test_REPLACE_ME
 STRIPE_WEBHOOK_SECRET=whsec_REPLACE_ME
 STRIPE_CONNECT_CLIENT_ID=ca_REPLACE_ME
-INTERNAL_ADMIN_TOKEN=replace-with-a-long-random-secret
+OWNER_PASSWORD=replace-with-a-strong-owner-password
+OWNER_SESSION_SECRET=replace-with-a-long-random-session-secret
