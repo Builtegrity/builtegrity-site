@@ -109,15 +109,25 @@ function isInternalApi(path) {
 }
 
 function isAdminSurface(path) {
-  return path.startsWith('/console') ||
+  return path === '/login' ||
+    path.startsWith('/login/') ||
+    path.startsWith('/console') ||
     path.startsWith('/auth/') ||
     isInternalApi(path);
 }
 
 function isAdminHost(url, env) {
+  const hostname = url.hostname.toLowerCase();
+  const localDevelopmentHost = hostname === 'localhost' ||
+    hostname === '127.0.0.1' ||
+    hostname === '::1' ||
+    hostname === '[::1]';
+
+  if (env.DEV_MODE === 'true' && localDevelopmentHost) return true;
+
   const configured = String(env.ADMIN_HOSTNAME || '').trim().toLowerCase();
   if (!configured) return env.DEV_MODE === 'true';
-  return url.hostname.toLowerCase() === configured;
+  return hostname === configured;
 }
 
 function isStateChanging(method) {
