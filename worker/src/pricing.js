@@ -105,7 +105,13 @@ export async function priceTransaction(env, amountCents, options = {}) {
 
 export async function getPricingHealth(env) {
   const [floor, operations] = await Promise.all([
-    env.DB.prepare(`SELECT * FROM pricing_floor_health LIMIT 1`).first(),
+    env.DB.prepare(`
+      SELECT h.*, g.human_touch_warn_ppm, g.human_touch_critical_ppm,
+             g.effective_rate_warn_bps
+      FROM pricing_floor_health h
+      JOIN pricing_economic_guardrails g ON g.pricing_version_id = h.pricing_version_id
+      LIMIT 1
+    `).first(),
     env.DB.prepare(`SELECT * FROM internal_operations_metrics LIMIT 1`).first().catch(() => null),
   ]);
 
