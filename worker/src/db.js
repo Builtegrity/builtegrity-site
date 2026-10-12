@@ -178,9 +178,25 @@ export async function recomputeIntegrity(env, transactionId) {
   `).bind(transactionId).first();
 
   const hasOpenExceptions = Number(open?.count || 0) > 0;
+  const expectedTermsHash = tx.terms_snapshot ? await sha256Hex(tx.terms_snapshot) : null;
+  const termsIntegrity = Number(tx.consent_accepted) === 1 &&
+    Boolean(expectedTermsHash) &&
+    expectedTermsHash === tx.terms_snapshot_sha256;
+  const amountIntegrity = Number(tx.customer_paid_cents) === Number(tx.amount_cents);
+  const feeIntegrity = tx.fee_collection_method !== 'STRIPE_APPLICATION_FEE' ||
+    Number(tx.integrity_fee_collected_cents || 0) >= Number(tx.integrity_fee_earned_cents || 0);
+  const payoutNetIntegrity = tx.expected_merchant_net_cents !== null &&
+    tx.expected_merchant_net_cents !== undefined &&
+    tx.actual_merchant_net_cents !== null &&
+    tx.actual_merchant_net_cents !== undefined &&
+    Number(tx.actual_merchant_net_cents) === Number(tx.expected_merchant_net_cents);
+
   const fullyAccounted =
     tx.lifecycle_status === 'COMPLETE' &&
-    Number(tx.consent_accepted) === 1 &&
+    termsIntegrity &&
+    amountIntegrity &&
+    feeIntegrity &&
+    payoutNetIntegrity &&
     Boolean(tx.stripe_payment_intent_id) &&
     Boolean(tx.stripe_charge_id) &&
     Boolean(tx.stripe_balance_transaction_id) &&
@@ -203,35 +219,55 @@ export async function recomputeIntegrity(env, transactionId) {
      WHERE id = ?
   `).bind(integrityStatus, exceptionStatus, transactionId).run();
 
-  return { integrityStatus, exceptionStatus };
+  return {
+    integrityStatus,
+    exceptionStatus,
+    checks: {
+      terms_integrity: termsIntegrity,
+      amount_integrity: amountIntegrity,
+      fee_integrity: feeIntegrity,
+      payout_net_integrity: payoutNetIntegrity,
+    },
+  };
 }
 
 export async function claimWebhook(env, event) {
+  const inserted = await env.DB.prepare(`
+    INSERT OR IGNORE INTO stripe_webhook_receipts
+      (event_id, event_type, account_id, status, attempts)
+    VALUES (?, ?, ?, 'PROCESSING', 1)
+  `).bind(event.id, event.type, event.account || null).run();
+
+  if (Number(inserted.meta?.changes || 0) > 0) {
+    return { claimed: true, alreadyProcessed: false };
+  }
+
   const existing = await env.DB.prepare(`
     SELECT * FROM stripe_webhook_receipts WHERE event_id = ?
   `).bind(event.id).first();
 
-  if (existing?.status === 'PROCESSED') return { claimed: false, alreadyProcessed: true };
+  if (!existing) throw new Error(`Webhook receipt disappeared during claim: ${event.id}`);
+  if (existing.status === 'PROCESSED') return { claimed: false, alreadyProcessed: true };
 
-  if (!existing) {
-    await env.DB.prepare(`
-      INSERT INTO stripe_webhook_receipts
-        (event_id, event_type, account_id, status, attempts)
-      VALUES (?, ?, ?, 'PROCESSING', 1)
-    `).bind(event.id, event.type, event.account || null).run();
-    return { claimed: true, alreadyProcessed: false };
+  if (existing.status === 'PROCESSING') {
+    const updatedAt = Date.parse(existing.updated_at || existing.received_at || '');
+    const stale = Number.isFinite(updatedAt) && (Date.now() - updatedAt) >= 15 * 60 * 1000;
+    if (!stale) return { claimed: false, inProgress: true };
   }
 
-  await env.DB.prepare(`
+  const reclaimed = await env.DB.prepare(`
     UPDATE stripe_webhook_receipts
        SET status = 'PROCESSING',
            attempts = attempts + 1,
            last_error = NULL,
            updated_at = CURRENT_TIMESTAMP
-     WHERE event_id = ?
+     WHERE event_id = ? AND status != 'PROCESSED'
   `).bind(event.id).run();
 
-  return { claimed: true, alreadyProcessed: false };
+  return {
+    claimed: Number(reclaimed.meta?.changes || 0) > 0,
+    alreadyProcessed: false,
+  };
 }
 
 export async function finishWebhook(env, eventId) {
@@ -257,4 +293,9 @@ export async function failWebhook(env, eventId, error) {
 export function parseJson(value) {
   if (!value) return null;
   try { return JSON.parse(value); } catch { return null; }
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value || '')));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
