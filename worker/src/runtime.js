@@ -216,7 +216,7 @@ async function handleOAuthCallback(url, env) {
     SELECT * FROM stripe_oauth_states
     WHERE state_token = ?
       AND consumed_at IS NULL
-      AND expires_at > CURRENT_TIMESTAMP
+      AND datetime(expires_at) > datetime('now')
     LIMIT 1
   `).bind(state).first();
 
