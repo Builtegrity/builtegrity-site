@@ -1,44 +1,35 @@
-# Builtegrity admin authentication — Cloudflare Access
+# Builtegrity optional infrastructure authentication — Cloudflare Access
 
-## Production choice
+## Status
 
-The Builtegrity internal/operator console uses Cloudflare Access as its production authentication gate.
+Cloudflare Access is **not** the primary Builtegrity product-authentication system.
 
-Recommended production shape:
+Primary V1 application identity is Clerk. Builtegrity/D1 owns roles, merchant membership and record authorization.
 
-- Admin hostname: `admin.builtegrity.com`
-- Identity provider: Cloudflare account
-- Access policy: allow only explicitly authorized Builtegrity Cloudflare account members
-- Require MFA at the Cloudflare account / Access policy layer
-- Worker auth adapter: `AUTH_PROVIDER=CLOUDFLARE_ACCESS`
-- Worker verifies the signed `Cf-Access-Jwt-Assertion` before treating a request as an operator
+Cloudflare Access remains available as optional defense in depth for highly sensitive internal or infrastructure-only surfaces if we later want an additional perimeter outside the application login.
 
-Customer payment pages and Stripe webhooks must not be placed behind the admin Access application.
+## Appropriate use
 
-## Required Worker variables
+Possible future use:
 
-These are configuration values, not secrets:
+- infrastructure-only admin utilities;
+- emergency/operator tooling;
+- staging environments;
+- highly sensitive internal surfaces that should require both application identity and a Cloudflare perimeter.
 
-- `CF_ACCESS_TEAM_DOMAIN` — `https://<team-name>.cloudflareaccess.com`
-- `CF_ACCESS_AUD` — the Access application's Audience (AUD) tag
+Do not place customer payment pages or Stripe webhooks behind Cloudflare Access.
 
-Optional defense-in-depth:
+## Optional configuration
 
-- `CF_ACCESS_ALLOWED_EMAILS` — comma-separated emails permitted by the Worker after Access succeeds
+If enabled for an internal hostname such as `admin.builtegrity.com`, the existing Worker adapter can validate the signed `Cf-Access-Jwt-Assertion` with:
 
-The Access policy remains the primary authorization gate. The Worker JWT check is defense in depth and fails closed if the token, issuer, audience, signature, or optional allowlist does not validate.
+- `AUTH_PROVIDER=CLOUDFLARE_ACCESS` only when deliberately selecting this adapter;
+- `CF_ACCESS_TEAM_DOMAIN`;
+- `CF_ACCESS_AUD`;
+- optional `CF_ACCESS_ALLOWED_EMAILS`.
 
-## Cloudflare dashboard setup
+That adapter is retained for portability/defense in depth and should not be confused with the locked V1 application identity path.
 
-1. Enable Zero Trust on the Builtegrity Cloudflare account.
-2. Create/attach `admin.builtegrity.com` to the transaction Worker.
-3. Create a self-hosted Access application for `admin.builtegrity.com`.
-4. Choose **Cloudflare account** as the login method / policy selector.
-5. Restrict the policy to the Builtegrity account members who should operate the transaction console.
-6. Require MFA/independent MFA where appropriate.
-7. Copy the team domain and application AUD tag into the Worker variables.
-8. Keep customer/public payment and Stripe webhook hostnames outside this Access application.
+## Locked V1 auth
 
-## Portability
-
-Cloudflare Access is an authentication adapter, not part of the transaction model. The existing `OWNER_SESSION` adapter remains available as a portable fallback, and other OIDC/SSO providers can be added without changing transaction, Stripe, event, exception, consent, or payout logic.
+See the Clerk configuration and the transaction-engine runbook. The default V1 runtime uses `AUTH_PROVIDER=CLERK`.
