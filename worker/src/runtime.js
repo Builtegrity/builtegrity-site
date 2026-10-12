@@ -204,18 +204,50 @@ async function handleOAuthCallback(url, env) {
   if (!code) return new Response('Missing Stripe authorization code.', { status: 400 });
 
   const result = await exchangeStripeOAuthCode(env, code);
-  await env.DB.prepare(`
-    UPDATE stripe_oauth_states SET consumed_at = CURRENT_TIMESTAMP WHERE state_token = ?
-  `).bind(state).run();
+  const alreadyBound = await env.DB.prepare(`
+    SELECT id FROM merchants WHERE processor_account_id = ? LIMIT 1
+  `).bind(result.stripe_user_id).first();
 
-  await env.DB.prepare(`
-    UPDATE merchants
-       SET processor_account_id = ?,
-           integration_mode = 'STRIPE_CONNECT',
-           status = 'TEST',
-           updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?
-  `).bind(result.stripe_user_id, stateRow.merchant_id).run();
+  if (alreadyBound && alreadyBound.id !== stateRow.merchant_id) {
+    await env.DB.prepare(`
+      UPDATE stripe_oauth_states SET consumed_at = CURRENT_TIMESTAMP WHERE state_token = ?
+    `).bind(state).run();
+    return redirectToConsole(env, {
+      stripe: 'already_connected',
+      merchant: stateRow.merchant_id,
+      reason: 'That Stripe account is already attached to another Builtegrity merchant record.',
+    });
+  }
+
+  try {
+    await env.DB.batch([
+      env.DB.prepare(`
+        UPDATE merchants
+           SET processor_account_id = ?,
+               integration_mode = 'STRIPE_CONNECT',
+               status = 'TEST',
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+      `).bind(result.stripe_user_id, stateRow.merchant_id),
+      env.DB.prepare(`
+        UPDATE stripe_oauth_states
+           SET consumed_at = CURRENT_TIMESTAMP
+         WHERE state_token = ? AND consumed_at IS NULL
+      `).bind(state),
+    ]);
+  } catch (error) {
+    // Stripe authorization already succeeded. If this was a genuinely new account
+    // relationship, undo it so a D1 failure cannot leave an orphaned platform grant.
+    if (!alreadyBound) {
+      try {
+        await deauthorizeStripeAccount(env, result.stripe_user_id);
+      } catch (rollbackError) {
+        console.error('Stripe OAuth rollback failed after D1 persistence failure', rollbackError);
+        error.message = `${error.message || 'Stripe OAuth persistence failed'}; Stripe rollback also failed and requires manual review`;
+      }
+    }
+    throw error;
+  }
 
   return redirectToConsole(env, {
     stripe: 'connected',
