@@ -24,15 +24,22 @@ function txIdFromObject(object) {
   return object?.metadata?.builtegrity_tx_id || object?.client_reference_id || null;
 }
 
+function objectId(value) {
+  return typeof value === 'string' ? value : value?.id || null;
+}
+
 export async function processStripeWebhook(env, event) {
   const claim = await claimWebhook(env, event);
-  if (!claim.claimed) return { duplicate: true };
+  if (!claim.claimed) return { duplicate: true, in_progress: Boolean(claim.inProgress) };
 
   try {
     switch (event.type) {
       case 'checkout.session.completed':
       case 'checkout.session.async_payment_succeeded':
         await handleCheckoutCompleted(env, event);
+        break;
+      case 'checkout.session.expired':
+        await handleCheckoutExpired(env, event);
         break;
       case 'checkout.session.async_payment_failed':
         await handleCheckoutFailed(env, event);
@@ -79,16 +86,23 @@ async function handleCheckoutCompleted(env, event) {
   const txId = txIdFromObject(session);
   if (!txId) return;
 
+  const tx = await getTransaction(env, txId);
+  if (!tx) throw new Error(`Stripe Checkout ${session.id} references missing transaction ${txId}`);
+
   await env.DB.prepare(`
     UPDATE transactions
        SET stripe_checkout_session_id = COALESCE(stripe_checkout_session_id, ?),
+           stripe_checkout_url = COALESCE(stripe_checkout_url, ?),
+           stripe_checkout_expires_at = COALESCE(stripe_checkout_expires_at, ?),
            stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, ?),
            payment_status = COALESCE(?, payment_status),
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
   `).bind(
     session.id,
-    typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id || null,
+    session.url || null,
+    stripeTime(session.expires_at),
+    objectId(session.payment_intent),
     session.payment_status || null,
     txId,
   ).run();
@@ -100,10 +114,43 @@ async function handleCheckoutCompleted(env, event) {
   }, stripeTime(event.created));
 }
 
+async function handleCheckoutExpired(env, event) {
+  const session = event.data.object;
+  const txId = txIdFromObject(session);
+  if (!txId) return;
+
+  const tx = await getTransaction(env, txId);
+  if (!tx) throw new Error(`Expired Stripe Checkout ${session.id} references missing transaction ${txId}`);
+
+  await env.DB.prepare(`
+    UPDATE transactions
+       SET stripe_checkout_url = CASE WHEN stripe_checkout_session_id = ? THEN NULL ELSE stripe_checkout_url END,
+           stripe_checkout_expires_at = CASE WHEN stripe_checkout_session_id = ? THEN ? ELSE stripe_checkout_expires_at END,
+           payment_status = CASE WHEN stripe_checkout_session_id = ? THEN COALESCE(?, payment_status) ELSE payment_status END,
+           updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+  `).bind(
+    session.id,
+    session.id,
+    stripeTime(session.expires_at),
+    session.id,
+    session.payment_status || null,
+    txId,
+  ).run();
+
+  await recordEvent(env, txId, 'CHECKOUT_EXPIRED', 'STRIPE', `${event.id}:checkout_expired`, {
+    checkout_session_id: session.id,
+  }, stripeTime(event.created));
+}
+
 async function handleCheckoutFailed(env, event) {
   const session = event.data.object;
   const txId = txIdFromObject(session);
   if (!txId) return;
+
+  const tx = await getTransaction(env, txId);
+  if (!tx) throw new Error(`Failed Stripe Checkout ${session.id} references missing transaction ${txId}`);
+
   await recordEvent(env, txId, 'PAYMENT_FAILED', 'STRIPE', `${event.id}:checkout_failed`, {
     checkout_session_id: session.id,
   }, stripeTime(event.created));
@@ -116,19 +163,25 @@ async function handlePaymentSucceeded(env, event) {
   if (!txId) return;
 
   const tx = await getTransaction(env, txId);
-  if (!tx) return;
+  if (!tx) throw new Error(`Stripe PaymentIntent ${eventIntent.id} references missing transaction ${txId}`);
   const accountId = event.account || tx.processor_account_id;
   if (!accountId) throw new Error(`No connected Stripe account for ${txId}`);
+  ensureTransactionAccount(tx, accountId);
 
   const paymentIntent = await retrievePaymentIntent(env, accountId, eventIntent.id);
   const latestCharge = paymentIntent.latest_charge;
-  const chargeId = typeof latestCharge === 'string' ? latestCharge : latestCharge?.id;
+  const chargeId = objectId(latestCharge);
   if (!chargeId) throw new Error(`PaymentIntent ${paymentIntent.id} has no latest charge`);
   const charge = await retrieveCharge(env, accountId, chargeId);
   const balance = charge.balance_transaction;
-  const balanceId = typeof balance === 'string' ? balance : balance?.id;
+  const balanceId = objectId(balance);
   const applicationFee = charge.application_fee;
-  const applicationFeeId = typeof applicationFee === 'string' ? applicationFee : applicationFee?.id;
+  const applicationFeeId = objectId(applicationFee);
+  const collectedFee = typeof applicationFee === 'object' && applicationFee
+    ? Number(applicationFee.amount || 0)
+    : Number.isFinite(Number(charge.application_fee_amount))
+      ? Number(charge.application_fee_amount)
+      : null;
 
   await env.DB.prepare(`
     UPDATE transactions
@@ -136,6 +189,7 @@ async function handlePaymentSucceeded(env, event) {
            stripe_charge_id = ?,
            stripe_balance_transaction_id = COALESCE(?, stripe_balance_transaction_id),
            stripe_application_fee_id = COALESCE(?, stripe_application_fee_id),
+           integrity_fee_collected_cents = COALESCE(?, integrity_fee_collected_cents),
            payment_status = 'succeeded',
            payment_at = COALESCE(payment_at, ?),
            customer_paid_cents = ?,
@@ -149,6 +203,7 @@ async function handlePaymentSucceeded(env, event) {
     charge.id,
     balanceId || null,
     applicationFeeId || null,
+    collectedFee,
     stripeTime(paymentIntent.created),
     Number(charge.amount_captured || paymentIntent.amount_received || 0),
     typeof balance === 'object' ? Number(balance.fee || 0) : null,
@@ -163,6 +218,13 @@ async function handlePaymentSucceeded(env, event) {
     amount_received: paymentIntent.amount_received,
   }, stripeTime(event.created));
 
+  if (applicationFeeId || collectedFee !== null) {
+    await recordEvent(env, txId, 'APPLICATION_FEE_RECORDED', 'STRIPE', `${event.id}:payment_fee`, {
+      application_fee_id: applicationFeeId,
+      amount: collectedFee,
+    }, stripeTime(event.created));
+  }
+
   if (balanceId) {
     await advanceLifecycle(env, txId, 'PAYOUT_PENDING');
     await recordEvent(env, txId, 'BALANCE_RECORDED', 'STRIPE', `${event.id}:balance`, {
@@ -174,6 +236,9 @@ async function handlePaymentSucceeded(env, event) {
   }
 
   await resolveException(env, txId, 'PAYMENT_FAILED', 'Stripe later confirmed the payment succeeded.');
+  if (collectedFee !== null && collectedFee >= Number(tx.integrity_fee_earned_cents || 0)) {
+    await resolveException(env, txId, 'UNEXPECTED_FEE', 'Stripe payment reconciliation confirmed the expected application fee.');
+  }
   await recomputeIntegrity(env, txId);
 }
 
@@ -181,6 +246,10 @@ async function handlePaymentFailed(env, event) {
   const intent = event.data.object;
   const txId = txIdFromObject(intent);
   if (!txId) return;
+
+  const tx = await getTransaction(env, txId);
+  if (!tx) throw new Error(`Failed Stripe PaymentIntent ${intent.id} references missing transaction ${txId}`);
+  if (event.account) ensureTransactionAccount(tx, event.account);
 
   await env.DB.prepare(`
     UPDATE transactions
@@ -200,13 +269,13 @@ async function handlePaymentFailed(env, event) {
 
 async function handleApplicationFeeCreated(env, event) {
   const fee = event.data.object;
-  const chargeId = typeof fee.charge === 'string' ? fee.charge : fee.charge?.id;
-  if (!chargeId) return;
+  const chargeId = objectId(fee.charge);
+  const accountId = objectId(fee.account) || event.account || null;
+  if (!chargeId || !accountId) return;
 
-  const tx = await env.DB.prepare(`
-    SELECT id FROM transactions WHERE stripe_charge_id = ? LIMIT 1
-  `).bind(chargeId).first();
-  if (!tx) return;
+  const resolved = await findBuiltegrityTransactionForCharge(env, accountId, fee.charge);
+  if (!resolved) return;
+  const { tx } = resolved;
 
   await env.DB.prepare(`
     UPDATE transactions
@@ -220,14 +289,16 @@ async function handleApplicationFeeCreated(env, event) {
     application_fee_id: fee.id,
     amount: fee.amount,
   }, stripeTime(event.created));
+  if (Number(fee.amount || 0) >= Number(tx.integrity_fee_earned_cents || 0)) {
+    await resolveException(env, tx.id, 'UNEXPECTED_FEE', 'Stripe application-fee event confirmed the expected fee.');
+  }
+  await recomputeIntegrity(env, tx.id);
 }
 
 async function handleChargeRefunded(env, event) {
-  const charge = event.data.object;
-  const tx = await env.DB.prepare(`
-    SELECT id FROM transactions WHERE stripe_charge_id = ? LIMIT 1
-  `).bind(charge.id).first();
-  if (!tx) return;
+  const resolved = await findBuiltegrityTransactionForCharge(env, event.account || null, event.data.object);
+  if (!resolved) return;
+  const { tx, charge } = resolved;
 
   await env.DB.prepare(`
     UPDATE transactions
@@ -245,10 +316,9 @@ async function handleChargeRefunded(env, event) {
 
 async function handleDisputeOpened(env, event) {
   const dispute = event.data.object;
-  const chargeId = typeof dispute.charge === 'string' ? dispute.charge : dispute.charge?.id;
-  if (!chargeId) return;
-  const tx = await env.DB.prepare(`SELECT id FROM transactions WHERE stripe_charge_id = ? LIMIT 1`).bind(chargeId).first();
-  if (!tx) return;
+  const resolved = await findBuiltegrityTransactionForCharge(env, event.account || null, dispute.charge);
+  if (!resolved) return;
+  const { tx } = resolved;
 
   await recordEvent(env, tx.id, 'DISPUTE_OPENED', 'STRIPE', `${event.id}:dispute_opened`, {
     dispute_id: dispute.id,
@@ -261,10 +331,9 @@ async function handleDisputeOpened(env, event) {
 
 async function handleDisputeClosed(env, event) {
   const dispute = event.data.object;
-  const chargeId = typeof dispute.charge === 'string' ? dispute.charge : dispute.charge?.id;
-  if (!chargeId) return;
-  const tx = await env.DB.prepare(`SELECT id FROM transactions WHERE stripe_charge_id = ? LIMIT 1`).bind(chargeId).first();
-  if (!tx) return;
+  const resolved = await findBuiltegrityTransactionForCharge(env, event.account || null, dispute.charge);
+  if (!resolved) return;
+  const { tx } = resolved;
 
   await recordEvent(env, tx.id, 'DISPUTE_CLOSED', 'STRIPE', `${event.id}:dispute_closed`, {
     dispute_id: dispute.id,
@@ -285,14 +354,9 @@ async function handlePayoutReady(env, event) {
   );
 
   for (const [chargeId, balanceItem] of chargeSources.entries()) {
-    const tx = await env.DB.prepare(`
-      SELECT id FROM transactions
-      WHERE stripe_charge_id = ? AND merchant_id IN (
-        SELECT id FROM merchants WHERE processor_account_id = ?
-      )
-      LIMIT 1
-    `).bind(chargeId, accountId).first();
-    if (!tx) continue;
+    const resolved = await findBuiltegrityTransactionForCharge(env, accountId, chargeId);
+    if (!resolved) continue;
+    const { tx } = resolved;
 
     await env.DB.prepare(`
       UPDATE transactions
@@ -343,21 +407,105 @@ async function handlePayoutReady(env, event) {
 
 async function handlePayoutFailed(env, event) {
   const payout = event.data.object;
-  const result = await env.DB.prepare(`
+  const accountId = event.account;
+  const transactionIds = new Set();
+
+  const linked = await env.DB.prepare(`
     SELECT id FROM transactions WHERE stripe_payout_id = ?
   `).bind(payout.id).all();
+  for (const tx of linked.results || []) transactionIds.add(tx.id);
 
-  for (const tx of result.results || []) {
+  if (accountId) {
+    const balanceTransactions = await listPayoutBalanceTransactions(env, accountId, payout.id);
+    for (const item of balanceTransactions) {
+      if (typeof item.source !== 'string' || !item.source.startsWith('ch_')) continue;
+      const resolved = await findBuiltegrityTransactionForCharge(env, accountId, item.source);
+      if (!resolved) continue;
+      transactionIds.add(resolved.tx.id);
+      await env.DB.prepare(`
+        UPDATE transactions
+           SET stripe_payout_id = COALESCE(stripe_payout_id, ?),
+               payout_accounted = 1,
+               transaction_payout_contribution_cents = COALESCE(transaction_payout_contribution_cents, ?),
+               payout_batch_total_cents = COALESCE(payout_batch_total_cents, ?),
+               expected_payout_arrival = COALESCE(expected_payout_arrival, ?),
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?
+      `).bind(
+        payout.id,
+        Number(item.net || 0),
+        Number(payout.amount || 0),
+        stripeTime(payout.arrival_date),
+        resolved.tx.id,
+      ).run();
+    }
+  }
+
+  for (const txId of transactionIds) {
     await env.DB.prepare(`
       UPDATE transactions
          SET processor_payout_status = 'failed', updated_at = CURRENT_TIMESTAMP
        WHERE id = ?
-    `).bind(tx.id).run();
-    await recordEvent(env, tx.id, 'PAYOUT_FAILED', 'STRIPE', `${event.id}:${tx.id}:failed`, {
+    `).bind(txId).run();
+    await recordEvent(env, txId, 'PAYOUT_FAILED', 'STRIPE', `${event.id}:${txId}:failed`, {
       payout_id: payout.id,
       failure_code: payout.failure_code || null,
       failure_message: payout.failure_message || null,
     }, stripeTime(event.created));
-    await openException(env, tx.id, 'PAYOUT_FAILED', payout.failure_message || `Stripe payout ${payout.id} failed.`);
+    await openException(env, txId, 'PAYOUT_FAILED', payout.failure_message || `Stripe payout ${payout.id} failed.`);
+  }
+}
+
+async function findBuiltegrityTransactionForCharge(env, accountId, chargeLike) {
+  const chargeId = objectId(chargeLike);
+  if (!chargeId) return null;
+
+  let tx = await env.DB.prepare(`
+    SELECT id FROM transactions WHERE stripe_charge_id = ? LIMIT 1
+  `).bind(chargeId).first();
+  if (tx) {
+    const full = await getTransaction(env, tx.id);
+    if (accountId) ensureTransactionAccount(full, accountId);
+    return { tx: full, charge: typeof chargeLike === 'object' ? chargeLike : await retrieveCharge(env, accountId || full.processor_account_id, chargeId) };
+  }
+
+  if (!accountId) return null;
+  const charge = typeof chargeLike === 'object' && chargeLike?.id
+    ? chargeLike
+    : await retrieveCharge(env, accountId, chargeId);
+
+  const metadataTxId = txIdFromObject(charge);
+  if (metadataTxId) {
+    const full = await getTransaction(env, metadataTxId);
+    if (!full) throw new Error(`Stripe charge ${chargeId} references missing transaction ${metadataTxId}`);
+    ensureTransactionAccount(full, accountId);
+    return { tx: full, charge };
+  }
+
+  const paymentIntentId = objectId(charge.payment_intent);
+  if (!paymentIntentId) return null;
+
+  tx = await env.DB.prepare(`
+    SELECT id FROM transactions WHERE stripe_payment_intent_id = ? LIMIT 1
+  `).bind(paymentIntentId).first();
+  if (tx) {
+    const full = await getTransaction(env, tx.id);
+    ensureTransactionAccount(full, accountId);
+    return { tx: full, charge };
+  }
+
+  const intent = await retrievePaymentIntent(env, accountId, paymentIntentId);
+  const intentTxId = txIdFromObject(intent);
+  if (!intentTxId) return null;
+  const full = await getTransaction(env, intentTxId);
+  if (!full) throw new Error(`Stripe PaymentIntent ${paymentIntentId} references missing transaction ${intentTxId}`);
+  ensureTransactionAccount(full, accountId);
+  return { tx: full, charge };
+}
+
+function ensureTransactionAccount(tx, accountId) {
+  if (!tx) throw new Error('Cannot validate Stripe account for a missing transaction');
+  if (tx.processor_account_id && tx.processor_account_id !== accountId) {
+    throw new Error(`Stripe account mismatch for ${tx.id}: expected ${tx.processor_account_id}, received ${accountId}`);
   }
 }
