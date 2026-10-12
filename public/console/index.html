@@ -19,13 +19,34 @@
       </div>
     </div>
 
-    <div class="grid" id="stats"></div>
+    <div class="grid" id="opsStats"></div>
+
+    <div class="toolbar">
+      <div>
+        <p class="eyebrow">Exception machine</p>
+        <h2>Internal cases</h2>
+      </div>
+      <div class="actions" style="margin:0">
+        <button class="secondary" id="refresh">Refresh everything</button>
+      </div>
+    </div>
+
+    <section class="panel table-wrap">
+      <table>
+        <thead>
+          <tr><th>Case</th><th>Type</th><th>Subject</th><th>Severity</th><th>Age</th><th>Status</th><th>Next action</th></tr>
+        </thead>
+        <tbody id="caseRows"></tbody>
+      </table>
+      <p id="caseEmpty" class="muted" hidden>No internal human cases. The machine is handling the queue.</p>
+    </section>
+
+    <section id="caseDetail" hidden></section>
+
+    <div class="grid" id="stats" style="margin-top:24px"></div>
 
     <div class="toolbar">
       <h2>All transactions</h2>
-      <div class="actions" style="margin:0">
-        <button class="secondary" id="refresh">Refresh</button>
-      </div>
     </div>
 
     <section class="panel table-wrap">
