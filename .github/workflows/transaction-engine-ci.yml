@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - engine-runtime-v1
+      - provider-independent-auth
       - main
   pull_request:
   workflow_dispatch:
@@ -16,16 +17,31 @@ jobs:
 
       - name: Check JavaScript syntax
         run: |
+          node --check worker/src/auth.js
           node --check worker/src/db.js
           node --check worker/src/stripe.js
           node --check worker/src/stripe-oauth.js
           node --check worker/src/webhooks.js
           node --check worker/src/index.js
           node --check worker/src/runtime.js
+          node --check public/login/app.js
           node --check public/console/app.js
           node --check public/console/stripe-controls.js
           node --check public/pay/app.js
           node --check public/pay/success/app.js
+
+      - name: Guard provider-independent admin access
+        run: |
+          if grep -R "builtegrity_admin_token\|X-Builtegrity-Admin" public .dev.vars.example wrangler.toml.example; then
+            echo "Browser/admin-key authentication must not be reintroduced"
+            exit 1
+          fi
+          if grep -q "INTERNAL_ADMIN_TOKEN" .dev.vars.example; then
+            echo "Persistent internal admin tokens are not allowed"
+            exit 1
+          fi
+          grep -q 'AUTH_PROVIDER = "OWNER_SESSION"' wrangler.toml.example
+          grep -q 'OWNER_SESSION_SECRET' .dev.vars.example
 
       - name: Build D1-compatible schema in SQLite
         run: |
