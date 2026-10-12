@@ -8,6 +8,7 @@ import {
 import { verifyStripeSignature } from './stripe.js';
 import { processStripeWebhook } from './webhooks.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
+import { projectStripeEventToTransactionIntelligence } from './stripe-intelligence.js';
 import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
 import { handlePublicRecordRoute, serveOperatorTransactionPdf } from './records.js';
 import {
@@ -304,10 +305,14 @@ async function handleRuntimeStripeWebhook(request, env) {
   let event;
   try { event = JSON.parse(rawBody); } catch { return json({ error: 'Invalid JSON' }, 400); }
   const accountEvent = event.type === 'account.updated' || event.type === 'account.application.deauthorized';
-  const result = accountEvent
-    ? await processStripeAccountWebhook(env, event)
-    : await processStripeWebhook(env, event);
-  return json({ received: true, ...result });
+  if (accountEvent) {
+    const result = await processStripeAccountWebhook(env, event);
+    return json({ received: true, ...result });
+  }
+
+  const result = await processStripeWebhook(env, event);
+  const intelligence = await projectStripeEventToTransactionIntelligence(env, event);
+  return json({ received: true, ...result, transaction_intelligence: intelligence });
 }
 
 async function handleConnectUrl(env, merchantId) {
