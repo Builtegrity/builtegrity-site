@@ -1,0 +1,70 @@
+name: Economics and Records CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - atlas/unit-economics-pdf-tenancy
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check new JavaScript syntax
+        run: |
+          node --check worker/src/db.js
+          node --check worker/src/pdf.js
+          node --check worker/src/records.js
+          node --check worker/src/runtime.js
+          node --check public/pay/success/app.js
+
+      - name: Build full D1 schema and seed TX-0001
+        run: |
+          rm -f /tmp/builtegrity-economics.db
+          for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+            echo "Applying $file"
+            sqlite3 /tmp/builtegrity-economics.db < "$file"
+          done
+          sqlite3 /tmp/builtegrity-economics.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify identity and tenancy boundaries
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='merchant_access';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='partner_access';")" = "1"
+          grep -q 'Clerk answers: \*\*Who is this user?\*\*' docs/clerk-setup.md
+          grep -q "Do not use Clerk Organizations" docs/clerk-setup.md
+          grep -q 'D1 merchant_access / partner_access own tenancy' wrangler.toml.example
+
+      - name: Verify merchant-paid fee invariant
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT fee_payer FROM transactions WHERE id='TX-0001';")" = "MERCHANT"
+          if sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET fee_payer='CUSTOMER' WHERE id='TX-0001';" 2>/tmp/fee-payer-error.txt; then
+            echo "Expected D1 to reject a consumer-paid Builtegrity fee"
+            exit 1
+          fi
+
+      - name: Verify automatic record token and hidden unit economics
+        run: |
+          test -n "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_access_token FROM transactions WHERE id='TX-0001';")"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT estimated_revenue_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "250000"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT estimated_cost_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "2594"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT estimated_contribution_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "247406"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT COUNT(*) FROM transaction_economics_ledger WHERE transaction_id='TX-0001' AND basis='ESTIMATED';")" = "4"
+
+      - name: Verify actual Stripe fee revenue posts automatically
+        run: |
+          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET integrity_fee_collected_cents=25 WHERE id='TX-0001';"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT actual_revenue_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "250000"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT COUNT(*) FROM transaction_economics_ledger WHERE transaction_id='TX-0001' AND basis='ACTUAL' AND entry_kind='REVENUE' AND category='INTEGRITY_FEE';")" = "1"
+
+      - name: Verify automated PDF route and cache configuration
+        run: |
+          grep -q '/api/records/' worker/src/runtime.js
+          grep -q 'serveTransactionPdf' worker/src/records.js
+          grep -q 'TRANSACTION_RECORDS' worker/src/pdf.js
+          grep -q 'TRANSACTION_RECORDS' wrangler.toml.example
+          grep -q 'Download transaction record PDF' public/pay/success/index.html
+          grep -q 'transaction_pdf_requests' migrations/0008_economics_records_pdf.sql
