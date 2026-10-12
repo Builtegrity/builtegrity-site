@@ -8,9 +8,23 @@ ALTER TABLE transactions ADD COLUMN fee_payer TEXT NOT NULL DEFAULT 'MERCHANT'
 ALTER TABLE transactions ADD COLUMN record_access_token TEXT;
 ALTER TABLE transactions ADD COLUMN record_access_expires_at TEXT;
 
+-- Existing records receive an unguessable access token without requiring a customer identity-provider account.
+UPDATE transactions
+SET record_access_token = COALESCE(payment_access_token, lower(hex(randomblob(24))))
+WHERE record_access_token IS NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_record_access_token
   ON transactions(record_access_token)
   WHERE record_access_token IS NOT NULL;
+
+CREATE TRIGGER IF NOT EXISTS transactions_assign_record_access_token
+AFTER INSERT ON transactions
+WHEN NEW.record_access_token IS NULL
+BEGIN
+  UPDATE transactions
+     SET record_access_token = COALESCE(NEW.payment_access_token, lower(hex(randomblob(24))))
+   WHERE id = NEW.id;
+END;
 
 CREATE TABLE IF NOT EXISTS transaction_cost_models (
   id TEXT PRIMARY KEY,
@@ -23,8 +37,8 @@ CREATE TABLE IF NOT EXISTS transaction_cost_models (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- $1.00 = 1,000,000 micros. This model preserves sub-cent precision.
--- Current conservative model: ~$0.000043 core infra + 2 x $0.0009 email + ~$0.000751 lifetime storage.
+-- $1.00 = 1,000,000 micros. This preserves sub-cent precision.
+-- Conservative V1 technical COGS estimate: ~$0.000043 core infra + 2 x $0.0009 email + ~$0.000751 lifetime storage.
 INSERT OR IGNORE INTO transaction_cost_models (
   id, status, core_infra_cost_micros, email_cost_micros_per_message,
   assumed_email_messages, lifetime_storage_cost_micros, notes
@@ -82,6 +96,100 @@ SELECT
 FROM transactions t
 LEFT JOIN transaction_economics_ledger e ON e.transaction_id = t.id
 GROUP BY t.id;
+
+-- Every transaction gets a hidden unit-economics layer automatically. No application call is required.
+CREATE TRIGGER IF NOT EXISTS transactions_initialize_economics
+AFTER INSERT ON transactions
+BEGIN
+  INSERT OR IGNORE INTO transaction_economics_ledger
+    (id, transaction_id, entry_kind, category, amount_micros, basis, source_ref, details_json)
+  VALUES
+    ('ECO_EST_REV_' || NEW.id, NEW.id, 'REVENUE', 'INTEGRITY_FEE', NEW.integrity_fee_earned_cents * 10000,
+     'ESTIMATED', 'initial:integrity-fee', '{"fee_payer":"MERCHANT"}');
+
+  INSERT OR IGNORE INTO transaction_economics_ledger
+    (id, transaction_id, entry_kind, category, amount_micros, basis, quantity, unit_cost_micros, cost_model_id, source_ref)
+  SELECT
+    'ECO_EST_CORE_' || NEW.id, NEW.id, 'COST', 'CORE_INFRASTRUCTURE', core_infra_cost_micros,
+    'ESTIMATED', 1, core_infra_cost_micros, id, 'initial:core-infrastructure'
+  FROM transaction_cost_models WHERE status = 'ACTIVE' ORDER BY created_at DESC, id DESC LIMIT 1;
+
+  INSERT OR IGNORE INTO transaction_economics_ledger
+    (id, transaction_id, entry_kind, category, amount_micros, basis, quantity, unit_cost_micros, cost_model_id, source_ref)
+  SELECT
+    'ECO_EST_EMAIL_' || NEW.id, NEW.id, 'COST', 'TRANSACTION_EMAIL_BUDGET', email_cost_micros_per_message * assumed_email_messages,
+    'ESTIMATED', assumed_email_messages, email_cost_micros_per_message, id, 'initial:transaction-email-budget'
+  FROM transaction_cost_models WHERE status = 'ACTIVE' ORDER BY created_at DESC, id DESC LIMIT 1;
+
+  INSERT OR IGNORE INTO transaction_economics_ledger
+    (id, transaction_id, entry_kind, category, amount_micros, basis, quantity, unit_cost_micros, cost_model_id, source_ref)
+  SELECT
+    'ECO_EST_STORAGE_' || NEW.id, NEW.id, 'COST', 'LIFETIME_STORAGE', lifetime_storage_cost_micros,
+    'ESTIMATED', 1, lifetime_storage_cost_micros, id, 'initial:lifetime-storage'
+  FROM transaction_cost_models WHERE status = 'ACTIVE' ORDER BY created_at DESC, id DESC LIMIT 1;
+END;
+
+-- Backfill hidden economics for transactions that predate this migration.
+INSERT OR IGNORE INTO transaction_economics_ledger
+  (id, transaction_id, entry_kind, category, amount_micros, basis, source_ref, details_json)
+SELECT 'ECO_EST_REV_' || id, id, 'REVENUE', 'INTEGRITY_FEE', integrity_fee_earned_cents * 10000,
+       'ESTIMATED', 'initial:integrity-fee', '{"fee_payer":"MERCHANT"}'
+FROM transactions;
+
+INSERT OR IGNORE INTO transaction_economics_ledger
+  (id, transaction_id, entry_kind, category, amount_micros, basis, quantity, unit_cost_micros, cost_model_id, source_ref)
+SELECT 'ECO_EST_CORE_' || t.id, t.id, 'COST', 'CORE_INFRASTRUCTURE', m.core_infra_cost_micros,
+       'ESTIMATED', 1, m.core_infra_cost_micros, m.id, 'initial:core-infrastructure'
+FROM transactions t JOIN transaction_cost_models m ON m.status = 'ACTIVE';
+
+INSERT OR IGNORE INTO transaction_economics_ledger
+  (id, transaction_id, entry_kind, category, amount_micros, basis, quantity, unit_cost_micros, cost_model_id, source_ref)
+SELECT 'ECO_EST_EMAIL_' || t.id, t.id, 'COST', 'TRANSACTION_EMAIL_BUDGET', m.email_cost_micros_per_message * m.assumed_email_messages,
+       'ESTIMATED', m.assumed_email_messages, m.email_cost_micros_per_message, m.id, 'initial:transaction-email-budget'
+FROM transactions t JOIN transaction_cost_models m ON m.status = 'ACTIVE';
+
+INSERT OR IGNORE INTO transaction_economics_ledger
+  (id, transaction_id, entry_kind, category, amount_micros, basis, quantity, unit_cost_micros, cost_model_id, source_ref)
+SELECT 'ECO_EST_STORAGE_' || t.id, t.id, 'COST', 'LIFETIME_STORAGE', m.lifetime_storage_cost_micros,
+       'ESTIMATED', 1, m.lifetime_storage_cost_micros, m.id, 'initial:lifetime-storage'
+FROM transactions t JOIN transaction_cost_models m ON m.status = 'ACTIVE';
+
+-- Stripe's recorded application fee automatically becomes actual Builtegrity revenue.
+CREATE TRIGGER IF NOT EXISTS transactions_record_actual_fee_increase
+AFTER UPDATE OF integrity_fee_collected_cents ON transactions
+WHEN NEW.integrity_fee_collected_cents > OLD.integrity_fee_collected_cents
+BEGIN
+  INSERT OR IGNORE INTO transaction_economics_ledger
+    (id, transaction_id, entry_kind, category, amount_micros, basis, source_ref, details_json)
+  VALUES (
+    'ECO_ACT_REV_' || NEW.id || '_' || NEW.integrity_fee_collected_cents,
+    NEW.id,
+    'REVENUE',
+    'INTEGRITY_FEE',
+    (NEW.integrity_fee_collected_cents - OLD.integrity_fee_collected_cents) * 10000,
+    'ACTUAL',
+    'fee-collected:' || NEW.integrity_fee_collected_cents,
+    '{"fee_payer":"MERCHANT","source":"processor_application_fee"}'
+  );
+END;
+
+CREATE TRIGGER IF NOT EXISTS transactions_record_actual_fee_decrease
+AFTER UPDATE OF integrity_fee_collected_cents ON transactions
+WHEN NEW.integrity_fee_collected_cents < OLD.integrity_fee_collected_cents
+BEGIN
+  INSERT OR IGNORE INTO transaction_economics_ledger
+    (id, transaction_id, entry_kind, category, amount_micros, basis, source_ref, details_json)
+  VALUES (
+    'ECO_ACT_ADJ_' || NEW.id || '_' || NEW.integrity_fee_collected_cents,
+    NEW.id,
+    'ADJUSTMENT',
+    'INTEGRITY_FEE_ADJUSTMENT',
+    -((OLD.integrity_fee_collected_cents - NEW.integrity_fee_collected_cents) * 10000),
+    'ACTUAL',
+    'fee-adjusted:' || NEW.integrity_fee_collected_cents,
+    '{"fee_payer":"MERCHANT","source":"processor_adjustment"}'
+  );
+END;
 
 CREATE TABLE IF NOT EXISTS transaction_pdf_requests (
   id TEXT PRIMARY KEY,
