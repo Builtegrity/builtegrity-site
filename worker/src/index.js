@@ -10,6 +10,7 @@ import {
 } from './db.js';
 import {
   createTrackedCheckout,
+  retrieveCheckoutSession,
   retrieveConnectedAccount,
   verifyStripeSignature,
 } from './stripe.js';
@@ -130,6 +131,7 @@ async function handleConsent(request, env, token) {
   const tx = await findByPaymentToken(env, token);
   if (!tx) return json({ error: 'Payment link not found' }, 404);
   if (isExpired(tx.payment_access_expires_at)) return json({ error: 'Payment link expired' }, 410);
+  if (isPaid(tx)) return json({ error: 'This transaction has already been paid' }, 409);
 
   const body = await readJson(request);
   if (body.accepted !== true) return json({ error: 'Explicit acceptance is required' }, 400);
@@ -160,28 +162,54 @@ async function handleConsent(request, env, token) {
 }
 
 async function handleCheckout(env, token) {
-  const tx = await findByPaymentToken(env, token);
+  let tx = await findByPaymentToken(env, token);
   if (!tx) return json({ error: 'Payment link not found' }, 404);
   if (isExpired(tx.payment_access_expires_at)) return json({ error: 'Payment link expired' }, 410);
   if (!Number(tx.consent_accepted)) return json({ error: 'Terms must be accepted before payment' }, 409);
+  if (isPaid(tx)) return json({ error: 'This transaction has already been paid' }, 409);
 
-  if (tx.stripe_checkout_url && ['CREATED', 'CONSENTED', 'PAYMENT_PENDING'].includes(tx.lifecycle_status)) {
-    return json({ url: tx.stripe_checkout_url, checkout_session_id: tx.stripe_checkout_session_id });
+  const merchantProblem = v1MerchantProblem(tx);
+  if (merchantProblem) return json({ error: merchantProblem }, 409);
+
+  if (tx.stripe_checkout_session_id && tx.stripe_checkout_url && ['CREATED', 'CONSENTED', 'PAYMENT_PENDING'].includes(tx.lifecycle_status)) {
+    const existing = await retrieveCheckoutSession(env, tx.processor_account_id, tx.stripe_checkout_session_id);
+    if (existing.status === 'open' && existing.url) {
+      return json({ url: existing.url, checkout_session_id: existing.id });
+    }
+    if (existing.status === 'complete') {
+      return json({ error: 'Stripe Checkout is complete; payment confirmation is still being reconciled' }, 409);
+    }
+    if (existing.status === 'expired') {
+      await env.DB.prepare(`
+        UPDATE transactions
+           SET stripe_checkout_url = NULL,
+               stripe_checkout_expires_at = COALESCE(?, stripe_checkout_expires_at),
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = ? AND stripe_checkout_session_id = ?
+      `).bind(stripeTimestamp(existing.expires_at), tx.id, existing.id).run();
+      await recordEvent(env, tx.id, 'CHECKOUT_EXPIRED', 'STRIPE', null, {
+        checkout_session_id: existing.id,
+      });
+      tx = await findByPaymentToken(env, token);
+    }
   }
 
   const session = await createTrackedCheckout(env, tx);
+  const checkoutExpiresAt = stripeTimestamp(session.expires_at);
   await env.DB.prepare(`
     UPDATE transactions
        SET stripe_checkout_session_id = ?,
            stripe_checkout_url = ?,
+           stripe_checkout_expires_at = ?,
            payment_status = COALESCE(?, payment_status),
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
-  `).bind(session.id, session.url, session.payment_status || null, tx.id).run();
+  `).bind(session.id, session.url, checkoutExpiresAt, session.payment_status || null, tx.id).run();
 
   await advanceLifecycle(env, tx.id, 'PAYMENT_PENDING');
   await recordEvent(env, tx.id, 'CHECKOUT_CREATED', 'BUILTEGRITY', null, {
     checkout_session_id: session.id,
+    expires_at: checkoutExpiresAt,
   });
 
   return json({ url: session.url, checkout_session_id: session.id });
@@ -193,12 +221,32 @@ async function handleCreateTransaction(request, env) {
   const merchant = await env.DB.prepare(`SELECT * FROM merchants WHERE id = ?`).bind(body.merchant_id).first();
   if (!merchant) return json({ error: 'Merchant not found' }, 404);
 
+  const merchantProblem = v1MerchantProblem(merchant);
+  if (merchantProblem) return json({ error: merchantProblem }, 409);
+
   const txInput = body.transaction || {};
   if (!Number.isInteger(txInput.amount_cents) || txInput.amount_cents <= 0) {
     return json({ error: 'transaction.amount_cents must be a positive integer' }, 400);
   }
   if (!txInput.description || !txInput.terms_snapshot) {
     return json({ error: 'transaction.description and transaction.terms_snapshot are required' }, 400);
+  }
+
+  const txCurrency = String(txInput.currency || 'USD').toUpperCase();
+  if (txCurrency !== 'USD') {
+    return json({ error: 'Builtegrity V1 currently supports USD transactions only' }, 400);
+  }
+
+  const integrityFee = Number.isInteger(txInput.integrity_fee_earned_cents)
+    ? txInput.integrity_fee_earned_cents
+    : 0;
+  if (integrityFee < 0 || integrityFee > txInput.amount_cents) {
+    return json({ error: 'transaction.integrity_fee_earned_cents must be between 0 and the transaction amount' }, 400);
+  }
+
+  const collectionMethod = txInput.fee_collection_method || 'STRIPE_APPLICATION_FEE';
+  if (collectionMethod !== 'STRIPE_APPLICATION_FEE') {
+    return json({ error: 'Builtegrity V1 only supports STRIPE_APPLICATION_FEE fee collection' }, 400);
   }
 
   let customerId = body.customer_id || null;
@@ -220,6 +268,9 @@ async function handleCreateTransaction(request, env) {
   let purchaseId = body.purchase_id || null;
   if (!purchaseId) {
     const purchase = body.purchase || {};
+    const purchaseCurrency = String(purchase.currency || txCurrency).toUpperCase();
+    if (purchaseCurrency !== 'USD') return json({ error: 'Builtegrity V1 purchases must use USD' }, 400);
+
     purchaseId = await allocateId(env, 'PUR');
     await env.DB.prepare(`
       INSERT INTO purchases
@@ -233,20 +284,21 @@ async function handleCreateTransaction(request, env) {
       purchase.purchase_type || null,
       purchase.description || txInput.description,
       Number.isInteger(purchase.total_value_cents) ? purchase.total_value_cents : null,
-      String(purchase.currency || txInput.currency || 'USD').toUpperCase(),
+      purchaseCurrency,
     ).run();
   } else {
     const existing = await env.DB.prepare(`
-      SELECT id FROM purchases WHERE id = ? AND merchant_id = ? AND customer_id = ?
+      SELECT id, currency FROM purchases WHERE id = ? AND merchant_id = ? AND customer_id = ?
     `).bind(purchaseId, merchant.id, customerId).first();
     if (!existing) return json({ error: 'Purchase does not belong to this merchant/customer relationship' }, 400);
+    if (String(existing.currency || '').toUpperCase() !== txCurrency) {
+      return json({ error: 'Transaction currency must match the existing purchase currency' }, 400);
+    }
   }
 
   const txId = await allocateId(env, 'TX');
   const paymentToken = randomToken();
   const termsHash = await sha256Hex(txInput.terms_snapshot);
-  const collectionMethod = txInput.fee_collection_method ||
-    (merchant.integration_mode === 'STRIPE_CONNECT' ? 'STRIPE_APPLICATION_FEE' : 'AUTOMATIC_USAGE');
 
   await env.DB.prepare(`
     INSERT INTO transactions (
@@ -265,13 +317,13 @@ async function handleCreateTransaction(request, env) {
     txInput.transaction_type || 'PAYMENT',
     txInput.description,
     txInput.amount_cents,
-    String(txInput.currency || 'USD').toUpperCase(),
+    txCurrency,
     txInput.terms_version || 'TERMS-001',
     txInput.terms_snapshot,
     termsHash,
     txInput.refund_policy_snapshot || null,
     txInput.cancellation_policy_snapshot || null,
-    Number.isInteger(txInput.integrity_fee_earned_cents) ? txInput.integrity_fee_earned_cents : 0,
+    integrityFee,
     collectionMethod,
     paymentToken,
     txInput.payment_access_expires_at || null,
@@ -302,11 +354,9 @@ async function handleVerifyMerchant(env, merchantId) {
 
   await env.DB.prepare(`
     UPDATE merchants
-       SET status = ?, updated_at = COALESCE(updated_at, created_at)
+       SET status = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
-  `).bind(compatible ? 'ACTIVE' : 'TEST', merchantId).run().catch(async () => {
-    await env.DB.prepare(`UPDATE merchants SET status = ? WHERE id = ?`).bind(compatible ? 'ACTIVE' : 'TEST', merchantId).run();
-  });
+  `).bind(compatible ? 'ACTIVE' : 'TEST', merchantId).run();
 
   return json({
     compatible,
@@ -395,6 +445,9 @@ async function findByPaymentToken(env, token) {
       p.merchant_reference,
       p.description AS purchase_description,
       m.name AS merchant_name,
+      m.status AS merchant_status,
+      m.processor AS merchant_processor,
+      m.integration_mode AS merchant_integration_mode,
       m.processor_account_id,
       c.email AS customer_email
     FROM transactions t
@@ -404,6 +457,29 @@ async function findByPaymentToken(env, token) {
     WHERE t.payment_access_token = ?
     LIMIT 1
   `).bind(token).first();
+}
+
+function v1MerchantProblem(merchant) {
+  const status = String(merchant.merchant_status || merchant.status || '').toUpperCase();
+  const processor = String(merchant.merchant_processor || merchant.processor || '').toUpperCase();
+  const integrationMode = String(merchant.merchant_integration_mode || merchant.integration_mode || '').toUpperCase();
+
+  if (status === 'PAUSED' || status === 'DISCONNECTED') return `Merchant is ${status.toLowerCase()} and cannot create protected payments`;
+  if (!['TEST', 'ACTIVE'].includes(status)) return 'Merchant is not enabled for Builtegrity payments';
+  if (processor !== 'STRIPE') return 'Builtegrity V1 supports Stripe merchants only';
+  if (integrationMode !== 'STRIPE_CONNECT') return 'Builtegrity V1 requires the Stripe Connect integration';
+  return null;
+}
+
+function isPaid(tx) {
+  return String(tx.payment_status || '').toLowerCase() === 'succeeded' ||
+    ['PAID', 'PAYOUT_PENDING', 'COMPLETE'].includes(String(tx.lifecycle_status || '').toUpperCase());
+}
+
+function stripeTimestamp(value) {
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return new Date(seconds * 1000).toISOString();
 }
 
 function requireInternal(request, env) {
