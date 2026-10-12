@@ -204,8 +204,19 @@ function randomToken() {
 }
 
 async function readJson(request) {
-  try { return await request.json(); } catch {
-    return null;
+  try {
+    const value = await request.json();
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      const error = new Error('JSON request body must be an object');
+      error.status = 400;
+      throw error;
+    }
+    return value;
+  } catch (error) {
+    if (error?.status === 400) throw error;
+    const invalid = new Error('Invalid JSON request body');
+    invalid.status = 400;
+    throw invalid;
   }
 }
 
