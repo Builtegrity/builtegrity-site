@@ -171,9 +171,10 @@ async function handleCheckout(env, token) {
   const merchantProblem = v1MerchantProblem(tx);
   if (merchantProblem) return json({ error: merchantProblem }, 409);
 
-  if (tx.stripe_checkout_session_id && tx.stripe_checkout_url && ['CREATED', 'CONSENTED', 'PAYMENT_PENDING'].includes(tx.lifecycle_status)) {
+  if (tx.stripe_checkout_session_id && ['CREATED', 'CONSENTED', 'PAYMENT_PENDING'].includes(tx.lifecycle_status)) {
     const existing = await retrieveCheckoutSession(env, tx.processor_account_id, tx.stripe_checkout_session_id);
-    if (existing.status === 'open' && existing.url) {
+    if (existing.status === 'open') {
+      if (!existing.url) return json({ error: 'Existing Stripe Checkout Session has no usable payment URL' }, 502);
       return json({ url: existing.url, checkout_session_id: existing.id });
     }
     if (existing.status === 'complete') {
@@ -463,11 +464,13 @@ function v1MerchantProblem(merchant) {
   const status = String(merchant.merchant_status || merchant.status || '').toUpperCase();
   const processor = String(merchant.merchant_processor || merchant.processor || '').toUpperCase();
   const integrationMode = String(merchant.merchant_integration_mode || merchant.integration_mode || '').toUpperCase();
+  const accountId = String(merchant.processor_account_id || '');
 
   if (status === 'PAUSED' || status === 'DISCONNECTED') return `Merchant is ${status.toLowerCase()} and cannot create protected payments`;
   if (!['TEST', 'ACTIVE'].includes(status)) return 'Merchant is not enabled for Builtegrity payments';
   if (processor !== 'STRIPE') return 'Builtegrity V1 supports Stripe merchants only';
   if (integrationMode !== 'STRIPE_CONNECT') return 'Builtegrity V1 requires the Stripe Connect integration';
+  if (!accountId.startsWith('acct_')) return 'Merchant does not have a usable Stripe connected account';
   return null;
 }
 
