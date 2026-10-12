@@ -17,22 +17,32 @@ export async function authenticateClerkSession(request, env) {
   );
   if (!verified) return null;
 
+  // Builtegrity accepts Clerk session tokens here, not arbitrary Clerk-signed JWT templates.
+  // Clerk session tokens have a user subject, session ID and expiration claim.
+  if (!String(payload.sub || '').trim() || !String(payload.sid || '').trim()) return null;
+  const exp = Number(payload.exp);
+  if (!Number.isFinite(exp)) return null;
+
   const now = Math.floor(Date.now() / 1000);
-  if (payload.exp && Number(payload.exp) <= now) return null;
-  if (payload.nbf && Number(payload.nbf) > now + 30) return null;
+  if (exp <= now) return null;
+  if (payload.nbf !== undefined && payload.nbf !== null) {
+    const nbf = Number(payload.nbf);
+    if (!Number.isFinite(nbf) || nbf > now + 30) return null;
+  }
   if (String(payload.iss || '') !== String(env.CLERK_ISSUER || '')) return null;
 
   const allowedParties = splitCsv(env.CLERK_AUTHORIZED_PARTIES);
+  // Clerk documents azp as optional when the originating request had no Origin.
   if (payload.azp && allowedParties.length && !allowedParties.includes(String(payload.azp))) {
     return null;
   }
 
   return {
-    sub: String(payload.sub || ''),
-    session_id: payload.sid || null,
+    sub: String(payload.sub),
+    session_id: String(payload.sid),
     role: null,
     provider: 'CLERK',
-    expires_at: payload.exp ? new Date(Number(payload.exp) * 1000).toISOString() : null,
+    expires_at: new Date(exp * 1000).toISOString(),
     claims: payload,
   };
 }
