@@ -8,7 +8,7 @@ INSERT OR IGNORE INTO merchants (
   integration_mode, automatic_payouts_required, status
 ) VALUES (
   'MER-0001', 'PARTNER-0001', 'ABC Cabinetry', 'merchant@example.com',
-  'STRIPE', 'TEST_ACCOUNT', 'STRIPE_CONNECT', 1, 'TEST'
+  'STRIPE', NULL, 'STRIPE_CONNECT', 1, 'TEST'
 );
 
 INSERT OR IGNORE INTO customers (
@@ -31,7 +31,8 @@ INSERT OR IGNORE INTO transactions (
   terms_version, terms_snapshot, refund_policy_snapshot, cancellation_policy_snapshot,
   consent_accepted, lifecycle_status, integrity_status, exception_status,
   processor, customer_paid_cents,
-  integrity_fee_earned_cents, fee_collection_method, integrity_fee_collected_cents
+  integrity_fee_earned_cents, fee_collection_method, integrity_fee_collected_cents,
+  payment_access_token
 ) VALUES (
   'TX-0001', 'PUR-0001', 'MER-0001', 'CUST-0001',
   'DEPOSIT', 'Custom kitchen cabinetry deposit', 120000, 'USD',
@@ -41,7 +42,8 @@ INSERT OR IGNORE INTO transactions (
   'Customer may cancel before materials are ordered.',
   0, 'CREATED', 'INCOMPLETE', 'NONE',
   'STRIPE', NULL,
-  25, 'STRIPE_APPLICATION_FEE', 0
+  25, 'STRIPE_APPLICATION_FEE', 0,
+  'test-tx-0001-token'
 );
 
 INSERT OR IGNORE INTO transaction_events (
