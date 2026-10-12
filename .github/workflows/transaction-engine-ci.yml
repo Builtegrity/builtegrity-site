@@ -104,6 +104,7 @@ jobs:
           sqlite3 /tmp/builtegrity.db < migrations/0007_watchdogs.sql
           sqlite3 /tmp/builtegrity.db < migrations/0008_checkout_integrity.sql
           sqlite3 /tmp/builtegrity.db < migrations/0009_transaction_write_integrity.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0010_atomic_audit_evidence.sql
           sqlite3 /tmp/builtegrity.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify TX-0001 hierarchy and state
@@ -135,14 +136,17 @@ jobs:
           fi
           grep -qi "unique" /tmp/unique-error.txt
 
-      - name: Verify accepted transaction agreement is immutable
+      - name: Verify accepted transaction agreement and atomic evidence
         run: |
           sqlite3 /tmp/builtegrity.db "UPDATE transactions SET consent_accepted=1,consent_accepted_at=CURRENT_TIMESTAMP,consent_method='CI',terms_snapshot_sha256='ci-hash' WHERE id='TX-0001';"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='CONSENT_COMMITTED';")" = "1"
           if sqlite3 /tmp/builtegrity.db "UPDATE transactions SET amount_cents=1 WHERE id='TX-0001';" 2>/tmp/agreement-error.txt; then
             echo "Expected accepted agreement mutation to be rejected"
             exit 1
           fi
           grep -q "accepted transaction agreement is immutable" /tmp/agreement-error.txt
+          sqlite3 /tmp/builtegrity.db "UPDATE transactions SET stripe_checkout_session_id='cs_test_atomic',payment_status='unpaid' WHERE id='TX-0001';"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='CHECKOUT_SESSION_LINKED' AND source_event_id='checkout:cs_test_atomic';")" = "1"
           sqlite3 /tmp/builtegrity.db "UPDATE transactions SET payment_status='succeeded' WHERE id='TX-0001';"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT payment_status FROM transactions WHERE id='TX-0001';")" = "succeeded"
 
