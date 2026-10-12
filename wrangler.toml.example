@@ -1,5 +1,5 @@
 name = "builtegrity-transaction-engine"
-main = "worker/src/index.js"
+main = "worker/src/runtime.js"
 compatibility_date = "2026-10-11"
 
 [assets]
@@ -15,3 +15,4 @@ migrations_dir = "migrations"
 [vars]
 APP_BASE_URL = "http://localhost:8787"
 DEV_MODE = "true"
+STRIPE_CONNECT_CLIENT_ID = "ca_REPLACE_ME"
