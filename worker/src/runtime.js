@@ -98,7 +98,11 @@ export default {
       return core.fetch(request, env, ctx);
     } catch (error) {
       console.error(error);
-      return json({ error: error.message || 'Internal error' }, error.status || 500);
+      const status = error?.status && Number(error.status) >= 400 && Number(error.status) < 600
+        ? Number(error.status)
+        : 500;
+      const message = status >= 500 ? 'Internal error' : (error?.message || 'Request failed');
+      return json({ error: message }, status);
     }
   },
 
