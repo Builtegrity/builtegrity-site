@@ -46,7 +46,7 @@ export async function getTransaction(env, txId) {
 
   if (!transaction) return null;
 
-  const [eventsResult, exceptionsResult] = await Promise.all([
+  const [eventsResult, exceptionsResult, economics] = await Promise.all([
     env.DB.prepare(`
       SELECT * FROM transaction_events
       WHERE transaction_id = ?
@@ -57,6 +57,7 @@ export async function getTransaction(env, txId) {
       WHERE transaction_id = ?
       ORDER BY opened_at ASC
     `).bind(txId).all(),
+    getTransactionEconomics(env, txId),
   ]);
 
   const events = (eventsResult.results || []).map((event) => ({
@@ -68,6 +69,7 @@ export async function getTransaction(env, txId) {
     ...transaction,
     events,
     exceptions: exceptionsResult.results || [],
+    economics,
   };
 }
 
@@ -204,6 +206,148 @@ export async function recomputeIntegrity(env, transactionId) {
   `).bind(integrityStatus, exceptionStatus, transactionId).run();
 
   return { integrityStatus, exceptionStatus };
+}
+
+export async function recordEconomicEntry(env, transactionId, entry) {
+  const id = await allocateId(env, 'ECO', 6);
+  const result = await env.DB.prepare(`
+    INSERT OR IGNORE INTO transaction_economics_ledger (
+      id, transaction_id, entry_kind, category, amount_micros, basis,
+      quantity, unit_cost_micros, cost_model_id, source_ref, details_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    id,
+    transactionId,
+    entry.entry_kind,
+    entry.category,
+    Math.trunc(Number(entry.amount_micros || 0)),
+    entry.basis,
+    entry.quantity ?? null,
+    entry.unit_cost_micros ?? null,
+    entry.cost_model_id || null,
+    entry.source_ref || null,
+    JSON.stringify(entry.details || {}),
+  ).run();
+
+  return { id, inserted: Number(result.meta?.changes || 0) > 0 };
+}
+
+export async function initializeTransactionEconomics(env, transactionId, expectedFeeCents) {
+  const model = await env.DB.prepare(`
+    SELECT * FROM transaction_cost_models
+    WHERE status = 'ACTIVE'
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1
+  `).first();
+
+  const feeMicros = Math.max(0, Number(expectedFeeCents || 0)) * 10000;
+  await recordEconomicEntry(env, transactionId, {
+    entry_kind: 'REVENUE',
+    category: 'INTEGRITY_FEE',
+    amount_micros: feeMicros,
+    basis: 'ESTIMATED',
+    source_ref: 'initial:integrity-fee',
+    details: { fee_payer: 'MERCHANT' },
+  });
+
+  if (!model) return;
+
+  const entries = [
+    {
+      category: 'CORE_INFRASTRUCTURE',
+      amount_micros: Number(model.core_infra_cost_micros || 0),
+      quantity: 1,
+      unit_cost_micros: Number(model.core_infra_cost_micros || 0),
+    },
+    {
+      category: 'TRANSACTION_EMAIL_BUDGET',
+      amount_micros: Number(model.email_cost_micros_per_message || 0) * Number(model.assumed_email_messages || 0),
+      quantity: Number(model.assumed_email_messages || 0),
+      unit_cost_micros: Number(model.email_cost_micros_per_message || 0),
+    },
+    {
+      category: 'LIFETIME_STORAGE',
+      amount_micros: Number(model.lifetime_storage_cost_micros || 0),
+      quantity: 1,
+      unit_cost_micros: Number(model.lifetime_storage_cost_micros || 0),
+    },
+  ];
+
+  for (const entry of entries) {
+    await recordEconomicEntry(env, transactionId, {
+      entry_kind: 'COST',
+      category: entry.category,
+      amount_micros: entry.amount_micros,
+      basis: 'ESTIMATED',
+      quantity: entry.quantity,
+      unit_cost_micros: entry.unit_cost_micros,
+      cost_model_id: model.id,
+      source_ref: `initial:${entry.category.toLowerCase()}`,
+    });
+  }
+}
+
+export async function getTransactionEconomics(env, transactionId) {
+  const [summary, ledgerResult, pdfResult] = await Promise.all([
+    env.DB.prepare(`SELECT * FROM transaction_economics_summary WHERE transaction_id = ?`).bind(transactionId).first(),
+    env.DB.prepare(`
+      SELECT * FROM transaction_economics_ledger
+      WHERE transaction_id = ?
+      ORDER BY created_at ASC, id ASC
+    `).bind(transactionId).all(),
+    env.DB.prepare(`
+      SELECT * FROM transaction_pdf_requests
+      WHERE transaction_id = ?
+      ORDER BY requested_at DESC
+      LIMIT 25
+    `).bind(transactionId).all(),
+  ]);
+
+  return {
+    summary: summary || null,
+    ledger: (ledgerResult.results || []).map((entry) => ({
+      ...entry,
+      details: parseJson(entry.details_json),
+    })),
+    pdf_requests: pdfResult.results || [],
+  };
+}
+
+export async function createPdfRequest(env, transactionId, requestedByType, requestedByRef = null) {
+  const id = await allocateId(env, 'PDF', 6);
+  await env.DB.prepare(`
+    INSERT INTO transaction_pdf_requests
+      (id, transaction_id, requested_by_type, requested_by_ref, status)
+    VALUES (?, ?, ?, ?, 'REQUESTED')
+  `).bind(id, transactionId, requestedByType, requestedByRef).run();
+  return id;
+}
+
+export async function completePdfRequest(env, requestId, values = {}) {
+  await env.DB.prepare(`
+    UPDATE transaction_pdf_requests
+       SET status = 'GENERATED',
+           cache_hit = ?,
+           object_key = ?,
+           byte_length = ?,
+           generated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+  `).bind(
+    values.cache_hit ? 1 : 0,
+    values.object_key || null,
+    Number.isFinite(Number(values.byte_length)) ? Number(values.byte_length) : null,
+    requestId,
+  ).run();
+}
+
+export async function failPdfRequest(env, requestId, error) {
+  await env.DB.prepare(`
+    UPDATE transaction_pdf_requests
+       SET status = 'FAILED',
+           error_message = ?,
+           generated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+  `).bind(String(error?.message || error || 'Unknown PDF generation error').slice(0, 2000), requestId).run();
 }
 
 export async function claimWebhook(env, event) {
