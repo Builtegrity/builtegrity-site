@@ -2,11 +2,16 @@ const rows = document.querySelector('#transactionRows');
 const detail = document.querySelector('#detail');
 const stats = document.querySelector('#stats');
 const empty = document.querySelector('#empty');
+const caseRows = document.querySelector('#caseRows');
+const caseDetail = document.querySelector('#caseDetail');
+const caseEmpty = document.querySelector('#caseEmpty');
+const opsStats = document.querySelector('#opsStats');
 const refreshButton = document.querySelector('#refresh');
 const signOutButton = document.querySelector('#signOut');
 const sessionLabel = document.querySelector('#sessionLabel');
+let caseOpenedAt = null;
 
-refreshButton.addEventListener('click', loadTransactions);
+refreshButton.addEventListener('click', loadEverything);
 signOutButton?.addEventListener('click', async () => {
   signOutButton.disabled = true;
   try {
@@ -40,6 +45,148 @@ async function loadSession() {
     }
   } catch {
     // api() handles redirect for unauthenticated sessions.
+  }
+}
+
+async function loadEverything() {
+  await Promise.all([loadCases(), loadTransactions()]);
+}
+
+async function loadCases() {
+  caseRows.innerHTML = '<tr><td colspan="7" class="muted">Loading internal cases…</td></tr>';
+  try {
+    const [queue, metrics] = await Promise.all([
+      api('/api/cases?limit=200'),
+      api('/api/cases/metrics'),
+    ]);
+    renderOpsStats(queue.cases || [], metrics || {});
+    renderCaseRows(queue.cases || []);
+    const requested = new URLSearchParams(location.search).get('case');
+    if (requested) await loadCaseDetail(requested);
+  } catch (error) {
+    caseRows.innerHTML = `<tr><td colspan="7" class="error">${escapeHtml(error.message)}</td></tr>`;
+  }
+}
+
+function renderOpsStats(items, metrics) {
+  const critical = items.filter((item) => item.severity === 'CRITICAL').length;
+  const touchRate = Number(metrics.human_touch_rate || 0) * 100;
+  const minutesPerThousand = Number(metrics.human_minutes_per_1000_transactions || 0);
+  opsStats.innerHTML = [
+    ['Open internal cases', items.length],
+    ['Critical', critical],
+    ['Human touch rate', `${touchRate.toFixed(3)}%`],
+    ['Human min / 1,000 TX', minutesPerThousand.toFixed(2)],
+    ['Unknown exceptions', Number(metrics.unknown_exception_cases || 0)],
+  ].map(([label, value]) => `<div class="panel stat"><span class="muted">${label}</span><strong>${escapeHtml(String(value))}</strong></div>`).join('');
+}
+
+function renderCaseRows(items) {
+  caseEmpty.hidden = items.length > 0;
+  caseRows.innerHTML = items.length ? items.map((item) => `
+    <tr data-case-id="${escapeHtml(item.id)}">
+      <td><strong>${escapeHtml(item.id)}</strong></td>
+      <td>${escapeHtml(item.title || item.case_type_code)}</td>
+      <td>${escapeHtml(`${item.subject_type || 'SYSTEM'} ${item.subject_id || ''}`.trim())}</td>
+      <td>${badge(item.severity)}</td>
+      <td>${escapeHtml(formatAge(item.age_minutes))}</td>
+      <td>${badge(item.status)}</td>
+      <td>${escapeHtml(item.recommended_action || 'Follow runbook')}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="7" class="muted">No internal human cases. The machine is handling the queue.</td></tr>';
+
+  for (const row of caseRows.querySelectorAll('tr[data-case-id]')) {
+    row.addEventListener('click', () => loadCaseDetail(row.dataset.caseId));
+  }
+}
+
+async function loadCaseDetail(caseId) {
+  caseDetail.hidden = false;
+  caseDetail.innerHTML = '<div class="panel muted">Loading case runbook…</div>';
+  try {
+    const item = await api(`/api/cases/${encodeURIComponent(caseId)}`);
+    caseOpenedAt = Date.now();
+    history.replaceState(null, '', `/console/?case=${encodeURIComponent(caseId)}`);
+    renderCaseDetail(item);
+  } catch (error) {
+    caseDetail.innerHTML = `<div class="panel error">${escapeHtml(error.message)}</div>`;
+  }
+}
+
+function renderCaseDetail(item) {
+  const context = item.machine_context || {};
+  const attempts = item.automation_attempts || {};
+  const providerUrl = providerShortcut(item);
+  caseDetail.innerHTML = `
+    <div class="panel" style="margin-top:16px">
+      <div class="toolbar">
+        <div>
+          <p class="eyebrow">${escapeHtml(item.case_type_code)}</p>
+          <h2>${escapeHtml(item.id)} · ${escapeHtml(item.title || '')}</h2>
+        </div>
+        <div>${badge(item.severity)} ${badge(item.status)}</div>
+      </div>
+
+      <div class="detail">
+        <div>
+          <h3>What happened</h3>
+          <p>${escapeHtml(item.summary)}</p>
+          <h3>Operator rule</h3>
+          <p>${escapeHtml(item.operator_summary || '')}</p>
+          <dl class="kv">
+            <dt>Subject</dt><dd>${escapeHtml(`${item.subject_type} ${item.subject_id || ''}`.trim())}</dd>
+            <dt>Transaction</dt><dd>${escapeHtml(item.transaction_id || '—')}</dd>
+            <dt>Merchant</dt><dd>${escapeHtml(item.merchant_id || '—')}</dd>
+            <dt>Escalation target</dt><dd>${escapeHtml(item.escalation_target)}</dd>
+            <dt>SLA</dt><dd>${escapeHtml(String(item.sla_minutes || '—'))} minutes</dd>
+            <dt>Auto-verification</dt><dd>${escapeHtml(item.auto_verify_rule || 'Source condition must clear')}</dd>
+          </dl>
+        </div>
+        <div>
+          <h3>Machine already knows</h3>
+          <pre style="white-space:pre-wrap">${escapeHtml(JSON.stringify(context, null, 2))}</pre>
+          <h3>Automation attempts</h3>
+          <pre style="white-space:pre-wrap">${escapeHtml(JSON.stringify(attempts, null, 2))}</pre>
+        </div>
+      </div>
+
+      <h3 style="margin-top:18px">Allowed actions</h3>
+      <p class="muted">This case type is hard-limited to three human actions. After every action, Builtegrity re-runs its watchdog and decides whether the problem is actually gone.</p>
+      <div class="actions" id="caseActions">
+        ${(item.actions || []).map((action) => `<button class="secondary" data-case-action="${escapeHtml(action.action_code)}" data-handler="${escapeHtml(action.action_handler)}">${escapeHtml(action.label)}</button>`).join('') || '<span class="muted">No operator action is currently allowed.</span>'}
+        ${providerUrl ? `<a class="button secondary" target="_blank" rel="noreferrer" href="${providerUrl}">Open provider dashboard</a>` : ''}
+      </div>
+
+      <h3 style="margin-top:18px">Action history</h3>
+      <ul class="timeline">
+        ${(item.action_runs || []).length ? item.action_runs.map((run) => `<li><strong>${escapeHtml(run.action_code)}</strong> ${badge(run.status)}<div class="muted">${escapeHtml(run.actor_ref || run.actor_type || '')} · ${escapeHtml(String(run.human_seconds || 0))} human sec</div><time>${escapeHtml(run.finished_at || run.started_at || '')}</time></li>`).join('') : '<li><span class="muted">No human action taken.</span></li>'}
+      </ul>
+    </div>
+  `;
+
+  for (const button of caseDetail.querySelectorAll('[data-case-action]')) {
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      try {
+        const humanSeconds = caseOpenedAt ? Math.max(1, Math.round((Date.now() - caseOpenedAt) / 1000)) : 0;
+        const handler = button.dataset.handler || '';
+        let note = '';
+        if (handler === 'EXTERNAL_CONFIRMATION' || handler.startsWith('ESCALATE_') || handler === 'MARK_RESOLVED') {
+          note = window.prompt('Optional note for the audit trail:', '') || '';
+        }
+        const result = await api(`/api/cases/${encodeURIComponent(item.id)}/actions/${encodeURIComponent(button.dataset.caseAction)}`, {
+          method: 'POST',
+          body: JSON.stringify({ human_seconds: humanSeconds, note }),
+        });
+        caseOpenedAt = Date.now();
+        renderCaseDetail(result.case || result.executed?.case || item);
+        await loadCases();
+      } catch (error) {
+        alert(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
   }
 }
 
@@ -169,11 +316,26 @@ function renderDetail(tx) {
   }
 }
 
+function providerShortcut(item) {
+  const key = `${item.source_ref || ''} ${item.summary || ''}`.toLowerCase();
+  if (key.includes('stripe')) return 'https://dashboard.stripe.com/';
+  if (key.includes('clerk')) return 'https://dashboard.clerk.com/';
+  if (key.includes('cloudflare') || key.includes('public-health') || key.includes('config:')) return 'https://dash.cloudflare.com/';
+  return '';
+}
+
+function formatAge(minutes) {
+  const value = Math.max(0, Number(minutes || 0));
+  if (value < 60) return `${Math.round(value)}m`;
+  if (value < 1440) return `${(value / 60).toFixed(1)}h`;
+  return `${(value / 1440).toFixed(1)}d`;
+}
+
 function badge(value) {
   const text = String(value || '—');
   const upper = text.toUpperCase();
-  const cls = upper === 'ACCOUNTED' || upper === 'COMPLETE' || upper === 'RESOLVED' ? 'ok'
-    : upper.includes('ATTENTION') || upper === 'OPEN' || upper.includes('FAILED') ? 'bad'
+  const cls = upper === 'ACCOUNTED' || upper === 'COMPLETE' || upper === 'RESOLVED' || upper === 'SUCCEEDED' ? 'ok'
+    : upper.includes('ATTENTION') || upper === 'OPEN' || upper.includes('FAILED') || upper === 'CRITICAL' || upper === 'QUARANTINED' ? 'bad'
       : 'warn';
   return `<span class="badge ${cls}">${escapeHtml(text)}</span>`;
 }
@@ -189,4 +351,4 @@ function escapeHtml(value) {
 }
 
 await loadSession();
-await loadTransactions();
+await loadEverything();
