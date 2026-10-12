@@ -5,8 +5,19 @@ import {
   deauthorizeStripeAccount,
   exchangeStripeOAuthCode,
 } from './stripe-oauth.js';
+import { verifyStripeSignature } from './stripe.js';
+import { processStripeWebhook } from './webhooks.js';
+import { processStripeAccountWebhook } from './stripe-account-events.js';
 import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
 import { handlePublicRecordRoute, serveOperatorTransactionPdf } from './records.js';
+import {
+  executeInternalCaseAction,
+  getInternalCase,
+  getInternalOperationsMetrics,
+  listInternalCases,
+  verifyInternalCase,
+} from './cases.js';
+import { syncInternalCasesFromWatchdogs } from './case-router.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -40,6 +51,12 @@ export default {
         }, readiness.ok ? 200 : 503);
       }
 
+      // Production webhook entrypoint. Account-level events are routed to merchant self-service;
+      // transaction events continue through the transaction engine's idempotent processor.
+      if (path === '/api/webhooks/stripe' && request.method === 'POST') {
+        return handleRuntimeStripeWebhook(request, env);
+      }
+
       const authResponse = await handleAuthRoute(request, env);
       if (authResponse) return authResponse;
 
@@ -65,6 +82,41 @@ export default {
         return serveOperatorTransactionPdf(env, operatorPdfMatch[1], principal);
       }
 
+      if (path === '/api/cases/metrics' && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getInternalOperationsMetrics(env));
+      }
+
+      if (path === '/api/cases' && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json({
+          cases: await listInternalCases(env, {
+            status: url.searchParams.get('status'),
+            limit: url.searchParams.get('limit'),
+          }),
+        });
+      }
+
+      const caseMatch = path.match(/^\/api\/cases\/(CASE-[A-Za-z0-9-]+)$/);
+      if (caseMatch && request.method === 'GET') {
+        await requireOperator(request, env);
+        const item = await getInternalCase(env, caseMatch[1]);
+        return item ? json(item) : json({ error: 'Internal case not found' }, 404);
+      }
+
+      const caseActionMatch = path.match(/^\/api\/cases\/(CASE-[A-Za-z0-9-]+)\/actions\/([A-Z0-9_]+)$/);
+      if (caseActionMatch && request.method === 'POST') {
+        const principal = await requireOperator(request, env);
+        const body = await readJson(request);
+        const executed = await executeInternalCaseAction(env, caseActionMatch[1], caseActionMatch[2], principal, body);
+
+        // Every operator action is verified by the machine; humans never decide that a technical alert is cleared.
+        const watchdog = await runWatchdogs(env, { kind: 'FAST', trigger: `case:${caseActionMatch[1]}:${caseActionMatch[2]}` });
+        const routing = await syncInternalCasesFromWatchdogs(env);
+        const verified = await verifyInternalCase(env, caseActionMatch[1]);
+        return json({ executed, watchdog, routing, case: verified });
+      }
+
       if (path === '/api/watchdogs/status' && request.method === 'GET') {
         await requireOperator(request, env);
         return json(await getWatchdogStatus(env));
@@ -73,13 +125,28 @@ export default {
       if (path === '/api/watchdogs/run' && request.method === 'POST') {
         await requireOperator(request, env);
         requireSameOriginBrowserRequest(request, url);
-        return json(await runWatchdogs(env, { kind: 'MANUAL', trigger: 'operator' }));
+        const watchdog = await runWatchdogs(env, { kind: 'MANUAL', trigger: 'operator' });
+        const routing = await syncInternalCasesFromWatchdogs(env);
+        return json({ ...watchdog, case_routing: routing });
       }
 
       if (path.startsWith('/console')) {
         const principal = await requireOperatorOrRedirect(request, env, url);
         if (principal instanceof Response) return principal;
         return env.ASSETS.fetch(request);
+      }
+
+      // Catastrophic controls are enforced before requests enter the core engine.
+      if (path === '/api/transactions' && request.method === 'POST') {
+        await requireOperator(request, env);
+        await requirePlatformControl(env, 'transaction_creation_enabled', 'New transaction creation');
+        return forwardAuthenticatedToCore(request, env, ctx);
+      }
+
+      const publicCheckoutMatch = path.match(/^\/api\/payments\/[^/]+\/checkout$/);
+      if (publicCheckoutMatch && request.method === 'POST') {
+        await requirePlatformControl(env, 'payment_creation_enabled', 'New payment creation');
+        return core.fetch(request, env, ctx);
       }
 
       if (isInternalApi(path)) {
@@ -97,7 +164,8 @@ export default {
   async scheduled(controller, env) {
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
     const result = await runWatchdogs(env, { kind, trigger: controller.cron || 'cron' });
-    console.log('Builtegrity watchdog run', result);
+    const routing = await syncInternalCasesFromWatchdogs(env);
+    console.log('Builtegrity watchdog run', { ...result, case_routing: routing });
     if (result.status === 'FAIL') {
       throw new Error(`Builtegrity watchdog detected ${result.critical} critical alert(s)`);
     }
@@ -169,7 +237,25 @@ async function requireOperatorOrRedirect(request, env, url) {
   }
 }
 
+async function handleRuntimeStripeWebhook(request, env) {
+  if (!env.STRIPE_WEBHOOK_SECRET) return json({ error: 'Stripe webhook secret is not configured' }, 503);
+  const rawBody = await request.text();
+  const signature = request.headers.get('Stripe-Signature');
+  const valid = await verifyStripeSignature(rawBody, signature, env.STRIPE_WEBHOOK_SECRET);
+  if (!valid) return json({ error: 'Invalid Stripe signature' }, 400);
+
+  let event;
+  try { event = JSON.parse(rawBody); } catch { return json({ error: 'Invalid JSON' }, 400); }
+  const accountEvent = event.type === 'account.updated' || event.type === 'account.application.deauthorized';
+  const result = accountEvent
+    ? await processStripeAccountWebhook(env, event)
+    : await processStripeWebhook(env, event);
+  return json({ received: true, ...result });
+}
+
 async function handleConnectUrl(env, merchantId) {
+  await requirePlatformControl(env, 'merchant_onboarding_enabled', 'Merchant onboarding');
+
   const merchant = await env.DB.prepare(`SELECT id, email FROM merchants WHERE id = ?`).bind(merchantId).first();
   if (!merchant) return json({ error: 'Merchant not found' }, 404);
 
@@ -221,18 +307,22 @@ async function handleOAuthCallback(url, env) {
     UPDATE stripe_oauth_states SET consumed_at = CURRENT_TIMESTAMP WHERE state_token = ?
   `).bind(state).run();
 
+  const controls = await env.DB.prepare(`SELECT merchant_onboarding_enabled FROM platform_controls WHERE id = 'GLOBAL'`).first().catch(() => null);
+  const merchantStatus = controls && Number(controls.merchant_onboarding_enabled) !== 1 ? 'PAUSED' : 'TEST';
+
   await env.DB.prepare(`
     UPDATE merchants
        SET processor_account_id = ?,
            integration_mode = 'STRIPE_CONNECT',
-           status = 'TEST',
+           status = ?,
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
-  `).bind(result.stripe_user_id, stateRow.merchant_id).run();
+  `).bind(result.stripe_user_id, merchantStatus, stateRow.merchant_id).run();
 
   return redirectToConsole(env, {
     stripe: 'connected',
     merchant: stateRow.merchant_id,
+    status: merchantStatus,
   });
 }
 
@@ -246,11 +336,26 @@ async function handleDisconnect(env, merchantId) {
     UPDATE merchants
        SET processor_account_id = NULL,
            status = 'DISCONNECTED',
+           stripe_charges_enabled = NULL,
+           stripe_payouts_enabled = NULL,
+           stripe_details_submitted = NULL,
+           stripe_payout_interval = NULL,
+           stripe_requirements_due_json = NULL,
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
   `).bind(merchantId).run();
 
   return json({ disconnected: true, stripe_user_id: result.stripe_user_id || null });
+}
+
+async function requirePlatformControl(env, column, label) {
+  const allowed = new Set(['transaction_creation_enabled', 'payment_creation_enabled', 'merchant_onboarding_enabled']);
+  if (!allowed.has(column)) throw new Error(`Unknown platform control: ${column}`);
+  const controls = await env.DB.prepare(`SELECT ${column} AS enabled, reason FROM platform_controls WHERE id = 'GLOBAL'`).first().catch(() => null);
+  if (!controls || Number(controls.enabled) === 1) return;
+  const error = new Error(`${label} is temporarily paused by Builtegrity safety controls${controls.reason ? `: ${controls.reason}` : ''}`);
+  error.status = 503;
+  throw error;
 }
 
 function redirectToConsole(env, values) {
@@ -265,6 +370,14 @@ function redirectToConsole(env, values) {
 function randomToken() {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function readJson(request) {
+  try { return await request.json(); } catch {
+    const error = new Error('Invalid JSON request body');
+    error.status = 400;
+    throw error;
+  }
 }
 
 function json(value, status = 200) {
