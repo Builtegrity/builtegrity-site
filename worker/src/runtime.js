@@ -5,6 +5,7 @@ import {
   deauthorizeStripeAccount,
   exchangeStripeOAuthCode,
 } from './stripe-oauth.js';
+import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -18,6 +19,19 @@ export default {
 
       if (isAdminSurface(path) && isStateChanging(request.method)) {
         requireSameOriginBrowserRequest(request, url);
+      }
+
+      if (path === '/api/health/ready' && request.method === 'GET') {
+        const readiness = await systemReadiness(env);
+        return json({
+          ok: readiness.ok,
+          service: 'builtegrity-transaction-engine',
+          stage: readiness.stage,
+          database: readiness.database,
+          config_complete: readiness.config_complete,
+          missing_config_count: readiness.missing_config_count,
+          last_watchdog: readiness.last_watchdog,
+        }, readiness.ok ? 200 : 503);
       }
 
       const authResponse = await handleAuthRoute(request, env);
@@ -39,6 +53,17 @@ export default {
         return handleDisconnect(env, disconnectMatch[1]);
       }
 
+      if (path === '/api/watchdogs/status' && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getWatchdogStatus(env));
+      }
+
+      if (path === '/api/watchdogs/run' && request.method === 'POST') {
+        await requireOperator(request, env);
+        requireSameOriginBrowserRequest(request, url);
+        return json(await runWatchdogs(env, { kind: 'MANUAL', trigger: 'operator' }));
+      }
+
       if (path.startsWith('/console')) {
         const principal = await requireOperatorOrRedirect(request, env, url);
         if (principal instanceof Response) return principal;
@@ -56,11 +81,20 @@ export default {
       return json({ error: error.message || 'Internal error' }, error.status || 500);
     }
   },
+
+  async scheduled(controller, env) {
+    const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
+    const result = await runWatchdogs(env, { kind, trigger: controller.cron || 'cron' });
+    console.log('Builtegrity watchdog run', result);
+    if (result.status === 'FAIL') {
+      throw new Error(`Builtegrity watchdog detected ${result.critical} critical alert(s)`);
+    }
+  },
 };
 
 function isInternalApi(path) {
   if (!path.startsWith('/api/')) return false;
-  if (path === '/api/health') return false;
+  if (path.startsWith('/api/health')) return false;
   if (path === '/api/webhooks/stripe') return false;
   if (path.startsWith('/api/payments/')) return false;
   if (path === '/api/stripe/oauth/callback') return false;
