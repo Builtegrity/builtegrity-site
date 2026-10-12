@@ -8,6 +8,7 @@ import {
 import { getWatchdogStatus, runWatchdogs } from './watchdogs.js';
 import { systemReadiness } from './readiness.js';
 import { createTransactionRequest } from './transaction-create.js';
+import { verifyMerchantStripe } from './merchant-stripe.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -51,6 +52,12 @@ export default {
       if (connectMatch && request.method === 'POST') {
         await requireOperator(request, env);
         return handleConnectUrl(env, connectMatch[1]);
+      }
+
+      const verifyMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/stripe\/verify$/);
+      if (verifyMatch && request.method === 'POST') {
+        await requireOperator(request, env);
+        return verifyMerchantStripe(env, verifyMatch[1]);
       }
 
       const disconnectMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/stripe\/disconnect$/);
