@@ -12,11 +12,22 @@ database_name = "builtegrity-v1"
 database_id = "REPLACE_AFTER_D1_CREATION"
 migrations_dir = "migrations"
 
+# One lightweight invariant/reconciliation sweep every 15 minutes, plus one daily
+# deep dependency probe. Cloudflare Cron Triggers run in UTC.
+[triggers]
+crons = ["*/15 * * * *", "17 13 * * *"]
+
 [vars]
 APP_BASE_URL = "https://builtegrity.com"
 ADMIN_BASE_URL = "https://admin.builtegrity.com"
 ADMIN_HOSTNAME = "admin.builtegrity.com"
 DEV_MODE = "false"
+
+# Watchdog stage controls which configuration omissions count as failures.
+# Keep PREVIEW until provider accounts are created; then advance TEST -> PILOT -> LIVE.
+WATCHDOG_STAGE = "PREVIEW"
+ALERT_EMAIL_FROM = "Builtegrity Watchdog <alerts@builtegrity.com>"
+ALERT_EMAIL_TO = "REPLACE_OWNER_EMAIL"
 
 # Primary application identity layer.
 AUTH_PROVIDER = "CLERK"
