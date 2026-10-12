@@ -140,14 +140,28 @@ export async function openException(env, transactionId, exceptionType, summary =
   }
 
   const exceptionId = await allocateId(env, 'EXC', 6);
-  await env.DB.prepare(`
-    INSERT INTO transaction_exceptions
+  const inserted = await env.DB.prepare(`
+    INSERT OR IGNORE INTO transaction_exceptions
       (id, transaction_id, exception_type, status, summary)
     VALUES (?, ?, ?, 'OPEN', ?)
   `).bind(exceptionId, transactionId, exceptionType, summary).run();
 
+  let canonicalId = exceptionId;
+  if (Number(inserted.meta?.changes || 0) === 0) {
+    const winner = await env.DB.prepare(`
+      SELECT id FROM transaction_exceptions
+      WHERE transaction_id = ? AND exception_type = ? AND status = 'OPEN'
+      LIMIT 1
+    `).bind(transactionId, exceptionType).first();
+
+    if (!winner) {
+      throw new Error(`Open exception insert was ignored without a canonical row for ${transactionId}/${exceptionType}`);
+    }
+    canonicalId = winner.id;
+  }
+
   await recomputeIntegrity(env, transactionId);
-  return exceptionId;
+  return canonicalId;
 }
 
 export async function resolveException(env, transactionId, exceptionType, resolution = null) {
@@ -186,11 +200,7 @@ export async function recomputeIntegrity(env, transactionId) {
   ]);
 
   const hasOpenExceptions = Number(open?.count || 0) > 0;
-  const hasAdverseClosedDispute = (closedDisputes.results || []).some((event) => {
-    const data = parseJson(event.event_data_json);
-    const status = String(data?.status || '').toLowerCase();
-    return status && status !== 'won';
-  });
+  const hasAdverseClosedDispute = disputeOutcomeRequiresReview(closedDisputes.results || []);
 
   const expectedTermsHash = tx.terms_snapshot ? await sha256Hex(tx.terms_snapshot) : null;
   const termsIntegrity = Number(tx.consent_accepted) === 1 &&
@@ -252,6 +262,22 @@ export async function recomputeIntegrity(env, transactionId) {
       post_settlement_review_required: postSettlementReviewRequired,
     },
   };
+}
+
+export function disputeOutcomeRequiresReview(events) {
+  const latestByDispute = new Map();
+  let unknownSequence = 0;
+
+  for (const event of events || []) {
+    const data = parseJson(event?.event_data_json);
+    const disputeId = String(data?.dispute_id || '').trim();
+    const status = String(data?.status || '').trim().toLowerCase();
+    const key = disputeId || `__unknown_dispute_${unknownSequence++}`;
+    latestByDispute.set(key, status || 'unknown');
+  }
+
+  const favorable = new Set(['won', 'warning_closed']);
+  return [...latestByDispute.values()].some((status) => !favorable.has(status));
 }
 
 export async function claimWebhook(env, event) {

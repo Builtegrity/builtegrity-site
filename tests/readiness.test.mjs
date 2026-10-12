@@ -24,14 +24,22 @@ function completeTestEnv(overrides = {}) {
   };
 }
 
-function fakeDb({ schema = true, auditTriggers = true, connectedAccountIndex = true, watchdog = null } = {}) {
+function fakeDb({
+  schema = true,
+  auditTriggers = true,
+  connectedAccountIndex = true,
+  openExceptionIndex = true,
+  watchdog = null,
+} = {}) {
   return {
     prepare(sql) {
       return {
         async first() {
           if (sql.includes('SELECT 1 AS ok')) return { ok: 1 };
-          if (sql.includes('stripe_checkout_expires_at') && sql.includes('creation_idempotency_key')) {
-            if (!schema) throw new Error('no such column: creation_idempotency_key');
+          if (sql.includes('stripe_checkout_expires_at') &&
+              sql.includes('creation_idempotency_key') &&
+              sql.includes('creation_request_sha256')) {
+            if (!schema) throw new Error('no such column: creation_request_sha256');
             return null;
           }
           if (sql.includes('SELECT id FROM system_watchdog_runs')) {
@@ -46,6 +54,9 @@ function fakeDb({ schema = true, auditTriggers = true, connectedAccountIndex = t
           }
           if (sql.includes('idx_merchants_unique_processor_account')) {
             return connectedAccountIndex ? { name: 'idx_merchants_unique_processor_account' } : null;
+          }
+          if (sql.includes('idx_exceptions_unique_open')) {
+            return openExceptionIndex ? { name: 'idx_exceptions_unique_open' } : null;
           }
           if (sql.includes('FROM system_watchdog_runs') && sql.includes('ORDER BY started_at')) {
             if (!schema) throw new Error('no such table: system_watchdog_runs');
@@ -106,6 +117,16 @@ test('readiness fails when atomic audit evidence triggers are missing', async ()
 test('readiness fails when connected-account uniqueness migration is missing', async () => {
   const result = await systemReadiness(completeTestEnv({
     DB: fakeDb({ schema: true, connectedAccountIndex: false }),
+  }));
+  assert.equal(result.database, true);
+  assert.equal(result.schema_ready, false);
+  assert.match(result.database_error, /triggers or indexes/i);
+  assert.equal(result.ok, false);
+});
+
+test('readiness fails when open-exception uniqueness migration is missing', async () => {
+  const result = await systemReadiness(completeTestEnv({
+    DB: fakeDb({ schema: true, openExceptionIndex: false }),
   }));
   assert.equal(result.database, true);
   assert.equal(result.schema_ready, false);

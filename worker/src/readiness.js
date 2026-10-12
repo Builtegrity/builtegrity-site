@@ -77,8 +77,8 @@ export async function systemReadiness(env) {
       database = Number(row?.ok || 0) === 1;
 
       // Fail closed unless the current migration chain, including atomic audit
-      // evidence triggers and connected-account uniqueness, is actually present in D1.
-      await env.DB.prepare('SELECT stripe_checkout_expires_at, creation_idempotency_key FROM transactions LIMIT 1').first();
+      // evidence triggers and concurrency-critical uniqueness, is actually present in D1.
+      await env.DB.prepare('SELECT stripe_checkout_expires_at, creation_idempotency_key, creation_request_sha256 FROM transactions LIMIT 1').first();
       await env.DB.prepare('SELECT id FROM system_watchdog_runs LIMIT 1').first();
       const consentTrigger = await env.DB.prepare(`
         SELECT name FROM sqlite_master
@@ -92,7 +92,11 @@ export async function systemReadiness(env) {
         SELECT name FROM sqlite_master
         WHERE type = 'index' AND name = 'idx_merchants_unique_processor_account'
       `).first();
-      if (!consentTrigger || !checkoutTrigger || !processorAccountIndex) {
+      const openExceptionIndex = await env.DB.prepare(`
+        SELECT name FROM sqlite_master
+        WHERE type = 'index' AND name = 'idx_exceptions_unique_open'
+      `).first();
+      if (!consentTrigger || !checkoutTrigger || !processorAccountIndex || !openExceptionIndex) {
         throw new Error('required transaction-integrity triggers or indexes are missing');
       }
       schemaReady = true;

@@ -47,6 +47,7 @@ jobs:
           node --check tests/clerk-auth.test.mjs
           node --check tests/config-guards.test.mjs
           node --check tests/turnstile.test.mjs
+          node --check tests/db-integrity.test.mjs
 
       - name: Run dependency-free runtime regression tests
         run: npm test
@@ -99,7 +100,10 @@ jobs:
           grep -q 'payment_integrity' worker/src/db.js
           grep -q 'terms_integrity' worker/src/db.js
           grep -q 'payout_net_integrity' worker/src/db.js
+          grep -q 'disputeOutcomeRequiresReview' worker/src/db.js
+          grep -q 'INSERT OR IGNORE INTO transaction_exceptions' worker/src/db.js
           grep -q 'Idempotency-Key' worker/src/transaction-create.js
+          grep -q 'creation_request_sha256' worker/src/transaction-create.js
           grep -q 'DB.batch' worker/src/transaction-create.js
           grep -q "country === 'US'" worker/src/merchant-stripe.js
           grep -q "datetime(expires_at) > datetime('now')" worker/src/runtime.js
@@ -139,6 +143,7 @@ jobs:
           sqlite3 /tmp/builtegrity.db < migrations/0009_transaction_write_integrity.sql
           sqlite3 /tmp/builtegrity.db < migrations/0010_atomic_audit_evidence.sql
           sqlite3 /tmp/builtegrity.db < migrations/0011_unique_connected_accounts.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0012_idempotency_fingerprint_and_exception_uniqueness.sql
           sqlite3 /tmp/builtegrity.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify TX-0001 hierarchy and state
@@ -151,15 +156,26 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='TX_CREATED';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='stripe_checkout_expires_at';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='creation_idempotency_key';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='creation_request_sha256';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_exceptions_unique_open';")" = "1"
 
       - name: Verify merchant-scoped creation idempotency
         run: |
-          sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,creation_idempotency_key) VALUES ('TX-0996','PUR-0001','MER-0001','CUST-0001','PAYMENT','first',100,'USD','terms','retry-key');"
-          if sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,creation_idempotency_key) VALUES ('TX-0997','PUR-0001','MER-0001','CUST-0001','PAYMENT','second',100,'USD','terms','retry-key');" 2>/tmp/idempotency-error.txt; then
+          sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,creation_idempotency_key,creation_request_sha256) VALUES ('TX-0996','PUR-0001','MER-0001','CUST-0001','PAYMENT','first',100,'USD','terms','retry-key','hash-a');"
+          if sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,creation_idempotency_key,creation_request_sha256) VALUES ('TX-0997','PUR-0001','MER-0001','CUST-0001','PAYMENT','second',100,'USD','terms','retry-key','hash-b');" 2>/tmp/idempotency-error.txt; then
             echo "Expected duplicate merchant-scoped creation key to be rejected"
             exit 1
           fi
           grep -qi "unique" /tmp/idempotency-error.txt
+
+      - name: Verify one open exception per type per transaction
+        run: |
+          sqlite3 /tmp/builtegrity.db "INSERT INTO transaction_exceptions (id,transaction_id,exception_type,status,summary) VALUES ('EXC-0998','TX-0001','CI_DUPLICATE','OPEN','first');"
+          if sqlite3 /tmp/builtegrity.db "INSERT INTO transaction_exceptions (id,transaction_id,exception_type,status,summary) VALUES ('EXC-0999','TX-0001','CI_DUPLICATE','OPEN','second');" 2>/tmp/open-exception-error.txt; then
+            echo "Expected duplicate open exception to be rejected"
+            exit 1
+          fi
+          grep -qi "unique" /tmp/open-exception-error.txt
 
       - name: Verify connected processor account uniqueness
         run: |
