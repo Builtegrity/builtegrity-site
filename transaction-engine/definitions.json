@@ -1,0 +1,60 @@
+{
+  "version": "v1-draft",
+  "lifecycle": [
+    "CREATED",
+    "CONSENTED",
+    "PAYMENT_PENDING",
+    "PAID",
+    "PAYOUT_PENDING",
+    "COMPLETE"
+  ],
+  "integrity_statuses": [
+    "INCOMPLETE",
+    "ACCOUNTED",
+    "NEEDS_ATTENTION"
+  ],
+  "exception_statuses": [
+    "NONE",
+    "NEEDS_ATTENTION"
+  ],
+  "integration_modes": [
+    "STRIPE_CONNECT",
+    "STRIPE_APP",
+    "PARTNER_API",
+    "OTHER"
+  ],
+  "fee_collection_methods": [
+    "STRIPE_APPLICATION_FEE",
+    "AUTOMATIC_USAGE",
+    "PARTNER_SETTLEMENT",
+    "OTHER"
+  ],
+  "core_event_types": [
+    "TX_CREATED",
+    "TERMS_ACCEPTED",
+    "CHECKOUT_CREATED",
+    "PAYMENT_SUCCEEDED",
+    "PAYMENT_FAILED",
+    "BALANCE_RECORDED",
+    "PAYOUT_IDENTIFIED",
+    "PAYOUT_PAID",
+    "PAYOUT_FAILED",
+    "REFUND_INITIATED",
+    "REFUND_SUCCEEDED",
+    "DISPUTE_OPENED",
+    "DISPUTE_CLOSED",
+    "TX_COMPLETE"
+  ],
+  "core_exception_types": [
+    "PAYMENT_FAILED",
+    "CONSENT_MISSING",
+    "PAYOUT_FAILED",
+    "REFUND_INITIATED",
+    "DISPUTE_OPENED",
+    "UNEXPECTED_FEE",
+    "EXPECTED_PAYOUT_NOT_FOUND",
+    "OTHER"
+  ],
+  "accounted_definition": "All required commercial context, consent evidence, processor payment records, economics, and the supported payout trail have been captured with no unresolved exception.",
+  "complete_definition": "All expected lifecycle information through the supported processor payout state has been captured. COMPLETE is a current lifecycle state, not a guarantee that no later refund, dispute, adjustment, or payout failure can occur."
+}
