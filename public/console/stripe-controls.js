@@ -72,10 +72,13 @@ if (consoleRoot) {
 
 async function internalApi(path, options = {}) {
   const headers = new Headers(options.headers || {});
-  const token = sessionStorage.getItem('builtegrity_admin_token');
-  if (token) headers.set('X-Builtegrity-Admin', token);
   if (options.body && !headers.has('content-type')) headers.set('content-type', 'application/json');
-  const response = await fetch(path, { ...options, headers });
+  const response = await fetch(path, { ...options, headers, credentials: 'same-origin' });
+  if (response.status === 401) {
+    const returnTo = encodeURIComponent(`${location.pathname}${location.search}`);
+    location.assign(`/login/?return_to=${returnTo}`);
+    throw new Error('Authentication required');
+  }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.error || `Request failed (${response.status})`);
   return data;
