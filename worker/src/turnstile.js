@@ -1,8 +1,13 @@
+import { isKnownWatchdogStage, watchdogStage } from './readiness.js';
+
 const PROTECTED_STAGES = new Set(['PILOT', 'LIVE']);
 const SITEVERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 
 export function turnstileRequired(env) {
-  return PROTECTED_STAGES.has(String(env.WATCHDOG_STAGE || 'PREVIEW').trim().toUpperCase());
+  const stage = watchdogStage(env);
+  // An unknown runtime stage must never silently downgrade public protection.
+  if (!isKnownWatchdogStage(stage)) return true;
+  return PROTECTED_STAGES.has(stage);
 }
 
 export function publicTurnstileConfig(env) {
