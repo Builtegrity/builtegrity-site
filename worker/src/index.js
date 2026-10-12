@@ -33,22 +33,22 @@ export default {
       }
 
       if (path === '/api/webhooks/stripe' && request.method === 'POST') {
-        return handleStripeWebhook(request, env);
+        return await handleStripeWebhook(request, env);
       }
 
       const publicMatch = path.match(/^\/api\/payments\/([^/]+)$/);
       if (publicMatch && request.method === 'GET') {
-        return handlePublicPayment(env, decodeURIComponent(publicMatch[1]));
+        return await handlePublicPayment(env, decodeURIComponent(publicMatch[1]));
       }
 
       const consentMatch = path.match(/^\/api\/payments\/([^/]+)\/consent$/);
       if (consentMatch && request.method === 'POST') {
-        return handleConsent(request, env, decodeURIComponent(consentMatch[1]));
+        return await handleConsent(request, env, decodeURIComponent(consentMatch[1]));
       }
 
       const checkoutMatch = path.match(/^\/api\/payments\/([^/]+)\/checkout$/);
       if (checkoutMatch && request.method === 'POST') {
-        return handleCheckout(env, decodeURIComponent(checkoutMatch[1]));
+        return await handleCheckout(env, decodeURIComponent(checkoutMatch[1]));
       }
 
       if (path.startsWith('/api/')) {
@@ -60,7 +60,7 @@ export default {
       }
 
       if (path === '/api/transactions' && request.method === 'POST') {
-        return createTransactionRequest(request, env);
+        return await createTransactionRequest(request, env);
       }
 
       const txMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)$/);
@@ -71,16 +71,16 @@ export default {
 
       const verifyMerchantMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/stripe\/verify$/);
       if (verifyMerchantMatch && request.method === 'POST') {
-        return verifyMerchantStripe(env, verifyMerchantMatch[1]);
+        return await verifyMerchantStripe(env, verifyMerchantMatch[1]);
       }
 
       const simulateMatch = path.match(/^\/api\/dev\/transactions\/(TX-[A-Za-z0-9-]+)\/simulate$/);
       if (simulateMatch && request.method === 'POST') {
         if (env.DEV_MODE !== 'true') return json({ error: 'Development simulator is disabled' }, 404);
-        return handleSimulation(request, env, simulateMatch[1]);
+        return await handleSimulation(request, env, simulateMatch[1]);
       }
 
-      if (env.ASSETS) return env.ASSETS.fetch(request);
+      if (env.ASSETS) return await env.ASSETS.fetch(request);
       return new Response('Not found', { status: 404 });
     } catch (error) {
       console.error(error);
