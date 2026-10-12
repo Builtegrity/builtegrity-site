@@ -6,12 +6,18 @@ import {
   exchangeStripeOAuthCode,
 } from './stripe-oauth.js';
 import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
+import { handlePublicRecordRoute, serveOperatorTransactionPdf } from './records.js';
 
 export default {
   async fetch(request, env, ctx) {
     try {
       const url = new URL(request.url);
       const path = url.pathname;
+
+      // Customer transaction records use unguessable Builtegrity-owned tokens.
+      // They deliberately do not depend on Clerk users or Clerk Organizations.
+      const publicRecordResponse = await handlePublicRecordRoute(request, env);
+      if (publicRecordResponse) return publicRecordResponse;
 
       if (isAdminSurface(path) && !isAdminHost(url, env)) {
         return new Response('Not found', { status: 404 });
@@ -51,6 +57,12 @@ export default {
       if (disconnectMatch && request.method === 'POST') {
         await requireOperator(request, env);
         return handleDisconnect(env, disconnectMatch[1]);
+      }
+
+      const operatorPdfMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)\/pdf$/);
+      if (operatorPdfMatch && request.method === 'GET') {
+        const principal = await requireOperator(request, env);
+        return serveOperatorTransactionPdf(env, operatorPdfMatch[1], principal);
       }
 
       if (path === '/api/watchdogs/status' && request.method === 'GET') {
@@ -97,6 +109,7 @@ function isInternalApi(path) {
   if (path.startsWith('/api/health')) return false;
   if (path === '/api/webhooks/stripe') return false;
   if (path.startsWith('/api/payments/')) return false;
+  if (path.startsWith('/api/records/')) return false;
   if (path === '/api/stripe/oauth/callback') return false;
   return true;
 }
