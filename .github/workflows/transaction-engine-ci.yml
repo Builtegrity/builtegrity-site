@@ -30,6 +30,7 @@ jobs:
           node --check worker/src/stripe-oauth.js
           node --check worker/src/webhooks.js
           node --check worker/src/watchdogs.js
+          node --check worker/src/readiness.js
           node --check worker/src/index.js
           node --check worker/src/runtime.js
           node --check public/login/app.js
@@ -38,6 +39,7 @@ jobs:
           node --check public/pay/app.js
           node --check public/pay/success/app.js
           node --check tests/stripe-runtime.test.mjs
+          node --check tests/readiness.test.mjs
 
       - name: Run dependency-free runtime regression tests
         run: npm test
@@ -66,6 +68,9 @@ jobs:
           grep -q 'retrieveCheckoutSession' worker/src/stripe.js
           grep -q "checkout.session.expired" worker/src/webhooks.js
           grep -q 'findBuiltegrityTransactionForCharge' worker/src/webhooks.js
+          grep -q 'REFUND_RECORDED' worker/src/webhooks.js
+          grep -q 'DISPUTE_LOST' worker/src/webhooks.js
+          grep -q 'payment_integrity' worker/src/db.js
           grep -q 'terms_integrity' worker/src/db.js
           grep -q 'payout_net_integrity' worker/src/db.js
 
@@ -92,6 +97,7 @@ jobs:
           sqlite3 /tmp/builtegrity.db < migrations/0006_stripe_oauth_states.sql
           sqlite3 /tmp/builtegrity.db < migrations/0007_watchdogs.sql
           sqlite3 /tmp/builtegrity.db < migrations/0008_checkout_integrity.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0009_transaction_write_integrity.sql
           sqlite3 /tmp/builtegrity.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify TX-0001 hierarchy and state
@@ -103,6 +109,7 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transactions WHERE id='TX-0001' AND lifecycle_status='CREATED' AND integrity_status='INCOMPLETE' AND payment_access_token='test-tx-0001-token';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='TX_CREATED';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='stripe_checkout_expires_at';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='creation_idempotency_key';")" = "1"
 
       - name: Verify Stripe object identifiers cannot cross transaction records
         run: |
@@ -112,6 +119,17 @@ jobs:
             exit 1
           fi
           grep -qi "unique" /tmp/unique-error.txt
+
+      - name: Verify accepted transaction agreement is immutable
+        run: |
+          sqlite3 /tmp/builtegrity.db "UPDATE transactions SET consent_accepted=1,consent_accepted_at=CURRENT_TIMESTAMP,consent_method='CI',terms_snapshot_sha256='ci-hash' WHERE id='TX-0001';"
+          if sqlite3 /tmp/builtegrity.db "UPDATE transactions SET amount_cents=1 WHERE id='TX-0001';" 2>/tmp/agreement-error.txt; then
+            echo "Expected accepted agreement mutation to be rejected"
+            exit 1
+          fi
+          grep -q "accepted transaction agreement is immutable" /tmp/agreement-error.txt
+          sqlite3 /tmp/builtegrity.db "UPDATE transactions SET payment_status='succeeded' WHERE id='TX-0001';"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT payment_status FROM transactions WHERE id='TX-0001';")" = "succeeded"
 
       - name: Verify event history is append-only
         run: |
