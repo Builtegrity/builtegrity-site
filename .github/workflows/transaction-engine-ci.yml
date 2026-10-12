@@ -33,6 +33,7 @@ jobs:
           node --check worker/src/readiness.js
           node --check worker/src/transaction-create.js
           node --check worker/src/merchant-stripe.js
+          node --check worker/src/turnstile.js
           node --check worker/src/index.js
           node --check worker/src/runtime.js
           node --check public/login/app.js
@@ -42,6 +43,10 @@ jobs:
           node --check public/pay/success/app.js
           node --check tests/stripe-runtime.test.mjs
           node --check tests/readiness.test.mjs
+          node --check tests/admin-routing.test.mjs
+          node --check tests/clerk-auth.test.mjs
+          node --check tests/config-guards.test.mjs
+          node --check tests/turnstile.test.mjs
 
       - name: Run dependency-free runtime regression tests
         run: npm test
@@ -60,9 +65,26 @@ jobs:
           grep -q 'CLERK_ADMIN_USER_IDS' wrangler.toml.example
           grep -q 'CLERK_AUTHORIZED_PARTIES' wrangler.toml.example
           grep -q 'RSASSA-PKCS1-v1_5' worker/src/clerk-auth.js
+          grep -q "payload.sid" worker/src/clerk-auth.js
           grep -q 'STRIPE_CONNECT_CLIENT_ID' wrangler.toml.example
+          grep -q 'STRIPE_API_VERSION' wrangler.toml.example
           grep -q 'TURNSTILE_SITE_KEY' wrangler.toml.example
           grep -q 'RESEND_API_KEY' .dev.vars.example
+
+      - name: Guard actual runtime module wiring
+        run: |
+          grep -q "createTransactionRequest" worker/src/runtime.js
+          grep -q "createTransactionRequest" worker/src/index.js
+          grep -q "verifyMerchantStripe" worker/src/runtime.js
+          grep -q "verifyMerchantStripe" worker/src/index.js
+          if grep -q "async function handleCreateTransaction" worker/src/index.js; then
+            echo "Legacy inline transaction creation must not diverge from transaction-create.js"
+            exit 1
+          fi
+          if grep -q "async function handleVerifyMerchant" worker/src/index.js; then
+            echo "Legacy inline merchant verification must not diverge from merchant-stripe.js"
+            exit 1
+          fi
 
       - name: Guard Stripe runtime integrity coverage
         run: |
@@ -71,14 +93,25 @@ jobs:
           grep -q "checkout.session.expired" worker/src/webhooks.js
           grep -q 'findBuiltegrityTransactionForCharge' worker/src/webhooks.js
           grep -q 'REFUND_RECORDED' worker/src/webhooks.js
+          grep -q 'APPLICATION_FEE_REFUNDED' worker/src/webhooks.js
           grep -q 'DISPUTE_LOST' worker/src/webhooks.js
+          grep -q 'PAYOUT_CANCELED' worker/src/webhooks.js
           grep -q 'payment_integrity' worker/src/db.js
           grep -q 'terms_integrity' worker/src/db.js
           grep -q 'payout_net_integrity' worker/src/db.js
           grep -q 'Idempotency-Key' worker/src/transaction-create.js
           grep -q 'DB.batch' worker/src/transaction-create.js
-          grep -q 'verifyMerchantStripe' worker/src/runtime.js
           grep -q "country === 'US'" worker/src/merchant-stripe.js
+          grep -q "datetime(expires_at) > datetime('now')" worker/src/runtime.js
+
+      - name: Guard public abuse protection
+        run: |
+          grep -q 'turnstileRequired' worker/src/turnstile.js
+          grep -q 'turnstile/v0/siteverify' worker/src/turnstile.js
+          grep -q 'payment_consent' worker/src/turnstile.js
+          grep -q 'requireTurnstile' worker/src/index.js
+          grep -q 'turnstile_site_key' worker/src/index.js
+          grep -q 'challenges.cloudflare.com/turnstile' public/pay/app.js
 
       - name: Guard watchdog coverage
         run: |
@@ -105,6 +138,7 @@ jobs:
           sqlite3 /tmp/builtegrity.db < migrations/0008_checkout_integrity.sql
           sqlite3 /tmp/builtegrity.db < migrations/0009_transaction_write_integrity.sql
           sqlite3 /tmp/builtegrity.db < migrations/0010_atomic_audit_evidence.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0011_unique_connected_accounts.sql
           sqlite3 /tmp/builtegrity.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify TX-0001 hierarchy and state
@@ -126,6 +160,16 @@ jobs:
             exit 1
           fi
           grep -qi "unique" /tmp/idempotency-error.txt
+
+      - name: Verify connected processor account uniqueness
+        run: |
+          sqlite3 /tmp/builtegrity.db "UPDATE merchants SET processor_account_id='acct_unique_ci' WHERE id='MER-0001';"
+          sqlite3 /tmp/builtegrity.db "INSERT INTO merchants (id,partner_id,name,processor,processor_account_id,integration_mode,status) VALUES ('MER-0999','PARTNER-0001','Duplicate test','STRIPE',NULL,'STRIPE_CONNECT','TEST');"
+          if sqlite3 /tmp/builtegrity.db "UPDATE merchants SET processor_account_id='acct_unique_ci' WHERE id='MER-0999';" 2>/tmp/merchant-account-error.txt; then
+            echo "Expected the same Stripe account to be rejected on a second merchant"
+            exit 1
+          fi
+          grep -qi "unique" /tmp/merchant-account-error.txt
 
       - name: Verify Stripe object identifiers cannot cross transaction records
         run: |
@@ -149,6 +193,13 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='CHECKOUT_SESSION_LINKED' AND source_event_id='checkout:cs_test_atomic';")" = "1"
           sqlite3 /tmp/builtegrity.db "UPDATE transactions SET payment_status='succeeded' WHERE id='TX-0001';"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT payment_status FROM transactions WHERE id='TX-0001';")" = "succeeded"
+
+      - name: Verify OAuth expiry comparisons use real datetimes
+        run: |
+          sqlite3 /tmp/builtegrity.db "INSERT INTO stripe_oauth_states (state_token,merchant_id,expires_at) VALUES ('expired-ci','MER-0001',strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour'));"
+          sqlite3 /tmp/builtegrity.db "INSERT INTO stripe_oauth_states (state_token,merchant_id,expires_at) VALUES ('future-ci','MER-0001',strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 hour'));"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM stripe_oauth_states WHERE state_token='expired-ci' AND datetime(expires_at) > datetime('now');")" = "0"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM stripe_oauth_states WHERE state_token='future-ci' AND datetime(expires_at) > datetime('now');")" = "1"
 
       - name: Verify event history is append-only
         run: |
