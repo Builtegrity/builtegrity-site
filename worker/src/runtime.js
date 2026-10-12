@@ -1,4 +1,5 @@
 import core from './index.js';
+import { handleAuthRoute, requireOperator } from './auth.js';
 import {
   buildStripeOAuthUrl,
   deauthorizeStripeAccount,
@@ -11,20 +12,34 @@ export default {
       const url = new URL(request.url);
       const path = url.pathname;
 
+      const authResponse = await handleAuthRoute(request, env);
+      if (authResponse) return authResponse;
+
       if (path === '/api/stripe/oauth/callback' && request.method === 'GET') {
         return handleOAuthCallback(url, env);
       }
 
       const connectMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/stripe\/connect-url$/);
       if (connectMatch && request.method === 'POST') {
-        requireInternal(request, env);
+        await requireOperator(request, env);
         return handleConnectUrl(env, connectMatch[1]);
       }
 
       const disconnectMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/stripe\/disconnect$/);
       if (disconnectMatch && request.method === 'POST') {
-        requireInternal(request, env);
+        await requireOperator(request, env);
         return handleDisconnect(env, disconnectMatch[1]);
+      }
+
+      if (path.startsWith('/console')) {
+        const principal = await requireOperatorOrRedirect(request, env, url);
+        if (principal instanceof Response) return principal;
+        return env.ASSETS.fetch(request);
+      }
+
+      if (isInternalApi(path)) {
+        await requireOperator(request, env);
+        return forwardAuthenticatedToCore(request, env, ctx);
       }
 
       return core.fetch(request, env, ctx);
@@ -34,6 +49,37 @@ export default {
     }
   },
 };
+
+function isInternalApi(path) {
+  if (!path.startsWith('/api/')) return false;
+  if (path === '/api/health') return false;
+  if (path === '/api/webhooks/stripe') return false;
+  if (path.startsWith('/api/payments/')) return false;
+  if (path === '/api/stripe/oauth/callback') return false;
+  return true;
+}
+
+async function forwardAuthenticatedToCore(request, env, ctx) {
+  // The legacy core expects an internal header/token pair. Generate a unique pair
+  // only in memory for this request so there is no browser-visible or persistent admin key.
+  const bridgeToken = randomToken();
+  const headers = new Headers(request.headers);
+  headers.set('X-Builtegrity-Admin', bridgeToken);
+  const forwarded = new Request(request, { headers });
+  const internalEnv = { ...env, INTERNAL_ADMIN_TOKEN: bridgeToken };
+  return core.fetch(forwarded, internalEnv, ctx);
+}
+
+async function requireOperatorOrRedirect(request, env, url) {
+  try {
+    return await requireOperator(request, env);
+  } catch (error) {
+    if (error.status !== 401) throw error;
+    const login = new URL('/login/', url.origin);
+    login.searchParams.set('return_to', `${url.pathname}${url.search}`);
+    return Response.redirect(login.toString(), 302);
+  }
+}
 
 async function handleConnectUrl(env, merchantId) {
   const merchant = await env.DB.prepare(`SELECT id, email FROM merchants WHERE id = ?`).bind(merchantId).first();
@@ -128,30 +174,8 @@ function redirectToConsole(env, values) {
   return Response.redirect(target.toString(), 302);
 }
 
-function requireInternal(request, env) {
-  if (env.DEV_MODE === 'true') return;
-  if (!env.INTERNAL_ADMIN_TOKEN) {
-    const error = new Error('Internal authentication is not configured');
-    error.status = 503;
-    throw error;
-  }
-  const provided = request.headers.get('X-Builtegrity-Admin') || '';
-  if (!timingSafeEqual(provided, env.INTERNAL_ADMIN_TOKEN)) {
-    const error = new Error('Unauthorized');
-    error.status = 401;
-    throw error;
-  }
-}
-
-function timingSafeEqual(a, b) {
-  if (!a || !b || a.length !== b.length) return false;
-  let mismatch = 0;
-  for (let i = 0; i < a.length; i += 1) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return mismatch === 0;
-}
-
 function randomToken() {
-  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
   return [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
