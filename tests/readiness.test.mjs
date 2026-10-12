@@ -24,19 +24,25 @@ function completeTestEnv(overrides = {}) {
   };
 }
 
-function fakeDb({ schema = true, watchdog = null } = {}) {
+function fakeDb({ schema = true, auditTriggers = true, watchdog = null } = {}) {
   return {
     prepare(sql) {
       return {
         async first() {
           if (sql.includes('SELECT 1 AS ok')) return { ok: 1 };
-          if (sql.includes('stripe_checkout_expires_at')) {
-            if (!schema) throw new Error('no such column: stripe_checkout_expires_at');
+          if (sql.includes('stripe_checkout_expires_at') && sql.includes('creation_idempotency_key')) {
+            if (!schema) throw new Error('no such column: creation_idempotency_key');
             return null;
           }
           if (sql.includes('SELECT id FROM system_watchdog_runs')) {
             if (!schema) throw new Error('no such table: system_watchdog_runs');
             return null;
+          }
+          if (sql.includes('transactions_consent_audit_evidence')) {
+            return auditTriggers ? { name: 'transactions_consent_audit_evidence' } : null;
+          }
+          if (sql.includes('transactions_checkout_audit_evidence')) {
+            return auditTriggers ? { name: 'transactions_checkout_audit_evidence' } : null;
           }
           if (sql.includes('FROM system_watchdog_runs') && sql.includes('ORDER BY started_at')) {
             if (!schema) throw new Error('no such table: system_watchdog_runs');
@@ -72,6 +78,16 @@ test('readiness fails when D1 is bound but current migrations are missing', asyn
   assert.equal(result.ok, false);
 });
 
+test('readiness fails when atomic audit evidence triggers are missing', async () => {
+  const result = await systemReadiness(completeTestEnv({
+    DB: fakeDb({ schema: true, auditTriggers: false }),
+  }));
+  assert.equal(result.database, true);
+  assert.equal(result.schema_ready, false);
+  assert.match(result.database_error, /audit evidence triggers/i);
+  assert.equal(result.ok, false);
+});
+
 test('readiness fails before a watchdog has completed', async () => {
   const result = await systemReadiness(completeTestEnv({ DB: fakeDb({ schema: true, watchdog: null }) }));
   assert.equal(result.schema_ready, true);
@@ -91,7 +107,7 @@ test('readiness fails when the last watchdog is stale', async () => {
   assert.equal(result.ok, false);
 });
 
-test('readiness becomes true only with schema config and a recent completed watchdog', async () => {
+test('readiness becomes true only with schema config audit triggers and a recent watchdog', async () => {
   const recent = new Date(Date.now() - 5 * 60_000).toISOString();
   const result = await systemReadiness(completeTestEnv({
     DB: fakeDb({
