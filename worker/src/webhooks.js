@@ -299,19 +299,27 @@ async function handleChargeRefunded(env, event) {
   const resolved = await findBuiltegrityTransactionForCharge(env, event.account || null, event.data.object);
   if (!resolved) return;
   const { tx, charge } = resolved;
+  const amountRefunded = Number(charge.amount_refunded || 0);
+  const status = charge.refunded ? 'refunded' : 'partially_refunded';
 
   await env.DB.prepare(`
     UPDATE transactions
        SET payment_status = ?, updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
-  `).bind(charge.refunded ? 'refunded' : 'partially_refunded', tx.id).run();
+  `).bind(status, tx.id).run();
 
   await recordEvent(env, tx.id, 'REFUND_RECORDED', 'STRIPE', `${event.id}:refund`, {
     charge_id: charge.id,
-    amount_refunded: charge.amount_refunded,
+    amount_refunded: amountRefunded,
     fully_refunded: Boolean(charge.refunded),
   }, stripeTime(event.created));
-  await recomputeIntegrity(env, tx.id);
+
+  await openException(
+    env,
+    tx.id,
+    'REFUND_RECORDED',
+    `Stripe recorded a ${charge.refunded ? 'full' : 'partial'} refund of ${amountRefunded} cents. Refund economics require explicit reconciliation before this transaction can be ACCOUNTED again.`,
+  );
 }
 
 async function handleDisputeOpened(env, event) {
@@ -334,12 +342,28 @@ async function handleDisputeClosed(env, event) {
   const resolved = await findBuiltegrityTransactionForCharge(env, event.account || null, dispute.charge);
   if (!resolved) return;
   const { tx } = resolved;
+  const status = String(dispute.status || '').toLowerCase();
 
   await recordEvent(env, tx.id, 'DISPUTE_CLOSED', 'STRIPE', `${event.id}:dispute_closed`, {
     dispute_id: dispute.id,
     status: dispute.status,
   }, stripeTime(event.created));
-  await resolveException(env, tx.id, 'DISPUTE_OPENED', `Stripe dispute ${dispute.id} closed with status ${dispute.status}.`);
+
+  if (status === 'won' || status === 'warning_closed') {
+    await resolveException(env, tx.id, 'DISPUTE_OPENED', `Stripe dispute ${dispute.id} closed favorably with status ${dispute.status}.`);
+    await resolveException(env, tx.id, 'DISPUTE_LOST', `Stripe dispute ${dispute.id} later closed favorably.`);
+    await resolveException(env, tx.id, 'DISPUTE_OUTCOME_REVIEW', `Stripe dispute ${dispute.id} closed favorably.`);
+    return;
+  }
+
+  if (status === 'lost') {
+    await resolveException(env, tx.id, 'DISPUTE_OPENED', `Stripe dispute ${dispute.id} closed as lost.`);
+    await openException(env, tx.id, 'DISPUTE_LOST', `Stripe dispute ${dispute.id} was lost. Transaction economics require review before ACCOUNTED can be restored.`);
+    return;
+  }
+
+  await resolveException(env, tx.id, 'DISPUTE_OPENED', `Stripe dispute ${dispute.id} closed with status ${dispute.status || 'unknown'}.`);
+  await openException(env, tx.id, 'DISPUTE_OUTCOME_REVIEW', `Stripe dispute ${dispute.id} closed with unclassified status ${dispute.status || 'unknown'} and requires review.`);
 }
 
 async function handlePayoutReady(env, event) {
