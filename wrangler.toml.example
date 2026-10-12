@@ -38,8 +38,9 @@ CLERK_ADMIN_USER_IDS = "user_REPLACE_OWNER_ID"
 CLERK_SIGN_IN_URL = "https://REPLACE.accounts.dev/sign-in"
 CLERK_USER_URL = "https://REPLACE.accounts.dev/user"
 
-# Payment adapter.
+# Payment adapter. Keep the webhook endpoint on this same API version.
 STRIPE_CONNECT_CLIENT_ID = "ca_REPLACE_ME"
+STRIPE_API_VERSION = "2025-09-30.clover"
 
 # Public abuse protection (site key is safe to expose to browser code when used).
 TURNSTILE_SITE_KEY = "REPLACE_TURNSTILE_SITE_KEY"
