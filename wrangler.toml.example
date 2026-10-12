@@ -17,8 +17,24 @@ APP_BASE_URL = "https://builtegrity.com"
 ADMIN_BASE_URL = "https://admin.builtegrity.com"
 ADMIN_HOSTNAME = "admin.builtegrity.com"
 DEV_MODE = "false"
-AUTH_PROVIDER = "CLOUDFLARE_ACCESS"
-CF_ACCESS_TEAM_DOMAIN = "https://REPLACE.cloudflareaccess.com"
-CF_ACCESS_AUD = "REPLACE_ACCESS_APPLICATION_AUD"
-CF_ACCESS_ALLOWED_EMAILS = ""
+
+# Primary application identity layer.
+AUTH_PROVIDER = "CLERK"
+CLERK_PUBLISHABLE_KEY = "pk_test_REPLACE_ME"
+CLERK_ISSUER = "https://REPLACE.clerk.accounts.dev"
+CLERK_AUTHORIZED_PARTIES = "https://builtegrity.com,https://admin.builtegrity.com"
+CLERK_ADMIN_USER_IDS = "user_REPLACE_OWNER_ID"
+CLERK_SIGN_IN_URL = "https://REPLACE.accounts.dev/sign-in"
+CLERK_USER_URL = "https://REPLACE.accounts.dev/user"
+
+# Payment adapter.
 STRIPE_CONNECT_CLIENT_ID = "ca_REPLACE_ME"
+
+# Public abuse protection (site key is safe to expose to browser code when used).
+TURNSTILE_SITE_KEY = "REPLACE_TURNSTILE_SITE_KEY"
+
+# Optional defense-in-depth only. Cloudflare Access is NOT the primary product identity layer.
+# AUTH_PROVIDER = "CLOUDFLARE_ACCESS"
+# CF_ACCESS_TEAM_DOMAIN = "https://REPLACE.cloudflareaccess.com"
+# CF_ACCESS_AUD = "REPLACE_ACCESS_APPLICATION_AUD"
+# CF_ACCESS_ALLOWED_EMAILS = ""
