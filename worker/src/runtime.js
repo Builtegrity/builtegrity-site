@@ -16,6 +16,10 @@ export default {
         return new Response('Not found', { status: 404 });
       }
 
+      if (isAdminSurface(path) && isStateChanging(request.method)) {
+        requireSameOriginBrowserRequest(request, url);
+      }
+
       const authResponse = await handleAuthRoute(request, env);
       if (authResponse) return authResponse;
 
@@ -75,9 +79,27 @@ function isAdminHost(url, env) {
   return url.hostname.toLowerCase() === configured;
 }
 
+function isStateChanging(method) {
+  return !['GET', 'HEAD', 'OPTIONS'].includes(String(method || '').toUpperCase());
+}
+
+function requireSameOriginBrowserRequest(request, url) {
+  const origin = request.headers.get('Origin');
+  if (origin && origin !== url.origin) {
+    const error = new Error('Cross-origin admin request rejected');
+    error.status = 403;
+    throw error;
+  }
+
+  const fetchSite = String(request.headers.get('Sec-Fetch-Site') || '').toLowerCase();
+  if (fetchSite === 'cross-site') {
+    const error = new Error('Cross-site admin request rejected');
+    error.status = 403;
+    throw error;
+  }
+}
+
 async function forwardAuthenticatedToCore(request, env, ctx) {
-  // The legacy core expects an internal header/token pair. Generate a unique pair
-  // only in memory for this request so there is no browser-visible or persistent admin key.
   const bridgeToken = randomToken();
   const headers = new Headers(request.headers);
   headers.set('X-Builtegrity-Admin', bridgeToken);
