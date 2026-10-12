@@ -45,30 +45,30 @@ export default {
       if (authResponse) return authResponse;
 
       if (path === '/api/stripe/oauth/callback' && request.method === 'GET') {
-        return handleOAuthCallback(url, env);
+        return await handleOAuthCallback(url, env);
       }
 
       const connectMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/stripe\/connect-url$/);
       if (connectMatch && request.method === 'POST') {
         await requireOperator(request, env);
-        return handleConnectUrl(env, connectMatch[1]);
+        return await handleConnectUrl(env, connectMatch[1]);
       }
 
       const verifyMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/stripe\/verify$/);
       if (verifyMatch && request.method === 'POST') {
         await requireOperator(request, env);
-        return verifyMerchantStripe(env, verifyMatch[1]);
+        return await verifyMerchantStripe(env, verifyMatch[1]);
       }
 
       const disconnectMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/stripe\/disconnect$/);
       if (disconnectMatch && request.method === 'POST') {
         await requireOperator(request, env);
-        return handleDisconnect(env, disconnectMatch[1]);
+        return await handleDisconnect(env, disconnectMatch[1]);
       }
 
       if (path === '/api/transactions' && request.method === 'POST') {
         await requireOperator(request, env);
-        return createTransactionRequest(request, env);
+        return await createTransactionRequest(request, env);
       }
 
       if (path === '/api/watchdogs/status' && request.method === 'GET') {
@@ -87,15 +87,15 @@ export default {
       if (path.startsWith('/console')) {
         const principal = await requireOperatorOrRedirect(request, env, url);
         if (principal instanceof Response) return principal;
-        return env.ASSETS.fetch(request);
+        return await env.ASSETS.fetch(request);
       }
 
       if (isInternalApi(path)) {
         await requireOperator(request, env);
-        return forwardAuthenticatedToCore(request, env, ctx);
+        return await forwardAuthenticatedToCore(request, env, ctx);
       }
 
-      return core.fetch(request, env, ctx);
+      return await core.fetch(request, env, ctx);
     } catch (error) {
       console.error(error);
       const status = error?.status && Number(error.status) >= 400 && Number(error.status) < 600
