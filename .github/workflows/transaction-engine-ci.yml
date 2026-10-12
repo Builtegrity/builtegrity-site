@@ -3,10 +3,12 @@ name: Transaction Engine CI
 on:
   push:
     branches:
-      - realign-v1-stack
+      - watchdogs-v1
       - main
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '23 */6 * * *'
 
 jobs:
   validate:
@@ -23,6 +25,7 @@ jobs:
           node --check worker/src/stripe.js
           node --check worker/src/stripe-oauth.js
           node --check worker/src/webhooks.js
+          node --check worker/src/watchdogs.js
           node --check worker/src/index.js
           node --check worker/src/runtime.js
           node --check public/login/app.js
@@ -49,6 +52,19 @@ jobs:
           grep -q 'TURNSTILE_SITE_KEY' wrangler.toml.example
           grep -q 'RESEND_API_KEY' .dev.vars.example
 
+      - name: Guard watchdog coverage
+        run: |
+          grep -q 'WATCHDOG_STAGE = "PREVIEW"' wrangler.toml.example
+          grep -q 'crons = \["\*/15 \* \* \* \*", "17 13 \* \* \*"\]' wrangler.toml.example
+          grep -q 'async scheduled' worker/src/runtime.js
+          grep -q '/api/health/ready' worker/src/runtime.js
+          grep -q '/api/watchdogs/status' worker/src/runtime.js
+          grep -q 'stripe_webhook_receipts' worker/src/watchdogs.js
+          grep -q 'EXPECTED_PAYOUT_NOT_FOUND' worker/src/watchdogs.js
+          grep -q 'UNEXPECTED_FEE' worker/src/watchdogs.js
+          grep -q 'retrieveConnectedAccount' worker/src/watchdogs.js
+          grep -q 'api.resend.com/emails' worker/src/watchdogs.js
+
       - name: Build D1-compatible schema in SQLite
         run: |
           sqlite3 /tmp/builtegrity.db < migrations/0001_initial.sql
@@ -57,6 +73,7 @@ jobs:
           sqlite3 /tmp/builtegrity.db < migrations/0004_checkout_resume.sql
           sqlite3 /tmp/builtegrity.db < migrations/0005_merchant_runtime_timestamp.sql
           sqlite3 /tmp/builtegrity.db < migrations/0006_stripe_oauth_states.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0007_watchdogs.sql
           sqlite3 /tmp/builtegrity.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify TX-0001 hierarchy and state
@@ -75,3 +92,20 @@ jobs:
             exit 1
           fi
           grep -q "append-only" /tmp/append-error.txt
+
+      - name: Verify watchdog ledger and deduplication
+        run: |
+          sqlite3 /tmp/builtegrity.db "INSERT INTO system_watchdog_runs (id,run_kind,trigger_source,status) VALUES ('run-test','FAST','ci','RUNNING');"
+          sqlite3 /tmp/builtegrity.db "UPDATE system_watchdog_runs SET status='OK',finished_at=CURRENT_TIMESTAMP,checks_run=5 WHERE id='run-test';"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT status FROM system_watchdog_runs WHERE id='run-test';")" = "OK"
+          sqlite3 /tmp/builtegrity.db "INSERT INTO system_alerts (alert_key,category,severity,message) VALUES ('test:dedupe','CI','WARN','first');"
+          sqlite3 /tmp/builtegrity.db "INSERT INTO system_alerts (alert_key,category,severity,message) VALUES ('test:dedupe','CI','ERROR','second') ON CONFLICT(alert_key) DO UPDATE SET severity=excluded.severity,message=excluded.message,occurrences=system_alerts.occurrences+1;"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM system_alerts WHERE alert_key='test:dedupe';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT occurrences FROM system_alerts WHERE alert_key='test:dedupe';")" = "2"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT severity FROM system_alerts WHERE alert_key='test:dedupe';")" = "ERROR"
+
+      - name: Verify watchdog detection queries compile
+        run: |
+          sqlite3 /tmp/builtegrity.db "SELECT event_id FROM stripe_webhook_receipts WHERE status='FAILED' OR (status='PROCESSING' AND datetime(updated_at) < datetime('now','-15 minutes'));" >/dev/null
+          sqlite3 /tmp/builtegrity.db "SELECT t.id FROM transactions t JOIN merchants m ON m.id=t.merchant_id WHERE t.lifecycle_status <> 'CREATED' OR t.integrity_status <> 'INCOMPLETE' OR t.payment_status IS NOT NULL LIMIT 500;" >/dev/null
+          sqlite3 /tmp/builtegrity.db "SELECT id FROM merchants WHERE status='ACTIVE' AND processor='STRIPE' AND processor_account_id IS NOT NULL LIMIT 100;" >/dev/null
