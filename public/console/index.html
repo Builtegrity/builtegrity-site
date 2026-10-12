@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Builtegrity Transaction Console</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <div class="toolbar">
+      <div>
+        <p class="eyebrow">Builtegrity · Internal</p>
+        <h1 style="font-size:clamp(34px,5vw,52px)">Transaction Console</h1>
+      </div>
+      <div style="min-width:220px">
+        <input id="adminToken" type="password" placeholder="Admin token (production only)" autocomplete="off">
+      </div>
+    </div>
+
+    <div class="grid" id="stats"></div>
+
+    <div class="toolbar">
+      <h2>All transactions</h2>
+      <div class="actions" style="margin:0">
+        <button class="secondary" id="refresh">Refresh</button>
+      </div>
+    </div>
+
+    <section class="panel table-wrap">
+      <table>
+        <thead>
+          <tr><th>TX</th><th>Merchant</th><th>Customer</th><th>Purchase</th><th>Amount</th><th>Lifecycle</th><th>Integrity</th></tr>
+        </thead>
+        <tbody id="transactionRows"></tbody>
+      </table>
+      <p id="empty" class="muted" hidden>No transactions found.</p>
+    </section>
+
+    <section id="detail" hidden></section>
+  </main>
+  <script type="module" src="/console/app.js"></script>
+</body>
+</html>
