@@ -1,3 +1,4 @@
+import { authenticateClerkOperator } from './clerk-auth.js';
 import { authenticateCloudflareAccess } from './cloudflare-access.js';
 
 const COOKIE_NAME = 'builtegrity_session';
@@ -14,13 +15,21 @@ export async function handleAuthRoute(request, env) {
       : json({ authenticated: false }, 401);
   }
 
-  if (url.pathname === '/auth/login' && request.method === 'POST') {
-    if (provider === 'CLOUDFLARE_ACCESS') {
-      return json({
-        error: 'Cloudflare Access handles interactive sign-in before Builtegrity receives the request.',
-      }, 409);
-    }
+  if (url.pathname === '/auth/login' && request.method === 'GET' && provider === 'CLERK') {
+    if (!env.CLERK_SIGN_IN_URL) return json({ error: 'Clerk sign-in URL is not configured' }, 503);
+    const returnTo = safeReturnTo(url.searchParams.get('return_to'));
+    const redirect = new URL(String(env.CLERK_SIGN_IN_URL));
+    redirect.searchParams.set('redirect_url', new URL(returnTo, url.origin).toString());
+    return Response.redirect(redirect.toString(), 302);
+  }
 
+  if (url.pathname === '/auth/login' && request.method === 'POST') {
+    if (provider === 'CLERK') {
+      return json({ error: 'Clerk handles interactive sign-in. Use GET /auth/login.' }, 409);
+    }
+    if (provider === 'CLOUDFLARE_ACCESS') {
+      return json({ error: 'Cloudflare Access handles interactive sign-in before Builtegrity receives the request.' }, 409);
+    }
     if (provider !== 'OWNER_SESSION') {
       return json({ error: `Interactive login is unavailable for auth provider ${provider}` }, 409);
     }
@@ -56,6 +65,13 @@ export async function handleAuthRoute(request, env) {
   }
 
   if (url.pathname === '/auth/logout' && request.method === 'POST') {
+    if (provider === 'CLERK') {
+      return json({
+        authenticated: false,
+        redirect_url: env.CLERK_USER_URL || env.CLERK_SIGN_IN_URL || '/login/',
+        note: 'Use Clerk Account Portal / ClerkJS to terminate the Clerk session.',
+      });
+    }
     if (provider === 'CLOUDFLARE_ACCESS') {
       return Response.redirect(`${url.origin}/cdn-cgi/access/logout`, 302);
     }
@@ -77,9 +93,8 @@ export async function handleAuthRoute(request, env) {
 export async function authenticateOperator(request, env) {
   const provider = authProvider(env);
 
-  if (provider === 'CLOUDFLARE_ACCESS') {
-    return authenticateCloudflareAccess(request, env);
-  }
+  if (provider === 'CLERK') return authenticateClerkOperator(request, env);
+  if (provider === 'CLOUDFLARE_ACCESS') return authenticateCloudflareAccess(request, env);
 
   if (provider === 'OWNER_SESSION') {
     if (!env.OWNER_SESSION_SECRET) return null;
@@ -106,7 +121,13 @@ export async function requireOperator(request, env) {
 }
 
 export function authProvider(env) {
-  return String(env.AUTH_PROVIDER || 'CLOUDFLARE_ACCESS').trim().toUpperCase();
+  return String(env.AUTH_PROVIDER || 'CLERK').trim().toUpperCase();
+}
+
+function safeReturnTo(value) {
+  const candidate = String(value || '/console/');
+  if (!candidate.startsWith('/') || candidate.startsWith('//')) return '/console/';
+  return candidate;
 }
 
 async function signSession(payload, secret) {
