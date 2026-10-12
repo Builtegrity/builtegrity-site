@@ -182,6 +182,7 @@ export async function recomputeIntegrity(env, transactionId) {
   const termsIntegrity = Number(tx.consent_accepted) === 1 &&
     Boolean(expectedTermsHash) &&
     expectedTermsHash === tx.terms_snapshot_sha256;
+  const paymentIntegrity = String(tx.payment_status || '').toLowerCase() === 'succeeded';
   const amountIntegrity = Number(tx.customer_paid_cents) === Number(tx.amount_cents);
   const feeIntegrity = tx.fee_collection_method !== 'STRIPE_APPLICATION_FEE' ||
     Number(tx.integrity_fee_collected_cents || 0) >= Number(tx.integrity_fee_earned_cents || 0);
@@ -194,6 +195,7 @@ export async function recomputeIntegrity(env, transactionId) {
   const fullyAccounted =
     tx.lifecycle_status === 'COMPLETE' &&
     termsIntegrity &&
+    paymentIntegrity &&
     amountIntegrity &&
     feeIntegrity &&
     payoutNetIntegrity &&
@@ -224,6 +226,7 @@ export async function recomputeIntegrity(env, transactionId) {
     exceptionStatus,
     checks: {
       terms_integrity: termsIntegrity,
+      payment_integrity: paymentIntegrity,
       amount_integrity: amountIntegrity,
       fee_integrity: feeIntegrity,
       payout_net_integrity: payoutNetIntegrity,
