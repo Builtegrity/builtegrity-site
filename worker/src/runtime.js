@@ -7,6 +7,7 @@ import {
 } from './stripe-oauth.js';
 import { getWatchdogStatus, runWatchdogs } from './watchdogs.js';
 import { systemReadiness } from './readiness.js';
+import { createTransactionRequest } from './transaction-create.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -56,6 +57,11 @@ export default {
       if (disconnectMatch && request.method === 'POST') {
         await requireOperator(request, env);
         return handleDisconnect(env, disconnectMatch[1]);
+      }
+
+      if (path === '/api/transactions' && request.method === 'POST') {
+        await requireOperator(request, env);
+        return createTransactionRequest(request, env);
       }
 
       if (path === '/api/watchdogs/status' && request.method === 'GET') {
@@ -275,14 +281,40 @@ async function handleDisconnect(env, merchantId) {
   if (!merchant) return json({ error: 'Merchant not found' }, 404);
   if (!merchant.processor_account_id) return json({ disconnected: true, already_disconnected: true });
 
-  const result = await deauthorizeStripeAccount(env, merchant.processor_account_id);
+  const priorStatus = merchant.status;
   await env.DB.prepare(`
     UPDATE merchants
-       SET processor_account_id = NULL,
-           status = 'DISCONNECTED',
-           updated_at = CURRENT_TIMESTAMP
+       SET status = 'PAUSED', updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
   `).bind(merchantId).run();
+
+  let result;
+  try {
+    result = await deauthorizeStripeAccount(env, merchant.processor_account_id);
+  } catch (error) {
+    try {
+      await env.DB.prepare(`
+        UPDATE merchants SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+      `).bind(priorStatus, merchantId).run();
+    } catch (restoreError) {
+      console.error('Failed to restore merchant status after Stripe disconnect failure', restoreError);
+      error.message = `${error.message || 'Stripe disconnect failed'}; merchant remains fail-closed and requires manual review`;
+    }
+    throw error;
+  }
+
+  try {
+    await env.DB.prepare(`
+      UPDATE merchants
+         SET processor_account_id = NULL,
+             status = 'DISCONNECTED',
+             updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+    `).bind(merchantId).run();
+  } catch (error) {
+    error.message = `${error.message || 'Stripe disconnected but Builtegrity state update failed'}; merchant was paused before deauthorization and requires manual reconciliation`;
+    throw error;
+  }
 
   return json({ disconnected: true, stripe_user_id: result.stripe_user_id || null });
 }
