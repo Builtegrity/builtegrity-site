@@ -1,5 +1,8 @@
 const card = document.querySelector('#paymentCard');
 const token = new URLSearchParams(location.search).get('token');
+let turnstileToken = null;
+let turnstileWidgetId = null;
+let turnstileScriptPromise = null;
 
 function money(cents, currency = 'USD') {
   const value = Number(cents || 0) / 100;
@@ -36,6 +39,10 @@ async function load() {
 
 function render(payment) {
   const accepted = Boolean(payment.consent_accepted);
+  const turnstileRequired = Boolean(payment.turnstile_required && !accepted);
+  turnstileToken = null;
+  turnstileWidgetId = null;
+
   card.innerHTML = `
     <p class="eyebrow">${escapeHtml(payment.merchant_name)}</p>
     <h1 style="font-size:clamp(30px,7vw,48px)">${escapeHtml(payment.transaction_description)}</h1>
@@ -60,6 +67,7 @@ function render(payment) {
         <input id="acceptTerms" type="checkbox">
         <span>I have reviewed and accept the terms shown above for this payment.</span>
       </label>
+      ${turnstileRequired ? '<div id="turnstileMount" style="margin-top:16px"></div>' : ''}
       <div class="actions"><button id="continueButton" disabled>Accept terms and continue to Stripe</button></div>
     `}
     <p id="status" class="muted"></p>
@@ -67,26 +75,90 @@ function render(payment) {
 
   if (accepted) {
     document.querySelector('#payButton').addEventListener('click', startCheckout);
-  } else {
-    const checkbox = document.querySelector('#acceptTerms');
-    const button = document.querySelector('#continueButton');
-    checkbox.addEventListener('change', () => { button.disabled = !checkbox.checked; });
-    button.addEventListener('click', async () => {
-      button.disabled = true;
-      setStatus('Recording your acceptance…');
-      try {
-        await api(`/api/payments/${encodeURIComponent(token)}/consent`, {
-          method: 'POST',
-          body: JSON.stringify({ accepted: true }),
-        });
-        setStatus('Acceptance recorded. Opening Stripe…');
-        await startCheckout();
-      } catch (error) {
-        setStatus(error.message, true);
-        button.disabled = false;
-      }
-    });
+    return;
   }
+
+  const checkbox = document.querySelector('#acceptTerms');
+  const button = document.querySelector('#continueButton');
+  const refreshButtonState = () => {
+    button.disabled = !checkbox.checked || (turnstileRequired && !turnstileToken);
+  };
+  checkbox.addEventListener('change', refreshButtonState);
+
+  if (turnstileRequired) {
+    if (!payment.turnstile_site_key) {
+      setStatus('Security verification is not configured for this payment environment.', true);
+    } else {
+      mountTurnstile(payment.turnstile_site_key, refreshButtonState).catch((error) => {
+        setStatus(error.message, true);
+      });
+    }
+  }
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    setStatus('Recording your acceptance…');
+    try {
+      await api(`/api/payments/${encodeURIComponent(token)}/consent`, {
+        method: 'POST',
+        body: JSON.stringify({
+          accepted: true,
+          turnstile_token: turnstileRequired ? turnstileToken : undefined,
+        }),
+      });
+      turnstileToken = null;
+      setStatus('Acceptance recorded. Opening Stripe…');
+      await startCheckout();
+    } catch (error) {
+      setStatus(error.message, true);
+      if (turnstileRequired && window.turnstile && turnstileWidgetId !== null) {
+        window.turnstile.reset(turnstileWidgetId);
+        turnstileToken = null;
+      }
+      refreshButtonState();
+    }
+  });
+}
+
+async function mountTurnstile(siteKey, refreshButtonState) {
+  await loadTurnstileScript();
+  const mount = document.querySelector('#turnstileMount');
+  if (!mount || !window.turnstile) throw new Error('Security verification could not be loaded.');
+
+  turnstileWidgetId = window.turnstile.render(mount, {
+    sitekey: siteKey,
+    action: 'payment_consent',
+    appearance: 'interaction-only',
+    callback(value) {
+      turnstileToken = value;
+      refreshButtonState();
+    },
+    'expired-callback'() {
+      turnstileToken = null;
+      refreshButtonState();
+    },
+    'error-callback'() {
+      turnstileToken = null;
+      refreshButtonState();
+      setStatus('Security verification could not be completed. Please try again.', true);
+    },
+  });
+}
+
+function loadTurnstileScript() {
+  if (window.turnstile) return Promise.resolve();
+  if (turnstileScriptPromise) return turnstileScriptPromise;
+
+  turnstileScriptPromise = new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.async = true;
+    script.defer = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error('Security verification could not be loaded.'));
+    document.head.appendChild(script);
+  });
+  return turnstileScriptPromise;
 }
 
 async function startCheckout() {

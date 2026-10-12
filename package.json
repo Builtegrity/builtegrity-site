@@ -3,12 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "test": "node --test tests/*.test.mjs",
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "db:migrate:local": "wrangler d1 migrations apply BUILTEGRITY_DB --local",
-    "db:migrate:remote": "wrangler d1 migrations apply BUILTEGRITY_DB --remote",
-    "db:seed:local": "wrangler d1 execute BUILTEGRITY_DB --local --file=transaction-engine/seed-tx-0001.sql",
-    "db:seed:remote": "wrangler d1 execute BUILTEGRITY_DB --remote --file=transaction-engine/seed-tx-0001.sql"
+    "db:migrate:local": "wrangler d1 migrations apply builtegrity-v1 --local",
+    "db:migrate:remote": "wrangler d1 migrations apply builtegrity-v1 --remote",
+    "db:seed:local": "wrangler d1 execute builtegrity-v1 --local --file=transaction-engine/seed-tx-0001.sql"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"

@@ -16,6 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Check JavaScript syntax
         run: |
           node --check worker/src/clerk-auth.js
@@ -26,6 +30,10 @@ jobs:
           node --check worker/src/stripe-oauth.js
           node --check worker/src/webhooks.js
           node --check worker/src/watchdogs.js
+          node --check worker/src/readiness.js
+          node --check worker/src/transaction-create.js
+          node --check worker/src/merchant-stripe.js
+          node --check worker/src/turnstile.js
           node --check worker/src/index.js
           node --check worker/src/runtime.js
           node --check public/login/app.js
@@ -33,6 +41,16 @@ jobs:
           node --check public/console/stripe-controls.js
           node --check public/pay/app.js
           node --check public/pay/success/app.js
+          node --check tests/stripe-runtime.test.mjs
+          node --check tests/readiness.test.mjs
+          node --check tests/admin-routing.test.mjs
+          node --check tests/clerk-auth.test.mjs
+          node --check tests/config-guards.test.mjs
+          node --check tests/turnstile.test.mjs
+          node --check tests/db-integrity.test.mjs
+
+      - name: Run dependency-free runtime regression tests
+        run: npm test
 
       - name: Guard V1 auth and provider independence
         run: |
@@ -48,9 +66,56 @@ jobs:
           grep -q 'CLERK_ADMIN_USER_IDS' wrangler.toml.example
           grep -q 'CLERK_AUTHORIZED_PARTIES' wrangler.toml.example
           grep -q 'RSASSA-PKCS1-v1_5' worker/src/clerk-auth.js
+          grep -q "payload.sid" worker/src/clerk-auth.js
           grep -q 'STRIPE_CONNECT_CLIENT_ID' wrangler.toml.example
+          grep -q 'STRIPE_API_VERSION' wrangler.toml.example
           grep -q 'TURNSTILE_SITE_KEY' wrangler.toml.example
           grep -q 'RESEND_API_KEY' .dev.vars.example
+
+      - name: Guard actual runtime module wiring
+        run: |
+          grep -q "createTransactionRequest" worker/src/runtime.js
+          grep -q "createTransactionRequest" worker/src/index.js
+          grep -q "verifyMerchantStripe" worker/src/runtime.js
+          grep -q "verifyMerchantStripe" worker/src/index.js
+          if grep -q "async function handleCreateTransaction" worker/src/index.js; then
+            echo "Legacy inline transaction creation must not diverge from transaction-create.js"
+            exit 1
+          fi
+          if grep -q "async function handleVerifyMerchant" worker/src/index.js; then
+            echo "Legacy inline merchant verification must not diverge from merchant-stripe.js"
+            exit 1
+          fi
+
+      - name: Guard Stripe runtime integrity coverage
+        run: |
+          grep -q 'Idempotency-Key' worker/src/stripe.js
+          grep -q 'retrieveCheckoutSession' worker/src/stripe.js
+          grep -q "checkout.session.expired" worker/src/webhooks.js
+          grep -q 'findBuiltegrityTransactionForCharge' worker/src/webhooks.js
+          grep -q 'REFUND_RECORDED' worker/src/webhooks.js
+          grep -q 'APPLICATION_FEE_REFUNDED' worker/src/webhooks.js
+          grep -q 'DISPUTE_LOST' worker/src/webhooks.js
+          grep -q 'PAYOUT_CANCELED' worker/src/webhooks.js
+          grep -q 'payment_integrity' worker/src/db.js
+          grep -q 'terms_integrity' worker/src/db.js
+          grep -q 'payout_net_integrity' worker/src/db.js
+          grep -q 'disputeOutcomeRequiresReview' worker/src/db.js
+          grep -q 'INSERT OR IGNORE INTO transaction_exceptions' worker/src/db.js
+          grep -q 'Idempotency-Key' worker/src/transaction-create.js
+          grep -q 'creation_request_sha256' worker/src/transaction-create.js
+          grep -q 'DB.batch' worker/src/transaction-create.js
+          grep -q "country === 'US'" worker/src/merchant-stripe.js
+          grep -q "datetime(expires_at) > datetime('now')" worker/src/runtime.js
+
+      - name: Guard public abuse protection
+        run: |
+          grep -q 'turnstileRequired' worker/src/turnstile.js
+          grep -q 'turnstile/v0/siteverify' worker/src/turnstile.js
+          grep -q 'payment_consent' worker/src/turnstile.js
+          grep -q 'requireTurnstile' worker/src/index.js
+          grep -q 'turnstile_site_key' worker/src/index.js
+          grep -q 'challenges.cloudflare.com/turnstile' public/pay/app.js
 
       - name: Guard watchdog coverage
         run: |
@@ -74,6 +139,11 @@ jobs:
           sqlite3 /tmp/builtegrity.db < migrations/0005_merchant_runtime_timestamp.sql
           sqlite3 /tmp/builtegrity.db < migrations/0006_stripe_oauth_states.sql
           sqlite3 /tmp/builtegrity.db < migrations/0007_watchdogs.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0008_checkout_integrity.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0009_transaction_write_integrity.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0010_atomic_audit_evidence.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0011_unique_connected_accounts.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0012_idempotency_fingerprint_and_exception_uniqueness.sql
           sqlite3 /tmp/builtegrity.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify TX-0001 hierarchy and state
@@ -84,6 +154,68 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM purchases WHERE id='PUR-0001' AND customer_id='CUST-0001';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transactions WHERE id='TX-0001' AND lifecycle_status='CREATED' AND integrity_status='INCOMPLETE' AND payment_access_token='test-tx-0001-token';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='TX_CREATED';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='stripe_checkout_expires_at';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='creation_idempotency_key';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='creation_request_sha256';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_exceptions_unique_open';")" = "1"
+
+      - name: Verify merchant-scoped creation idempotency
+        run: |
+          sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,creation_idempotency_key,creation_request_sha256) VALUES ('TX-0996','PUR-0001','MER-0001','CUST-0001','PAYMENT','first',100,'USD','terms','retry-key','hash-a');"
+          if sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,creation_idempotency_key,creation_request_sha256) VALUES ('TX-0997','PUR-0001','MER-0001','CUST-0001','PAYMENT','second',100,'USD','terms','retry-key','hash-b');" 2>/tmp/idempotency-error.txt; then
+            echo "Expected duplicate merchant-scoped creation key to be rejected"
+            exit 1
+          fi
+          grep -qi "unique" /tmp/idempotency-error.txt
+
+      - name: Verify one open exception per type per transaction
+        run: |
+          sqlite3 /tmp/builtegrity.db "INSERT INTO transaction_exceptions (id,transaction_id,exception_type,status,summary) VALUES ('EXC-0998','TX-0001','CI_DUPLICATE','OPEN','first');"
+          if sqlite3 /tmp/builtegrity.db "INSERT INTO transaction_exceptions (id,transaction_id,exception_type,status,summary) VALUES ('EXC-0999','TX-0001','CI_DUPLICATE','OPEN','second');" 2>/tmp/open-exception-error.txt; then
+            echo "Expected duplicate open exception to be rejected"
+            exit 1
+          fi
+          grep -qi "unique" /tmp/open-exception-error.txt
+
+      - name: Verify connected processor account uniqueness
+        run: |
+          sqlite3 /tmp/builtegrity.db "UPDATE merchants SET processor_account_id='acct_unique_ci' WHERE id='MER-0001';"
+          sqlite3 /tmp/builtegrity.db "INSERT INTO merchants (id,partner_id,name,processor,processor_account_id,integration_mode,status) VALUES ('MER-0999','PARTNER-0001','Duplicate test','STRIPE',NULL,'STRIPE_CONNECT','TEST');"
+          if sqlite3 /tmp/builtegrity.db "UPDATE merchants SET processor_account_id='acct_unique_ci' WHERE id='MER-0999';" 2>/tmp/merchant-account-error.txt; then
+            echo "Expected the same Stripe account to be rejected on a second merchant"
+            exit 1
+          fi
+          grep -qi "unique" /tmp/merchant-account-error.txt
+
+      - name: Verify Stripe object identifiers cannot cross transaction records
+        run: |
+          sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,stripe_charge_id) VALUES ('TX-0998','PUR-0001','MER-0001','CUST-0001','PAYMENT','first',100,'USD','terms','ch_unique_test');"
+          if sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,stripe_charge_id) VALUES ('TX-0999','PUR-0001','MER-0001','CUST-0001','PAYMENT','second',100,'USD','terms','ch_unique_test');" 2>/tmp/unique-error.txt; then
+            echo "Expected duplicate Stripe charge ID to be rejected"
+            exit 1
+          fi
+          grep -qi "unique" /tmp/unique-error.txt
+
+      - name: Verify accepted transaction agreement and atomic evidence
+        run: |
+          sqlite3 /tmp/builtegrity.db "UPDATE transactions SET consent_accepted=1,consent_accepted_at=CURRENT_TIMESTAMP,consent_method='CI',terms_snapshot_sha256='ci-hash' WHERE id='TX-0001';"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='CONSENT_COMMITTED';")" = "1"
+          if sqlite3 /tmp/builtegrity.db "UPDATE transactions SET amount_cents=1 WHERE id='TX-0001';" 2>/tmp/agreement-error.txt; then
+            echo "Expected accepted agreement mutation to be rejected"
+            exit 1
+          fi
+          grep -q "accepted transaction agreement is immutable" /tmp/agreement-error.txt
+          sqlite3 /tmp/builtegrity.db "UPDATE transactions SET stripe_checkout_session_id='cs_test_atomic',payment_status='unpaid' WHERE id='TX-0001';"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='CHECKOUT_SESSION_LINKED' AND source_event_id='checkout:cs_test_atomic';")" = "1"
+          sqlite3 /tmp/builtegrity.db "UPDATE transactions SET payment_status='succeeded' WHERE id='TX-0001';"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT payment_status FROM transactions WHERE id='TX-0001';")" = "succeeded"
+
+      - name: Verify OAuth expiry comparisons use real datetimes
+        run: |
+          sqlite3 /tmp/builtegrity.db "INSERT INTO stripe_oauth_states (state_token,merchant_id,expires_at) VALUES ('expired-ci','MER-0001',strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 hour'));"
+          sqlite3 /tmp/builtegrity.db "INSERT INTO stripe_oauth_states (state_token,merchant_id,expires_at) VALUES ('future-ci','MER-0001',strftime('%Y-%m-%dT%H:%M:%fZ','now','+1 hour'));"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM stripe_oauth_states WHERE state_token='expired-ci' AND datetime(expires_at) > datetime('now');")" = "0"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM stripe_oauth_states WHERE state_token='future-ci' AND datetime(expires_at) > datetime('now');")" = "1"
 
       - name: Verify event history is append-only
         run: |

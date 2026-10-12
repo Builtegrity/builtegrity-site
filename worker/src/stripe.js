@@ -15,10 +15,14 @@ function addParam(search, key, value) {
 
 export async function stripeRequest(env, path, options = {}) {
   const secret = requireSecret(env, 'STRIPE_SECRET_KEY');
-  const method = options.method || 'GET';
+  const method = String(options.method || 'GET').toUpperCase();
   const accountId = options.accountId || null;
   const headers = { Authorization: `Bearer ${secret}` };
   if (accountId) headers['Stripe-Account'] = accountId;
+  if (options.idempotencyKey && method === 'POST') {
+    headers['Idempotency-Key'] = String(options.idempotencyKey).slice(0, 255);
+  }
+  if (env.STRIPE_API_VERSION) headers['Stripe-Version'] = String(env.STRIPE_API_VERSION);
 
   let url = `https://api.stripe.com${path}`;
   const init = { method, headers };
@@ -83,10 +87,21 @@ export async function createTrackedCheckout(env, tx) {
     form['payment_intent_data[application_fee_amount]'] = Number(tx.integrity_fee_earned_cents);
   }
 
+  const previousSession = tx.stripe_checkout_session_id || 'initial';
   return stripeRequest(env, '/v1/checkout/sessions', {
     method: 'POST',
     accountId: tx.processor_account_id,
     form,
+    // If Stripe succeeds but D1 fails before the session is recorded, the retry returns
+    // the same Checkout Session instead of creating a duplicate. After an expired session
+    // is stored, its ID becomes the seed for the next intentional Checkout attempt.
+    idempotencyKey: `builtegrity:checkout:${tx.id}:${previousSession}`,
+  });
+}
+
+export async function retrieveCheckoutSession(env, accountId, checkoutSessionId) {
+  return stripeRequest(env, `/v1/checkout/sessions/${encodeURIComponent(checkoutSessionId)}`, {
+    accountId,
   });
 }
 
