@@ -10,8 +10,10 @@ refreshButton.addEventListener('click', loadTransactions);
 signOutButton?.addEventListener('click', async () => {
   signOutButton.disabled = true;
   try {
-    await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
-  } finally {
+    const response = await fetch('/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    const data = await response.json().catch(() => ({}));
+    location.assign(data.redirect_url || '/login/');
+  } catch {
     location.assign('/login/');
   }
 });
