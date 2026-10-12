@@ -8,6 +8,7 @@ import {
 import { verifyStripeSignature } from './stripe.js';
 import { processStripeWebhook } from './webhooks.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
+import { projectStripeEventToTransactionIntelligence } from './stripe-intelligence.js';
 import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
 import { handlePublicRecordRoute, serveOperatorTransactionPdf } from './records.js';
 import {
@@ -18,6 +19,16 @@ import {
   verifyInternalCase,
 } from './cases.js';
 import { syncInternalCasesFromWatchdogs } from './case-router.js';
+import {
+  confirmComponentRule,
+  getMerchantTransactionProfile,
+  getTransactionGraph,
+  linkTransactionArtifact,
+  observeTransactionComponent,
+  recordTransactionSourceObject,
+  registerMerchantTransactionSource,
+  updateMerchantTransactionPreferences,
+} from './transaction-intelligence.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -74,6 +85,53 @@ export default {
       if (disconnectMatch && request.method === 'POST') {
         await requireOperator(request, env);
         return handleDisconnect(env, disconnectMatch[1]);
+      }
+
+      const merchantProfileMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/transaction-profile$/);
+      if (merchantProfileMatch && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getMerchantTransactionProfile(env, merchantProfileMatch[1]));
+      }
+
+      const merchantPreferencesMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/transaction-profile\/preferences$/);
+      if (merchantPreferencesMatch && request.method === 'POST') {
+        await requireOperator(request, env);
+        return json(await updateMerchantTransactionPreferences(env, merchantPreferencesMatch[1], await readJson(request)));
+      }
+
+      const merchantRuleMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/transaction-profile\/rules\/(RULE-[A-Za-z0-9-]+)\/confirm$/);
+      if (merchantRuleMatch && request.method === 'POST') {
+        await requireOperator(request, env);
+        const body = await readJson(request);
+        if (!body.component_type_code) return json({ error: 'component_type_code is required' }, 400);
+        return json(await confirmComponentRule(env, merchantRuleMatch[1], merchantRuleMatch[2], body.component_type_code));
+      }
+
+      const graphMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)\/graph$/);
+      if (graphMatch && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getTransactionGraph(env, graphMatch[1]));
+      }
+
+      const componentMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)\/components$/);
+      if (componentMatch && request.method === 'POST') {
+        await requireOperator(request, env);
+        const body = await readJson(request);
+        return json(await observeTransactionComponent(env, { ...body, transaction_id: componentMatch[1] }), 201);
+      }
+
+      const artifactMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)\/artifacts$/);
+      if (artifactMatch && request.method === 'POST') {
+        await requireOperator(request, env);
+        const body = await readJson(request);
+        return json(await linkTransactionArtifact(env, { ...body, transaction_id: artifactMatch[1] }), 201);
+      }
+
+      const sourceObjectMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)\/source-objects$/);
+      if (sourceObjectMatch && request.method === 'POST') {
+        await requireOperator(request, env);
+        const body = await readJson(request);
+        return json(await recordTransactionSourceObject(env, { ...body, transaction_id: sourceObjectMatch[1] }), 201);
       }
 
       const operatorPdfMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)\/pdf$/);
@@ -247,10 +305,14 @@ async function handleRuntimeStripeWebhook(request, env) {
   let event;
   try { event = JSON.parse(rawBody); } catch { return json({ error: 'Invalid JSON' }, 400); }
   const accountEvent = event.type === 'account.updated' || event.type === 'account.application.deauthorized';
-  const result = accountEvent
-    ? await processStripeAccountWebhook(env, event)
-    : await processStripeWebhook(env, event);
-  return json({ received: true, ...result });
+  if (accountEvent) {
+    const result = await processStripeAccountWebhook(env, event);
+    return json({ received: true, ...result });
+  }
+
+  const result = await processStripeWebhook(env, event);
+  const intelligence = await projectStripeEventToTransactionIntelligence(env, event);
+  return json({ received: true, ...result, transaction_intelligence: intelligence });
 }
 
 async function handleConnectUrl(env, merchantId) {
@@ -319,6 +381,20 @@ async function handleOAuthCallback(url, env) {
      WHERE id = ?
   `).bind(result.stripe_user_id, merchantStatus, stateRow.merchant_id).run();
 
+  await registerMerchantTransactionSource(env, stateRow.merchant_id, {
+    source_system: 'STRIPE',
+    source_type: 'PROCESSOR',
+    external_account_id: result.stripe_user_id,
+    capabilities: {
+      payments: true,
+      application_fees: true,
+      refunds: true,
+      disputes: true,
+      payouts: true,
+      receipts: true,
+    },
+  });
+
   return redirectToConsole(env, {
     stripe: 'connected',
     merchant: stateRow.merchant_id,
@@ -332,6 +408,12 @@ async function handleDisconnect(env, merchantId) {
   if (!merchant.processor_account_id) return json({ disconnected: true, already_disconnected: true });
 
   const result = await deauthorizeStripeAccount(env, merchant.processor_account_id);
+  await env.DB.prepare(`
+    UPDATE merchant_transaction_sources
+       SET status = 'DISCONNECTED', last_seen_at = CURRENT_TIMESTAMP
+     WHERE merchant_id = ? AND source_system = 'STRIPE' AND external_account_id = ?
+  `).bind(merchantId, merchant.processor_account_id).run().catch(() => null);
+
   await env.DB.prepare(`
     UPDATE merchants
        SET processor_account_id = NULL,
