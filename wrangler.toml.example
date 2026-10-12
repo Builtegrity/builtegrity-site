@@ -1,0 +1,17 @@
+name = "builtegrity-transaction-engine"
+main = "worker/src/index.js"
+compatibility_date = "2026-10-11"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "builtegrity-v1"
+database_id = "REPLACE_AFTER_D1_CREATION"
+migrations_dir = "migrations"
+
+[vars]
+APP_BASE_URL = "http://localhost:8787"
+DEV_MODE = "true"
