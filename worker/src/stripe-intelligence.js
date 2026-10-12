@@ -80,7 +80,8 @@ async function projectPaymentIntent(env, event) {
   if (event.type !== 'payment_intent.succeeded') return { projected: true, transaction_id: txId };
 
   const tx = await env.DB.prepare(`
-    SELECT id, processor_account_id FROM transactions t
+    SELECT t.id AS transaction_id, m.processor_account_id AS processor_account_id
+    FROM transactions t
     JOIN merchants m ON m.id = t.merchant_id
     WHERE t.id = ?
   `).bind(txId).first();
@@ -91,7 +92,7 @@ async function projectPaymentIntent(env, event) {
   const latestCharge = intent.latest_charge;
   const chargeId = typeof latestCharge === 'string' ? latestCharge : latestCharge?.id;
   if (!chargeId) return { projected: true, transaction_id: txId, receipt_projected: false };
-  const charge = typeof latestCharge === 'object' && latestCharge?.balance_transaction
+  const charge = typeof latestCharge === 'object' && latestCharge?.receipt_url
     ? latestCharge
     : await retrieveCharge(env, accountId, chargeId);
 
