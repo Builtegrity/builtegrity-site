@@ -252,9 +252,6 @@ async function checkTransactionState(env, counters) {
     SELECT t.*, m.automatic_payouts_required
     FROM transactions t
     JOIN merchants m ON m.id = t.merchant_id
-    WHERE t.lifecycle_status <> 'CREATED'
-       OR t.integrity_status <> 'INCOMPLETE'
-       OR t.payment_status IS NOT NULL
     ORDER BY t.created_at DESC
     LIMIT 500
   `).all();
@@ -268,6 +265,23 @@ async function checkTransactionState(env, counters) {
       current = await env.DB.prepare(`SELECT * FROM transactions WHERE id = ?`).bind(current.id).first();
       const after = `${current.integrity_status}:${current.exception_status}`;
       if (before !== after) counters.repairs += 1;
+    }
+
+    const stalePaymentKey = `tx:stale-payment-pending:${current.id}`;
+    const stalePaymentPending = current.lifecycle_status === 'PAYMENT_PENDING' &&
+      String(current.payment_status || '').toLowerCase() !== 'succeeded' &&
+      hoursAgo(current.updated_at || current.created_at) >= 24;
+    if (stalePaymentPending) {
+      await setAlert(env, {
+        key: stalePaymentKey,
+        category: 'TRANSACTION',
+        severity: 'WARN',
+        subjectType: 'TRANSACTION',
+        subjectId: current.id,
+        message: `${current.id} has remained PAYMENT_PENDING for more than 24 hours.`,
+      });
+    } else {
+      await resolveAlert(env, stalePaymentKey);
     }
 
     const completeKey = `tx:complete-not-accounted:${current.id}`;
@@ -320,6 +334,13 @@ async function checkTransactionState(env, counters) {
         message: `${current.id} has an integrity-fee shortfall after successful payment.`,
       });
     } else {
+      const existed = await hasOpenException(env, current.id, 'UNEXPECTED_FEE');
+      const feeSatisfied = current.fee_collection_method !== 'STRIPE_APPLICATION_FEE' ||
+        Number(current.integrity_fee_collected_cents || 0) >= Number(current.integrity_fee_earned_cents || 0);
+      if (existed && feeSatisfied) {
+        await resolveException(env, current.id, 'UNEXPECTED_FEE', 'Watchdog confirmed the expected integrity fee is now fully recorded.');
+        counters.repairs += 1;
+      }
       await resolveAlert(env, feeKey);
     }
 
@@ -521,7 +542,8 @@ async function resolveAlert(env, key) {
 }
 
 async function maybeNotify(env, alert) {
-  if (!alert || !env.RESEND_API_KEY || !env.ALERT_EMAIL_FROM || !env.ALERT_EMAIL_TO) return;
+  if (!alert || !['ERROR', 'CRITICAL'].includes(String(alert.severity || '').toUpperCase())) return;
+  if (!env.RESEND_API_KEY || !env.ALERT_EMAIL_FROM || !env.ALERT_EMAIL_TO) return;
   if (!shouldNotify(alert)) return;
 
   try {
