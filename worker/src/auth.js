@@ -57,10 +57,7 @@ export async function handleAuthRoute(request, env) {
 
   if (url.pathname === '/auth/logout' && request.method === 'POST') {
     if (provider === 'CLOUDFLARE_ACCESS') {
-      return json({
-        authenticated: false,
-        logout_url: `${url.origin}/cdn-cgi/access/logout`,
-      });
+      return Response.redirect(`${url.origin}/cdn-cgi/access/logout`, 302);
     }
 
     const secure = url.protocol === 'https:' ? '; Secure' : '';
@@ -93,12 +90,10 @@ export async function authenticateOperator(request, env) {
     return publicPrincipal(payload);
   }
 
-  // Explicit development escape hatch. Never use this value in production.
   if (provider === 'DEV_BYPASS' && env.DEV_MODE === 'true') {
     return { sub: 'developer', role: 'OWNER', provider: 'DEV_BYPASS', expires_at: null };
   }
 
-  // Unsupported providers fail closed rather than silently weakening access control.
   return null;
 }
 
