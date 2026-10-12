@@ -30,7 +30,15 @@ function objectId(value) {
 
 export async function processStripeWebhook(env, event) {
   const claim = await claimWebhook(env, event);
-  if (!claim.claimed) return { duplicate: true, in_progress: Boolean(claim.inProgress) };
+  if (!claim.claimed) {
+    if (claim.inProgress) {
+      const error = new Error(`Stripe webhook ${event.id} is already being processed; retry later`);
+      error.status = 409;
+      error.retryable = true;
+      throw error;
+    }
+    return { duplicate: true };
+  }
 
   try {
     switch (event.type) {
@@ -420,6 +428,7 @@ async function handlePayoutReady(env, event) {
   const payout = event.data.object;
   const accountId = event.account;
   if (!accountId) return;
+  const payoutStatus = String(payout.status || (event.type === 'payout.paid' ? 'paid' : 'pending')).toLowerCase();
   const balanceTransactions = await listPayoutBalanceTransactions(env, accountId, payout.id);
   const chargeSources = new Map(
     balanceTransactions
@@ -445,7 +454,7 @@ async function handlePayoutReady(env, event) {
        WHERE id = ?
     `).bind(
       payout.id,
-      payout.status || (event.type === 'payout.paid' ? 'paid' : 'pending'),
+      payoutStatus,
       stripeTime(payout.arrival_date),
       Number(balanceItem.net || 0),
       Number(payout.amount || 0),
@@ -454,12 +463,12 @@ async function handlePayoutReady(env, event) {
 
     await recordEvent(env, tx.id, 'PAYOUT_IDENTIFIED', 'STRIPE', `${event.id}:${tx.id}:identified`, {
       payout_id: payout.id,
-      payout_status: payout.status,
+      payout_status: payoutStatus,
       transaction_contribution_cents: balanceItem.net,
       payout_batch_total_cents: payout.amount,
     }, stripeTime(event.created));
 
-    if (event.type === 'payout.paid' || payout.status === 'paid') {
+    if (payoutStatus === 'paid') {
       await env.DB.prepare(`
         UPDATE transactions
            SET processor_payout_status = 'paid',
@@ -474,6 +483,18 @@ async function handlePayoutReady(env, event) {
       await resolveException(env, tx.id, 'PAYOUT_FAILED', 'Stripe later reported the payout paid.');
       await resolveException(env, tx.id, 'PAYOUT_CANCELED', 'Stripe later reported the payout paid.');
       await resolveException(env, tx.id, 'EXPECTED_PAYOUT_NOT_FOUND', 'Transaction was reconciled to a Stripe payout.');
+    } else if (payoutStatus === 'failed') {
+      await recordEvent(env, tx.id, 'PAYOUT_FAILED', 'STRIPE', `${event.id}:${tx.id}:failed_reconciled`, {
+        payout_id: payout.id,
+        failure_code: payout.failure_code || null,
+        failure_message: payout.failure_message || null,
+      }, stripeTime(event.created));
+      await openException(env, tx.id, 'PAYOUT_FAILED', payout.failure_message || `Stripe payout ${payout.id} failed.`);
+    } else if (payoutStatus === 'canceled') {
+      await recordEvent(env, tx.id, 'PAYOUT_CANCELED', 'STRIPE', `${event.id}:${tx.id}:canceled_reconciled`, {
+        payout_id: payout.id,
+      }, stripeTime(event.created));
+      await openException(env, tx.id, 'PAYOUT_CANCELED', `Stripe payout ${payout.id} was canceled and requires review.`);
     }
 
     await recomputeIntegrity(env, tx.id);
