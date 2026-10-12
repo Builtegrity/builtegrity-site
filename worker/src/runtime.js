@@ -5,7 +5,8 @@ import {
   deauthorizeStripeAccount,
   exchangeStripeOAuthCode,
 } from './stripe-oauth.js';
-import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
+import { getWatchdogStatus, runWatchdogs } from './watchdogs.js';
+import { systemReadiness } from './readiness.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -28,8 +29,12 @@ export default {
           service: 'builtegrity-transaction-engine',
           stage: readiness.stage,
           database: readiness.database,
+          schema_ready: readiness.schema_ready,
           config_complete: readiness.config_complete,
           missing_config_count: readiness.missing_config_count,
+          watchdog_healthy: readiness.watchdog_healthy,
+          watchdog_fresh: readiness.watchdog_fresh,
+          watchdog_age_minutes: readiness.watchdog_age_minutes,
           last_watchdog: readiness.last_watchdog,
         }, readiness.ok ? 200 : 503);
       }
@@ -55,7 +60,9 @@ export default {
 
       if (path === '/api/watchdogs/status' && request.method === 'GET') {
         await requireOperator(request, env);
-        return json(await getWatchdogStatus(env));
+        const status = await getWatchdogStatus(env);
+        status.readiness = await systemReadiness(env);
+        return json(status);
       }
 
       if (path === '/api/watchdogs/run' && request.method === 'POST') {
@@ -236,8 +243,6 @@ async function handleOAuthCallback(url, env) {
       `).bind(state),
     ]);
   } catch (error) {
-    // Stripe authorization already succeeded. If this was a genuinely new account
-    // relationship, undo it so a D1 failure cannot leave an orphaned platform grant.
     if (!alreadyBound) {
       try {
         await deauthorizeStripeAccount(env, result.stripe_user_id);
