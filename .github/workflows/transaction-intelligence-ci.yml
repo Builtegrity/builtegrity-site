@@ -1,0 +1,95 @@
+name: Transaction Intelligence CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - atlas/transaction-profile-components
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check transaction-intelligence JavaScript syntax
+        run: |
+          node --check worker/src/transaction-intelligence.js
+          node --check worker/src/stripe-intelligence.js
+          node --check worker/src/runtime.js
+
+      - name: Build full D1 schema and seed TX-0001
+        run: |
+          rm -f /tmp/builtegrity-intelligence.db
+          for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+            echo "Applying $file"
+            sqlite3 /tmp/builtegrity-intelligence.db < "$file"
+          done
+          sqlite3 /tmp/builtegrity-intelligence.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify universal registry and automatic merchant profile
+        run: |
+          count="$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT COUNT(*) FROM transaction_component_types;")"
+          test "$count" -ge 60
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT COUNT(*) FROM merchant_transaction_profiles WHERE merchant_id='MER-0001';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT COUNT(*) FROM merchant_profile_modules WHERE merchant_id='MER-0001' AND activation_state='MANDATORY';")" -ge "3"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT COUNT(*) FROM transaction_components WHERE transaction_id='TX-0001' AND component_type_code='GROSS_PAYMENT' AND basis='EXPECTED';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT COUNT(*) FROM transaction_components WHERE transaction_id='TX-0001' AND component_type_code='SALE_LINE_ITEM';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT COUNT(*) FROM transaction_components WHERE transaction_id='TX-0001' AND component_type_code='INTEGRITY_FEE' AND basis='EXPECTED';")" = "1"
+
+      - name: Verify merchant presentation cannot erase accounting truth
+        run: |
+          sqlite3 /tmp/builtegrity-intelligence.db "UPDATE merchant_component_profiles SET display_mode='HIDE' WHERE merchant_id='MER-0001' AND component_type_code='GROSS_PAYMENT';"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT COUNT(*) FROM transaction_components WHERE transaction_id='TX-0001' AND component_type_code='GROSS_PAYMENT';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT display_mode FROM transaction_component_stream WHERE transaction_id='TX-0001' AND component_type_code='GROSS_PAYMENT' LIMIT 1;")" = "HIDE"
+          grep -q 'Merchant preferences cannot modify accounting truth' worker/src/transaction-intelligence.js
+          grep -q "'accounting_enabled'" worker/src/transaction-intelligence.js
+          grep -q "'capture_enabled'" worker/src/transaction-intelligence.js
+
+      - name: Verify component and evidence history are append-only
+        run: |
+          if sqlite3 /tmp/builtegrity-intelligence.db "UPDATE transaction_components SET amount_cents=1 WHERE id=(SELECT id FROM transaction_components WHERE transaction_id='TX-0001' LIMIT 1);" 2>/tmp/component-update-error.txt; then
+            echo "Expected transaction component updates to fail"
+            exit 1
+          fi
+          sqlite3 /tmp/builtegrity-intelligence.db "INSERT INTO transaction_artifacts (id,transaction_id,merchant_id,purchase_id,artifact_type,source_system,source_ref,external_url) VALUES ('ART-TEST','TX-0001','MER-0001','PUR-0001','RECEIPT','TESTPOS','receipt-1','https://example.invalid/receipt-1');"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT occurrence_count FROM merchant_profile_modules WHERE merchant_id='MER-0001' AND module_code='EVIDENCE';")" = "1"
+          if sqlite3 /tmp/builtegrity-intelligence.db "DELETE FROM transaction_artifacts WHERE id='ART-TEST';" 2>/tmp/artifact-delete-error.txt; then
+            echo "Expected transaction artifact deletes to fail"
+            exit 1
+          fi
+
+      - name: Verify unknown components are captured and force review
+        run: |
+          sqlite3 /tmp/builtegrity-intelligence.db "INSERT INTO transaction_components (id,transaction_id,merchant_id,purchase_id,component_type_code,scope,basis,direction,beneficiary,amount_cents,currency,raw_label,source_system,source_ref,classification_confidence_ppm,status) VALUES ('CMP-UNKNOWN-TEST','TX-0001','MER-0001','PUR-0001','UNKNOWN_OTHER','PAYMENT','OBSERVED','NEUTRAL','UNKNOWN',384,'USD','Regional Brand Development Fee','TESTPOS','unknown-1',0,'UNKNOWN');"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT status FROM merchant_transaction_profiles WHERE merchant_id='MER-0001';")" = "REVIEW_REQUIRED"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT COUNT(*) FROM merchant_profile_modules WHERE merchant_id='MER-0001' AND module_code='UNKNOWN';")" = "1"
+          grep -q "UNKNOWN_OTHER" worker/src/transaction-intelligence.js
+          grep -q "NEEDS_REVIEW" worker/src/transaction-intelligence.js
+
+      - name: Verify provider objects support many transactions
+        run: |
+          sqlite3 /tmp/builtegrity-intelligence.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_version,terms_snapshot,integrity_fee_earned_cents,fee_collection_method,payment_access_token) SELECT 'TX-TEST2',purchase_id,merchant_id,customer_id,transaction_type,'Second test transaction',1000,currency,terms_version,terms_snapshot,0,'STRIPE_APPLICATION_FEE','test-token-2' FROM transactions WHERE id='TX-0001';"
+          sqlite3 /tmp/builtegrity-intelligence.db "INSERT INTO source_objects (id,merchant_id,source_system,object_type,external_id) VALUES ('OBJ-SHARED-PAYOUT','MER-0001','STRIPE','PAYOUT','po_shared');"
+          sqlite3 /tmp/builtegrity-intelligence.db "INSERT INTO transaction_source_object_links (transaction_id,source_object_id,relationship_type) VALUES ('TX-0001','OBJ-SHARED-PAYOUT','PAYOUT'),('TX-TEST2','OBJ-SHARED-PAYOUT','PAYOUT');"
+          test "$(sqlite3 /tmp/builtegrity-intelligence.db "SELECT COUNT(*) FROM transaction_source_object_links WHERE source_object_id='OBJ-SHARED-PAYOUT';")" = "2"
+          if sqlite3 /tmp/builtegrity-intelligence.db "DELETE FROM source_objects WHERE id='OBJ-SHARED-PAYOUT';" 2>/tmp/source-delete-error.txt; then
+            echo "Expected source object deletes to fail"
+            exit 1
+          fi
+
+      - name: Verify Stripe adapter projection and receipt linking
+        run: |
+          grep -q 'projectStripeEventToTransactionIntelligence' worker/src/runtime.js
+          grep -q "object_type: 'PAYOUT'" worker/src/stripe-intelligence.js
+          grep -q "artifact_type: 'RECEIPT'" worker/src/stripe-intelligence.js
+          grep -q 'charge.receipt_url' worker/src/stripe-intelligence.js
+          grep -q 'transaction_source_object_links' worker/src/transaction-intelligence.js
+
+      - name: Verify bounded discovery-driven architecture documentation
+        run: |
+          grep -q 'Capture everything available. Understand what it means. Let the merchant choose what they want to see.' docs/transaction-intelligence.md
+          grep -q 'Unknown does not mean discard' docs/transaction-intelligence.md
+          grep -q 'Modules are infrastructure capabilities, not subscription plans' docs/transaction-intelligence.md
+          grep -q 'Same infrastructure, different observed facts.' docs/transaction-intelligence.md
