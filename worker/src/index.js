@@ -84,10 +84,11 @@ export default {
       return new Response('Not found', { status: 404 });
     } catch (error) {
       console.error(error);
-      const status = error.status && Number(error.status) >= 400 && Number(error.status) < 600
+      const status = error?.status && Number(error.status) >= 400 && Number(error.status) < 600
         ? Number(error.status)
         : 500;
-      return json({ error: error.message || 'Internal error' }, status);
+      const message = status >= 500 ? 'Internal error' : (error?.message || 'Request failed');
+      return json({ error: message }, status);
     }
   },
 };
@@ -283,10 +284,18 @@ async function handleSimulation(request, env, txId) {
     await recordEvent(env, txId, 'PAYMENT_FAILED', 'SYSTEM', null, { simulation: true });
     await openException(env, txId, 'PAYMENT_FAILED', 'Development simulator payment failure.');
   } else if (action === 'OPEN_DISPUTE') {
-    await recordEvent(env, txId, 'DISPUTE_OPENED', 'SYSTEM', null, { simulation: true });
+    await recordEvent(env, txId, 'DISPUTE_OPENED', 'SYSTEM', null, {
+      simulation: true,
+      dispute_id: `dp_test_sim_${txId}`,
+      status: 'needs_response',
+    });
     await openException(env, txId, 'DISPUTE_OPENED', 'Development simulator dispute.');
   } else if (action === 'RESOLVE_DISPUTE') {
-    await recordEvent(env, txId, 'DISPUTE_CLOSED', 'SYSTEM', null, { simulation: true });
+    await recordEvent(env, txId, 'DISPUTE_CLOSED', 'SYSTEM', null, {
+      simulation: true,
+      dispute_id: `dp_test_sim_${txId}`,
+      status: 'won',
+    });
     await resolveException(env, txId, 'DISPUTE_OPENED', 'Development simulator closed dispute.');
   } else if (action === 'PAYOUT_FAILED') {
     await env.DB.prepare(`UPDATE transactions SET processor_payout_status = 'failed' WHERE id = ?`).bind(txId).run();
