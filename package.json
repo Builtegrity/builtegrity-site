@@ -1,0 +1,16 @@
+{
+  "name": "builtegrity-transaction-engine",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply BUILTEGRITY_DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply BUILTEGRITY_DB --remote",
+    "db:seed:local": "wrangler d1 execute BUILTEGRITY_DB --local --file=transaction-engine/seed-tx-0001.sql",
+    "db:seed:remote": "wrangler d1 execute BUILTEGRITY_DB --remote --file=transaction-engine/seed-tx-0001.sql"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
