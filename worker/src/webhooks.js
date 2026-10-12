@@ -53,6 +53,9 @@ export async function processStripeWebhook(env, event) {
       case 'application_fee.created':
         await handleApplicationFeeCreated(env, event);
         break;
+      case 'application_fee.refunded':
+        await handleApplicationFeeRefunded(env, event);
+        break;
       case 'charge.refunded':
         await handleChargeRefunded(env, event);
         break;
@@ -68,6 +71,9 @@ export async function processStripeWebhook(env, event) {
         break;
       case 'payout.failed':
         await handlePayoutFailed(env, event);
+        break;
+      case 'payout.canceled':
+        await handlePayoutCanceled(env, event);
         break;
       default:
         break;
@@ -295,6 +301,50 @@ async function handleApplicationFeeCreated(env, event) {
   await recomputeIntegrity(env, tx.id);
 }
 
+async function handleApplicationFeeRefunded(env, event) {
+  const fee = event.data.object;
+  const accountId = objectId(fee.account) || event.account || null;
+
+  const linked = fee.id
+    ? await env.DB.prepare(`SELECT id FROM transactions WHERE stripe_application_fee_id = ? LIMIT 1`).bind(fee.id).first()
+    : null;
+  let tx = linked ? await getTransaction(env, linked.id) : null;
+
+  if (!tx && fee.charge) {
+    const resolved = await findBuiltegrityTransactionForCharge(env, accountId, fee.charge);
+    tx = resolved?.tx || null;
+  }
+  if (!tx) return;
+  if (accountId) ensureTransactionAccount(tx, accountId);
+
+  const amount = Number(fee.amount || 0);
+  const amountRefunded = Number(fee.amount_refunded || 0);
+  const netCollected = Math.max(0, amount - amountRefunded);
+
+  await env.DB.prepare(`
+    UPDATE transactions
+       SET stripe_application_fee_id = COALESCE(stripe_application_fee_id, ?),
+           integrity_fee_collected_cents = ?,
+           updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+  `).bind(fee.id || null, netCollected, tx.id).run();
+
+  await recordEvent(env, tx.id, 'APPLICATION_FEE_REFUNDED', 'STRIPE', `${event.id}:fee_refund`, {
+    application_fee_id: fee.id || null,
+    amount,
+    amount_refunded: amountRefunded,
+    net_collected: netCollected,
+    fully_refunded: Boolean(fee.refunded),
+  }, stripeTime(event.created));
+
+  await openException(
+    env,
+    tx.id,
+    'APPLICATION_FEE_REFUNDED',
+    `Stripe reports ${amountRefunded} cent(s) of the application fee refunded. Refund-fee economics require explicit reconciliation before ACCOUNTED can be restored.`,
+  );
+}
+
 async function handleChargeRefunded(env, event) {
   const resolved = await findBuiltegrityTransactionForCharge(env, event.account || null, event.data.object);
   if (!resolved) return;
@@ -422,6 +472,7 @@ async function handlePayoutReady(env, event) {
         payout_id: payout.id,
       }, stripeTime(event.created));
       await resolveException(env, tx.id, 'PAYOUT_FAILED', 'Stripe later reported the payout paid.');
+      await resolveException(env, tx.id, 'PAYOUT_CANCELED', 'Stripe later reported the payout paid.');
       await resolveException(env, tx.id, 'EXPECTED_PAYOUT_NOT_FOUND', 'Transaction was reconciled to a Stripe payout.');
     }
 
@@ -430,6 +481,42 @@ async function handlePayoutReady(env, event) {
 }
 
 async function handlePayoutFailed(env, event) {
+  const payout = event.data.object;
+  const transactionIds = await transactionsForPayout(env, event);
+
+  for (const txId of transactionIds) {
+    await env.DB.prepare(`
+      UPDATE transactions
+         SET processor_payout_status = 'failed', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+    `).bind(txId).run();
+    await recordEvent(env, txId, 'PAYOUT_FAILED', 'STRIPE', `${event.id}:${txId}:failed`, {
+      payout_id: payout.id,
+      failure_code: payout.failure_code || null,
+      failure_message: payout.failure_message || null,
+    }, stripeTime(event.created));
+    await openException(env, txId, 'PAYOUT_FAILED', payout.failure_message || `Stripe payout ${payout.id} failed.`);
+  }
+}
+
+async function handlePayoutCanceled(env, event) {
+  const payout = event.data.object;
+  const transactionIds = await transactionsForPayout(env, event);
+
+  for (const txId of transactionIds) {
+    await env.DB.prepare(`
+      UPDATE transactions
+         SET processor_payout_status = 'canceled', updated_at = CURRENT_TIMESTAMP
+       WHERE id = ?
+    `).bind(txId).run();
+    await recordEvent(env, txId, 'PAYOUT_CANCELED', 'STRIPE', `${event.id}:${txId}:canceled`, {
+      payout_id: payout.id,
+    }, stripeTime(event.created));
+    await openException(env, txId, 'PAYOUT_CANCELED', `Stripe payout ${payout.id} was canceled and requires review.`);
+  }
+}
+
+async function transactionsForPayout(env, event) {
   const payout = event.data.object;
   const accountId = event.account;
   const transactionIds = new Set();
@@ -465,19 +552,7 @@ async function handlePayoutFailed(env, event) {
     }
   }
 
-  for (const txId of transactionIds) {
-    await env.DB.prepare(`
-      UPDATE transactions
-         SET processor_payout_status = 'failed', updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?
-    `).bind(txId).run();
-    await recordEvent(env, txId, 'PAYOUT_FAILED', 'STRIPE', `${event.id}:${txId}:failed`, {
-      payout_id: payout.id,
-      failure_code: payout.failure_code || null,
-      failure_message: payout.failure_message || null,
-    }, stripeTime(event.created));
-    await openException(env, txId, 'PAYOUT_FAILED', payout.failure_message || `Stripe payout ${payout.id} failed.`);
-  }
+  return transactionIds;
 }
 
 async function findBuiltegrityTransactionForCharge(env, accountId, chargeLike) {
