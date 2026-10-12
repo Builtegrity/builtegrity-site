@@ -1,5 +1,5 @@
 import core from './index.js';
-import { handleAuthRoute, requireOperator } from './auth.js';
+import { authProvider, handleAuthRoute, requireOperator } from './auth.js';
 import {
   buildStripeOAuthUrl,
   deauthorizeStripeAccount,
@@ -11,6 +11,10 @@ export default {
     try {
       const url = new URL(request.url);
       const path = url.pathname;
+
+      if (isAdminSurface(path) && !isAdminHost(url, env)) {
+        return new Response('Not found', { status: 404 });
+      }
 
       const authResponse = await handleAuthRoute(request, env);
       if (authResponse) return authResponse;
@@ -59,6 +63,18 @@ function isInternalApi(path) {
   return true;
 }
 
+function isAdminSurface(path) {
+  return path.startsWith('/console') ||
+    path.startsWith('/auth/') ||
+    isInternalApi(path);
+}
+
+function isAdminHost(url, env) {
+  const configured = String(env.ADMIN_HOSTNAME || '').trim().toLowerCase();
+  if (!configured) return env.DEV_MODE === 'true';
+  return url.hostname.toLowerCase() === configured;
+}
+
 async function forwardAuthenticatedToCore(request, env, ctx) {
   // The legacy core expects an internal header/token pair. Generate a unique pair
   // only in memory for this request so there is no browser-visible or persistent admin key.
@@ -75,6 +91,9 @@ async function requireOperatorOrRedirect(request, env, url) {
     return await requireOperator(request, env);
   } catch (error) {
     if (error.status !== 401) throw error;
+    if (authProvider(env) === 'CLOUDFLARE_ACCESS') {
+      return new Response('Cloudflare Access authentication required', { status: 403 });
+    }
     const login = new URL('/login/', url.origin);
     login.searchParams.set('return_to', `${url.pathname}${url.search}`);
     return Response.redirect(login.toString(), 302);
@@ -166,7 +185,7 @@ async function handleDisconnect(env, merchantId) {
 }
 
 function redirectToConsole(env, values) {
-  const base = String(env.APP_BASE_URL || 'http://localhost:8787').replace(/\/$/, '');
+  const base = String(env.ADMIN_BASE_URL || env.APP_BASE_URL || 'http://localhost:8787').replace(/\/$/, '');
   const target = new URL(`${base}/console/`);
   for (const [key, value] of Object.entries(values)) {
     if (value !== undefined && value !== null) target.searchParams.set(key, String(value));
