@@ -17,9 +17,7 @@ export async function stripeRequest(env, path, options = {}) {
   const secret = requireSecret(env, 'STRIPE_SECRET_KEY');
   const method = options.method || 'GET';
   const accountId = options.accountId || null;
-  const headers = {
-    Authorization: `Bearer ${secret}`,
-  };
+  const headers = { Authorization: `Bearer ${secret}` };
   if (accountId) headers['Stripe-Account'] = accountId;
 
   let url = `https://api.stripe.com${path}`;
@@ -56,12 +54,16 @@ export async function createTrackedCheckout(env, tx) {
   if (Number(tx.consent_accepted) !== 1) {
     throw new Error('Customer consent must be recorded before Stripe Checkout is created');
   }
+  if (!tx.payment_access_token) {
+    throw new Error(`Transaction ${tx.id} does not have a customer payment access token`);
+  }
 
   const baseUrl = env.APP_BASE_URL || 'http://localhost:8787';
+  const publicToken = encodeURIComponent(tx.payment_access_token);
   const form = {
     mode: 'payment',
-    success_url: `${baseUrl}/pay/success/?tx=${encodeURIComponent(tx.id)}`,
-    cancel_url: `${baseUrl}/pay/?tx=${encodeURIComponent(tx.id)}`,
+    success_url: `${baseUrl}/pay/success/?token=${publicToken}`,
+    cancel_url: `${baseUrl}/pay/?token=${publicToken}`,
     client_reference_id: tx.id,
     customer_email: tx.customer_email || undefined,
     'metadata[builtegrity_tx_id]': tx.id,
@@ -112,10 +114,7 @@ export async function listPayoutBalanceTransactions(env, accountId, payoutId) {
   do {
     const params = { payout: payoutId, limit: 100 };
     if (startingAfter) params.starting_after = startingAfter;
-    const page = await stripeRequest(env, '/v1/balance_transactions', {
-      accountId,
-      params,
-    });
+    const page = await stripeRequest(env, '/v1/balance_transactions', { accountId, params });
     all.push(...(page.data || []));
     startingAfter = page.has_more && page.data?.length ? page.data[page.data.length - 1].id : null;
   } while (startingAfter);
