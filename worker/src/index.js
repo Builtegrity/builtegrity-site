@@ -16,6 +16,7 @@ import { processStripeWebhook } from './webhooks.js';
 import { createTransactionRequest } from './transaction-create.js';
 import { verifyMerchantStripe } from './merchant-stripe.js';
 import { publicTurnstileConfig, requireTurnstile } from './turnstile.js';
+import { transactionStageProblem } from './readiness.js';
 
 export default {
   async fetch(request, env) {
@@ -132,6 +133,9 @@ async function handlePublicPayment(env, token) {
 }
 
 async function handleConsent(request, env, token) {
+  const stageProblem = transactionStageProblem(env);
+  if (stageProblem) return json({ error: stageProblem }, 503);
+
   const tx = await findByPaymentToken(env, token);
   if (!tx) return json({ error: 'Payment link not found' }, 404);
   if (isExpired(tx.payment_access_expires_at)) return json({ error: 'Payment link expired' }, 410);
@@ -170,6 +174,9 @@ async function handleConsent(request, env, token) {
 }
 
 async function handleCheckout(env, token) {
+  const stageProblem = transactionStageProblem(env);
+  if (stageProblem) return json({ error: stageProblem }, 503);
+
   let tx = await findByPaymentToken(env, token);
   if (!tx) return json({ error: 'Payment link not found' }, 404);
   if (isExpired(tx.payment_access_expires_at)) return json({ error: 'Payment link expired' }, 410);
@@ -319,7 +326,7 @@ function v1MerchantProblem(merchant, env) {
   const processor = String(merchant.merchant_processor || merchant.processor || '').toUpperCase();
   const integrationMode = String(merchant.merchant_integration_mode || merchant.integration_mode || '').toUpperCase();
   const accountId = String(merchant.processor_account_id || '');
-  const testStage = env.DEV_MODE === 'true' || String(env.WATCHDOG_STAGE || '').toUpperCase() === 'TEST';
+  const testStage = String(env.WATCHDOG_STAGE || '').toUpperCase() === 'TEST';
 
   if (status === 'PAUSED' || status === 'DISCONNECTED') return `Merchant is ${status.toLowerCase()} and cannot create protected payments`;
   if (status !== 'ACTIVE' && !(testStage && status === 'TEST')) return 'Merchant is not enabled for Builtegrity payments';
