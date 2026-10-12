@@ -1,11 +1,7 @@
 const box = document.querySelector('#status');
+const actions = document.querySelector('#record-actions');
+const pdfLink = document.querySelector('#pdf-link');
 const token = new URLSearchParams(location.search).get('token');
-const recordActions = document.querySelector('#record-actions');
-const downloadRecord = document.querySelector('#download-record');
-
-if (token && downloadRecord) {
-  downloadRecord.href = `/api/records/${encodeURIComponent(token)}/pdf`;
-}
 
 async function check() {
   if (!token) {
@@ -20,7 +16,8 @@ async function check() {
 
     if (payment.payment_status === 'succeeded' || ['PAID','PAYOUT_PENDING','COMPLETE'].includes(payment.lifecycle_status)) {
       box.innerHTML = `<strong>Stripe payment confirmed.</strong><br>The transaction record is now ${escapeHtml(payment.lifecycle_status)}. Payout tracking continues automatically in the background.`;
-      if (recordActions) recordActions.hidden = false;
+      pdfLink.href = `/api/records/${encodeURIComponent(token)}/pdf`;
+      actions.hidden = false;
       return;
     }
 

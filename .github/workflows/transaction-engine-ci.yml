@@ -21,11 +21,14 @@ jobs:
           node --check worker/src/clerk-auth.js
           node --check worker/src/cloudflare-access.js
           node --check worker/src/auth.js
+          node --check worker/src/authorization.js
           node --check worker/src/db.js
           node --check worker/src/stripe.js
           node --check worker/src/stripe-oauth.js
           node --check worker/src/webhooks.js
           node --check worker/src/watchdogs.js
+          node --check worker/src/pdf.js
+          node --check worker/src/records.js
           node --check worker/src/index.js
           node --check worker/src/runtime.js
           node --check public/login/app.js
@@ -48,9 +51,21 @@ jobs:
           grep -q 'CLERK_ADMIN_USER_IDS' wrangler.toml.example
           grep -q 'CLERK_AUTHORIZED_PARTIES' wrangler.toml.example
           grep -q 'RSASSA-PKCS1-v1_5' worker/src/clerk-auth.js
+          grep -q 'merchant_access' worker/src/authorization.js
+          grep -q 'partner_access' worker/src/authorization.js
           grep -q 'STRIPE_CONNECT_CLIENT_ID' wrangler.toml.example
           grep -q 'TURNSTILE_SITE_KEY' wrangler.toml.example
           grep -q 'RESEND_API_KEY' .dev.vars.example
+
+      - name: Guard merchant-paid economics and automated records
+        run: |
+          grep -q "fee_payer = 'MERCHANT'" migrations/0008_economics_records_pdf.sql
+          grep -q 'STRIPE_APPLICATION_FEE' migrations/0009_economic_invariants.sql
+          grep -q 'transaction_economics_ledger' migrations/0008_economics_records_pdf.sql
+          grep -q 'transaction_pdf_requests' migrations/0008_economics_records_pdf.sql
+          grep -q 'TRANSACTION_RECORDS' wrangler.toml.example
+          grep -q 'serveTransactionPdf' worker/src/pdf.js
+          grep -q 'CUSTOMER_TOKEN' worker/src/records.js
 
       - name: Guard watchdog coverage
         run: |
@@ -74,6 +89,8 @@ jobs:
           sqlite3 /tmp/builtegrity.db < migrations/0005_merchant_runtime_timestamp.sql
           sqlite3 /tmp/builtegrity.db < migrations/0006_stripe_oauth_states.sql
           sqlite3 /tmp/builtegrity.db < migrations/0007_watchdogs.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0008_economics_records_pdf.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0009_economic_invariants.sql
           sqlite3 /tmp/builtegrity.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify TX-0001 hierarchy and state
@@ -84,6 +101,27 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM purchases WHERE id='PUR-0001' AND customer_id='CUST-0001';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transactions WHERE id='TX-0001' AND lifecycle_status='CREATED' AND integrity_status='INCOMPLETE' AND payment_access_token='test-tx-0001-token';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='TX_CREATED';")" = "1"
+
+      - name: Verify customer records and unit economics
+        run: |
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT fee_payer FROM transactions WHERE id='TX-0001';")" = "MERCHANT"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT record_access_token FROM transactions WHERE id='TX-0001';")" = "test-tx-0001-token"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT estimated_revenue_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "250000"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT estimated_cost_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "2594"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT estimated_contribution_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "247406"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_pdf_requests WHERE transaction_id='TX-0001';")" = "0"
+
+      - name: Verify merchant-paid fee invariants fail closed
+        run: |
+          if sqlite3 /tmp/builtegrity.db "UPDATE transactions SET fee_payer='CONSUMER' WHERE id='TX-0001';" 2>/tmp/fee-payer-error.txt; then
+            echo "Expected fee_payer CHECK constraint to reject consumer-paid fee"
+            exit 1
+          fi
+          if sqlite3 /tmp/builtegrity.db "UPDATE transactions SET fee_collection_method='AUTOMATIC_USAGE' WHERE id='TX-0001';" 2>/tmp/fee-method-error.txt; then
+            echo "Expected Stripe Connect fee invariant to reject non-application-fee collection"
+            exit 1
+          fi
+          grep -q 'STRIPE_CONNECT transactions must collect' /tmp/fee-method-error.txt
 
       - name: Verify event history is append-only
         run: |
