@@ -10,7 +10,7 @@ Builtegrity does not process card data itself. Stripe remains the processor. The
 
 - GitHub — canonical source for code, migrations, CI, technical docs, and infrastructure configuration.
 - Cloudflare Workers + Static Assets — frontend/site hosting, API runtime, Stripe webhooks, and transaction processing logic. Pages is not a separate dependency.
-- Cloudflare D1 — operational relational database for partners, merchants, users/relationships, customers, purchases, transactions, events, exceptions, and processor references.
+- Cloudflare D1 — operational relational database for partners, merchants, users/relationships, customers, purchases, transactions, events, exceptions, processor references, and watchdog state.
 - Stripe Connect — Processor Adapter #1, merchant connection, Checkout/direct-charge flow, application fees, processor financial records, and payout data.
 - Clerk — primary application identity/session layer for owner/staff and future merchant users. Builtegrity retains authorization/tenant relationships in its own database.
 - Resend — transactional email delivery such as payment confirmations, exception alerts, and merchant notifications.
@@ -50,9 +50,26 @@ The current implementation targets:
 - Stripe Connect direct charges for compatible existing Stripe merchants
 - Stripe-hosted Checkout
 - Connect application fees as the first fee-collection rail
-- Resend/Turnstile configuration hooks for the next integration pass
+- Resend/Turnstile configuration hooks
+- scheduled runtime watchdogs with self-healing transaction checks
+- independent scheduled GitHub CI validation
 
 The code also keeps `integration_mode`, authentication adapters, and `fee_collection_method` separate so Stripe Apps, partner APIs, Square, replacement identity providers, or other future adapters do not require rebuilding the transaction model.
+
+## Watchdog model
+
+Builtegrity is designed for exception-only operations:
+
+- lightweight Worker watchdog every 15 minutes;
+- daily deep dependency probe;
+- D1-backed deduplicated alert ledger and run history;
+- safe automatic repair of integrity state and known exception records;
+- Resend escalation only for ERROR/CRITICAL findings, with 24-hour reminder suppression;
+- `/api/health/ready` readiness endpoint for external checks;
+- authenticated `/api/watchdogs/status` and `/api/watchdogs/run` operator endpoints;
+- GitHub CI on every change plus every six hours as an independent source/schema watchdog.
+
+See `docs/watchdog-operations.md` for operating rules and failure boundaries.
 
 ## TX-0001
 
@@ -72,10 +89,14 @@ It starts at `CREATED / INCOMPLETE` and can be exercised through the development
 - `/login/` — application sign-in handoff to Clerk
 - `/console/` — internal transaction console
 - `/pay/?token=...` — customer transaction/terms page
+- `/api/health/ready` — public readiness endpoint with no secret values
+- `/api/watchdogs/status` — authenticated watchdog status/alert history
+- `/api/watchdogs/run` — authenticated manual deep watchdog run
 - `/api/webhooks/stripe` — signed Stripe webhook endpoint
 - `migrations/` — D1 migrations
 - `transaction-engine/seed-tx-0001.sql` — fake proving transaction
 - `docs/transaction-engine-runbook.md` — setup and operating runbook
+- `docs/watchdog-operations.md` — exception-only operations/watchdog rules
 - `docs/production-readiness-gate.md` — hard gate before any live payment
 - `docs/provider-independence.md` — provider/ownership boundary
 
