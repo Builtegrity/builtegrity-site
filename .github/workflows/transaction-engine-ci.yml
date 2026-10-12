@@ -16,6 +16,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Check JavaScript syntax
         run: |
           node --check worker/src/clerk-auth.js
@@ -33,6 +37,10 @@ jobs:
           node --check public/console/stripe-controls.js
           node --check public/pay/app.js
           node --check public/pay/success/app.js
+          node --check tests/stripe-runtime.test.mjs
+
+      - name: Run dependency-free runtime regression tests
+        run: npm test
 
       - name: Guard V1 auth and provider independence
         run: |
@@ -51,6 +59,15 @@ jobs:
           grep -q 'STRIPE_CONNECT_CLIENT_ID' wrangler.toml.example
           grep -q 'TURNSTILE_SITE_KEY' wrangler.toml.example
           grep -q 'RESEND_API_KEY' .dev.vars.example
+
+      - name: Guard Stripe runtime integrity coverage
+        run: |
+          grep -q 'Idempotency-Key' worker/src/stripe.js
+          grep -q 'retrieveCheckoutSession' worker/src/stripe.js
+          grep -q "checkout.session.expired" worker/src/webhooks.js
+          grep -q 'findBuiltegrityTransactionForCharge' worker/src/webhooks.js
+          grep -q 'terms_integrity' worker/src/db.js
+          grep -q 'payout_net_integrity' worker/src/db.js
 
       - name: Guard watchdog coverage
         run: |
@@ -74,6 +91,7 @@ jobs:
           sqlite3 /tmp/builtegrity.db < migrations/0005_merchant_runtime_timestamp.sql
           sqlite3 /tmp/builtegrity.db < migrations/0006_stripe_oauth_states.sql
           sqlite3 /tmp/builtegrity.db < migrations/0007_watchdogs.sql
+          sqlite3 /tmp/builtegrity.db < migrations/0008_checkout_integrity.sql
           sqlite3 /tmp/builtegrity.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify TX-0001 hierarchy and state
@@ -84,6 +102,16 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM purchases WHERE id='PUR-0001' AND customer_id='CUST-0001';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transactions WHERE id='TX-0001' AND lifecycle_status='CREATED' AND integrity_status='INCOMPLETE' AND payment_access_token='test-tx-0001-token';")" = "1"
           test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM transaction_events WHERE transaction_id='TX-0001' AND event_type='TX_CREATED';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE name='stripe_checkout_expires_at';")" = "1"
+
+      - name: Verify Stripe object identifiers cannot cross transaction records
+        run: |
+          sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,stripe_charge_id) VALUES ('TX-0998','PUR-0001','MER-0001','CUST-0001','PAYMENT','first',100,'USD','terms','ch_unique_test');"
+          if sqlite3 /tmp/builtegrity.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_snapshot,stripe_charge_id) VALUES ('TX-0999','PUR-0001','MER-0001','CUST-0001','PAYMENT','second',100,'USD','terms','ch_unique_test');" 2>/tmp/unique-error.txt; then
+            echo "Expected duplicate Stripe charge ID to be rejected"
+            exit 1
+          fi
+          grep -qi "unique" /tmp/unique-error.txt
 
       - name: Verify event history is append-only
         run: |
