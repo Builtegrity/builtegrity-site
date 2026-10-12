@@ -53,6 +53,7 @@ async function findTransactionByRecordToken(env, token) {
       t.expected_payout_arrival,
       t.created_at,
       t.updated_at,
+      t.record_access_token,
       t.record_access_expires_at,
       p.merchant_reference,
       p.description AS purchase_description,
@@ -89,7 +90,7 @@ function publicRecord(tx) {
     expected_payout_arrival: tx.expected_payout_arrival,
     created_at: tx.created_at,
     updated_at: tx.updated_at,
-    pdf_path: `/api/records/${encodeURIComponent(tx.record_access_token || '')}/pdf`,
+    pdf_path: `/api/records/${encodeURIComponent(tx.record_access_token)}/pdf`,
   };
 }
 
