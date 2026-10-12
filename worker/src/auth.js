@@ -1,8 +1,12 @@
+import { authenticateCloudflareAccess } from './cloudflare-access.js';
+
 const COOKIE_NAME = 'builtegrity_session';
 const DEFAULT_TTL_SECONDS = 60 * 60 * 12;
 
 export async function handleAuthRoute(request, env) {
   const url = new URL(request.url);
+  const provider = authProvider(env);
+
   if (url.pathname === '/auth/session' && request.method === 'GET') {
     const principal = await authenticateOperator(request, env);
     return principal
@@ -11,7 +15,12 @@ export async function handleAuthRoute(request, env) {
   }
 
   if (url.pathname === '/auth/login' && request.method === 'POST') {
-    const provider = authProvider(env);
+    if (provider === 'CLOUDFLARE_ACCESS') {
+      return json({
+        error: 'Cloudflare Access handles interactive sign-in before Builtegrity receives the request.',
+      }, 409);
+    }
+
     if (provider !== 'OWNER_SESSION') {
       return json({ error: `Interactive login is unavailable for auth provider ${provider}` }, 409);
     }
@@ -47,6 +56,13 @@ export async function handleAuthRoute(request, env) {
   }
 
   if (url.pathname === '/auth/logout' && request.method === 'POST') {
+    if (provider === 'CLOUDFLARE_ACCESS') {
+      return json({
+        authenticated: false,
+        logout_url: `${url.origin}/cdn-cgi/access/logout`,
+      });
+    }
+
     const secure = url.protocol === 'https:' ? '; Secure' : '';
     return new Response(JSON.stringify({ authenticated: false }), {
       status: 200,
@@ -64,6 +80,10 @@ export async function handleAuthRoute(request, env) {
 export async function authenticateOperator(request, env) {
   const provider = authProvider(env);
 
+  if (provider === 'CLOUDFLARE_ACCESS') {
+    return authenticateCloudflareAccess(request, env);
+  }
+
   if (provider === 'OWNER_SESSION') {
     if (!env.OWNER_SESSION_SECRET) return null;
     const token = readCookie(request.headers.get('cookie') || '', COOKIE_NAME);
@@ -75,10 +95,9 @@ export async function authenticateOperator(request, env) {
 
   // Explicit development escape hatch. Never use this value in production.
   if (provider === 'DEV_BYPASS' && env.DEV_MODE === 'true') {
-    return { sub: 'developer', role: 'OWNER', provider: 'DEV_BYPASS' };
+    return { sub: 'developer', role: 'OWNER', provider: 'DEV_BYPASS', expires_at: null };
   }
 
-  // Future providers (OIDC, Cloudflare Access, enterprise SSO, etc.) plug in here.
   // Unsupported providers fail closed rather than silently weakening access control.
   return null;
 }
@@ -92,7 +111,7 @@ export async function requireOperator(request, env) {
 }
 
 export function authProvider(env) {
-  return String(env.AUTH_PROVIDER || 'OWNER_SESSION').trim().toUpperCase();
+  return String(env.AUTH_PROVIDER || 'CLOUDFLARE_ACCESS').trim().toUpperCase();
 }
 
 async function signSession(payload, secret) {
@@ -153,6 +172,7 @@ function base64UrlDecode(value) {
 function publicPrincipal(payload) {
   return {
     sub: payload.sub,
+    email: payload.email || null,
     role: payload.role,
     provider: payload.provider,
     expires_at: payload.exp ? new Date(Number(payload.exp) * 1000).toISOString() : null,
