@@ -12,6 +12,9 @@ CLERK_JWT_KEY=-----BEGIN PUBLIC KEY-----\nREPLACE_ME\n-----END PUBLIC KEY-----
 
 # Resend
 RESEND_API_KEY=re_REPLACE_ME
+# Created with the production Resend webhook after the Worker endpoint is deployed.
+# Used to verify svix-id / svix-timestamp / svix-signature on statement delivery events.
+RESEND_WEBHOOK_SECRET=whsec_REPLACE_ME
 
 # Cloudflare Turnstile
 TURNSTILE_SECRET_KEY=REPLACE_ME
