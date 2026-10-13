@@ -40,6 +40,13 @@ import {
   loadMonthlyStatementPdf,
   runMonthlyStatementPipeline,
 } from './monthly-statements.js';
+import { getMerchantTaxProfile, updateMerchantTaxProfile } from './merchant-tax.js';
+import { getTaxDocumentStatus, runTaxDocumentPipeline } from './tax-document-pipeline.js';
+import { getBuiltegrityTaxComplianceStatus, updateBuiltegrityTaxProfile } from './company-tax-profile.js';
+import {
+  generateBuiltegrityTaxWorkpaper,
+  runBuiltegrityTaxWorkpaperPipeline,
+} from './company-tax-workpapers.js';
 
 const FINANCIAL_DECISION_MAX_AGE_MINUTES = 30;
 
@@ -120,6 +127,16 @@ export default {
         return json(await confirmComponentRule(env, merchantRuleMatch[1], merchantRuleMatch[2], body.component_type_code));
       }
 
+      const merchantTaxMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/tax-profile$/);
+      if (merchantTaxMatch && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getMerchantTaxProfile(env, merchantTaxMatch[1]));
+      }
+      if (merchantTaxMatch && request.method === 'POST') {
+        await requireOperator(request, env);
+        return json(await updateMerchantTaxProfile(env, merchantTaxMatch[1], await readJson(request)));
+      }
+
       const graphMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)\/graph$/);
       if (graphMatch && request.method === 'GET') {
         await requireOperator(request, env);
@@ -178,6 +195,31 @@ export default {
             'x-content-type-options': 'nosniff',
           },
         });
+      }
+
+      if (path === '/api/tax/documents' && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getTaxDocumentStatus(env, { limit: url.searchParams.get('limit') }));
+      }
+      if (path === '/api/tax/documents/reconcile' && request.method === 'POST') {
+        await requireOperator(request, env);
+        return json(await runTaxDocumentPipeline(env));
+      }
+      if (path === '/api/tax/company/status' && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getBuiltegrityTaxComplianceStatus(env, { taxYear: url.searchParams.get('tax_year') }));
+      }
+      if (path === '/api/tax/company/profile' && request.method === 'POST') {
+        const principal = await requireOperator(request, env);
+        return json(await updateBuiltegrityTaxProfile(env, await readJson(request), principal));
+      }
+      if (path === '/api/tax/company/workpapers/reconcile' && request.method === 'POST') {
+        await requireOperator(request, env);
+        return json(await runBuiltegrityTaxWorkpaperPipeline(env));
+      }
+      if (path === '/api/tax/company/workpapers/generate' && request.method === 'POST') {
+        await requireOperator(request, env);
+        return json(await generateBuiltegrityTaxWorkpaper(env, await readJson(request)), 201);
       }
 
       if (path === '/api/cases/metrics' && request.method === 'GET') {
@@ -250,9 +292,11 @@ export default {
         requireSameOriginBrowserRequest(request, url);
         const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
         const statements = await runMonthlyStatementPipeline(env);
+        const taxDocuments = await runTaxDocumentPipeline(env);
+        const taxWorkpapers = await runBuiltegrityTaxWorkpaperPipeline(env);
         const watchdog = await runWatchdogs(env, { kind: 'MANUAL', trigger: 'operator' });
         const routing = await syncInternalCasesFromWatchdogs(env);
-        return json({ ...watchdog, financial_safety: financial, monthly_statements: statements, case_routing: routing });
+        return json({ ...watchdog, financial_safety: financial, monthly_statements: statements, tax_documents: taxDocuments, tax_workpapers: taxWorkpapers, case_routing: routing });
       }
 
       if (path.startsWith('/console')) {
@@ -290,16 +334,20 @@ export default {
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const statements = await runMonthlyStatementPipeline(env);
+    const taxDocuments = await runTaxDocumentPipeline(env);
+    const taxWorkpapers = await runBuiltegrityTaxWorkpaperPipeline(env);
     const result = await runWatchdogs(env, { kind, trigger: controller.cron || 'cron' });
     const routing = await syncInternalCasesFromWatchdogs(env);
     console.log('Builtegrity watchdog run', {
       ...result,
       financial_safety: financial,
       monthly_statements: statements,
+      tax_documents: taxDocuments,
+      tax_workpapers: taxWorkpapers,
       case_routing: routing,
     });
-    if (result.status === 'FAIL' || financial.state === 'RED' || statements.generated.failed > 0 || statements.delivered.failed > 0) {
-      throw new Error(`Builtegrity safety monitor failed: watchdog_critical=${result.critical}, financial_state=${financial.state}, statement_generation_failures=${statements.generated.failed}, statement_delivery_failures=${statements.delivered.failed}`);
+    if (result.status === 'FAIL' || financial.state === 'RED' || statements.generated.failed > 0 || statements.delivered.failed > 0 || taxDocuments.delivered.failed > 0) {
+      throw new Error(`Builtegrity safety monitor failed: watchdog_critical=${result.critical}, financial_state=${financial.state}, statement_generation_failures=${statements.generated.failed}, statement_delivery_failures=${statements.delivered.failed}, tax_document_delivery_failures=${taxDocuments.delivered.failed}`);
     }
   },
 };
