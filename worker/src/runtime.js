@@ -30,11 +30,13 @@ import {
   updateMerchantTransactionPreferences,
 } from './transaction-intelligence.js';
 import {
-  evaluateFinancialSafety,
   getFinancialSafetyStatus,
   recordFinancialModelReview,
   recordFinancialPosition,
 } from './financial-safety.js';
+import { monitorFinancialSafety, syncFinancialSafetyAlerts } from './financial-safety-monitor.js';
+
+const FINANCIAL_DECISION_MAX_AGE_MINUTES = 30;
 
 export default {
   async fetch(request, env, ctx) {
@@ -175,10 +177,11 @@ export default {
         const executed = await executeInternalCaseAction(env, caseActionMatch[1], caseActionMatch[2], principal, body);
 
         // Every operator action is verified by the machine; humans never decide that a technical alert is cleared.
+        const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
         const watchdog = await runWatchdogs(env, { kind: 'FAST', trigger: `case:${caseActionMatch[1]}:${caseActionMatch[2]}` });
         const routing = await syncInternalCasesFromWatchdogs(env);
         const verified = await verifyInternalCase(env, caseActionMatch[1]);
-        return json({ executed, watchdog, routing, case: verified });
+        return json({ executed, financial_safety: financial, watchdog, routing, case: verified });
       }
 
       if (path === '/api/finance/status' && request.method === 'GET') {
@@ -188,17 +191,21 @@ export default {
 
       if (path === '/api/finance/snapshot' && request.method === 'POST') {
         const principal = await requireOperator(request, env);
-        return json(await recordFinancialPosition(env, await readJson(request), principal), 201);
+        const result = await recordFinancialPosition(env, await readJson(request), principal);
+        await syncFinancialSafetyAlerts(env, result.safety);
+        return json(result, 201);
       }
 
       if (path === '/api/finance/model-review' && request.method === 'POST') {
         const principal = await requireOperator(request, env);
-        return json(await recordFinancialModelReview(env, await readJson(request), principal), 201);
+        const result = await recordFinancialModelReview(env, await readJson(request), principal);
+        await syncFinancialSafetyAlerts(env, result.safety);
+        return json(result, 201);
       }
 
       if (path === '/api/finance/evaluate' && request.method === 'POST') {
         await requireOperator(request, env);
-        return json(await evaluateFinancialSafety(env, { refreshProcessorBalance: true }));
+        return json(await monitorFinancialSafety(env, { refreshProcessorBalance: true }));
       }
 
       if (path === '/api/watchdogs/status' && request.method === 'GET') {
@@ -209,9 +216,10 @@ export default {
       if (path === '/api/watchdogs/run' && request.method === 'POST') {
         await requireOperator(request, env);
         requireSameOriginBrowserRequest(request, url);
+        const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
         const watchdog = await runWatchdogs(env, { kind: 'MANUAL', trigger: 'operator' });
         const routing = await syncInternalCasesFromWatchdogs(env);
-        return json({ ...watchdog, case_routing: routing });
+        return json({ ...watchdog, financial_safety: financial, case_routing: routing });
       }
 
       if (path.startsWith('/console')) {
@@ -247,11 +255,12 @@ export default {
 
   async scheduled(controller, env) {
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
+    const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const result = await runWatchdogs(env, { kind, trigger: controller.cron || 'cron' });
     const routing = await syncInternalCasesFromWatchdogs(env);
-    console.log('Builtegrity watchdog run', { ...result, case_routing: routing });
-    if (result.status === 'FAIL') {
-      throw new Error(`Builtegrity watchdog detected ${result.critical} critical alert(s)`);
+    console.log('Builtegrity watchdog run', { ...result, financial_safety: financial, case_routing: routing });
+    if (result.status === 'FAIL' || financial.state === 'RED') {
+      throw new Error(`Builtegrity safety monitor failed: watchdog_critical=${result.critical}, financial_state=${financial.state}`);
     }
   },
 };
@@ -505,12 +514,24 @@ async function requirePlatformControl(env, column, label) {
     throw error;
   }
 
+  if (mustHaveFinancialSafety && minutesAgo(financial.evaluated_at) > FINANCIAL_DECISION_MAX_AGE_MINUTES) {
+    const error = new Error(`${label} is paused because the financial safety decision is stale. The monitor must complete a fresh evaluation before activity resumes.`);
+    error.status = 503;
+    throw error;
+  }
+
   if (Number(financial.enforcement_active) === 1 && Number(financial.allowed) !== 1) {
     const reasons = parseReasonCodes(financial.reason_codes_json);
     const error = new Error(`${label} is paused by Builtegrity financial safety${reasons.length ? `: ${reasons.join(', ')}` : ''}`);
     error.status = 503;
     throw error;
   }
+}
+
+function minutesAgo(value) {
+  const time = Date.parse(value || '');
+  if (!Number.isFinite(time)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (Date.now() - time) / 60000);
 }
 
 function parseReasonCodes(value) {
