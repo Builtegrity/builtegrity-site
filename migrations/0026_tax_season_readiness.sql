@@ -59,44 +59,157 @@ ALTER TABLE transactions ADD COLUMN processor_fee_source TEXT
   CHECK (processor_fee_source IS NULL OR processor_fee_source IN ('FEE_DETAILS','BALANCE_TOTAL_UNVERIFIED'));
 ALTER TABLE transactions ADD COLUMN tax_data_reconciled_at TEXT;
 
+-- Gross application-fee truth is immutable evidence that the fee existed at the protected-payment moment.
+-- integrity_fee_collected_cents is current retained cash and may fall after an application-fee refund.
+ALTER TABLE transactions ADD COLUMN application_fee_gross_confirmed_cents INTEGER NOT NULL DEFAULT 0
+  CHECK (application_fee_gross_confirmed_cents >= 0);
+
+UPDATE transactions
+SET application_fee_gross_confirmed_cents = CASE
+  WHEN record_classification = 'PROTECTED' THEN bg_fee_earned_cents
+  ELSE 0
+END;
+
 CREATE INDEX IF NOT EXISTS idx_transactions_merchant_available_on
   ON transactions(merchant_id, stripe_available_on);
 
--- PROTECTED is historical truth: the transaction was protected at the successful-payment moment.
--- A later refund or application-fee refund must not erase that fact or be blocked by the original confirmation rule.
+CREATE TRIGGER IF NOT EXISTS transactions_application_fee_gross_no_rewrite
+BEFORE UPDATE OF application_fee_gross_confirmed_cents ON transactions
+WHEN OLD.application_fee_gross_confirmed_cents > 0
+ AND NEW.application_fee_gross_confirmed_cents <> OLD.application_fee_gross_confirmed_cents
+BEGIN
+  SELECT RAISE(ABORT, 'gross application-fee confirmation is immutable');
+END;
+
+-- PROTECTED is historical truth: the transaction was validly protected when payment succeeded.
+-- A later refund or fee refund must not erase that fact. payment_at is the durable success evidence;
+-- payment_status is intentionally allowed to become refunded/partially_refunded later.
+DROP TRIGGER IF EXISTS transactions_protected_requires_successful_fee_insert;
 DROP TRIGGER IF EXISTS transactions_protected_requires_successful_fee_update;
-CREATE TRIGGER IF NOT EXISTS transactions_protected_requires_successful_fee_update
-BEFORE UPDATE OF record_classification, bg_fee_earned_cents, payment_status,
-                 stripe_application_fee_id, integrity_fee_collected_cents,
+DROP TRIGGER IF EXISTS transactions_confirm_protected_after_processor_truth;
+DROP TRIGGER IF EXISTS transactions_flag_fee_exception_after_processor_truth;
+
+CREATE TRIGGER IF NOT EXISTS transactions_protected_requires_confirmed_history_insert
+BEFORE INSERT ON transactions
+WHEN NEW.record_classification = 'PROTECTED'
+AND (
+  NEW.payment_at IS NULL
+  OR COALESCE(NEW.fee_collection_method, '') <> 'STRIPE_APPLICATION_FEE'
+  OR NEW.stripe_application_fee_id IS NULL
+  OR COALESCE(NEW.application_fee_gross_confirmed_cents, 0) <= 0
+  OR COALESCE(NEW.application_fee_gross_confirmed_cents, 0) <> COALESCE(NEW.integrity_fee_earned_cents, 0)
+  OR COALESCE(NEW.bg_fee_earned_cents, 0) <> COALESCE(NEW.application_fee_gross_confirmed_cents, 0)
+)
+BEGIN
+  SELECT RAISE(ABORT, 'PROTECTED requires successful-payment history and exact gross application-fee confirmation');
+END;
+
+CREATE TRIGGER IF NOT EXISTS transactions_protected_requires_confirmed_history_update
+BEFORE UPDATE OF record_classification, bg_fee_earned_cents, payment_at,
+                 stripe_application_fee_id, application_fee_gross_confirmed_cents,
                  integrity_fee_earned_cents, protection_confirmed_at ON transactions
 WHEN NEW.record_classification = 'PROTECTED'
  AND OLD.record_classification <> 'PROTECTED'
  AND (
-   COALESCE(NEW.payment_status, '') <> 'succeeded'
+   NEW.payment_at IS NULL
    OR COALESCE(NEW.fee_collection_method, '') <> 'STRIPE_APPLICATION_FEE'
    OR NEW.stripe_application_fee_id IS NULL
-   OR COALESCE(NEW.integrity_fee_collected_cents, 0) <= 0
-   OR COALESCE(NEW.integrity_fee_collected_cents, 0) <> COALESCE(NEW.integrity_fee_earned_cents, 0)
-   OR COALESCE(NEW.bg_fee_earned_cents, 0) <> COALESCE(NEW.integrity_fee_collected_cents, 0)
+   OR COALESCE(NEW.application_fee_gross_confirmed_cents, 0) <= 0
+   OR COALESCE(NEW.application_fee_gross_confirmed_cents, 0) <> COALESCE(NEW.integrity_fee_earned_cents, 0)
+   OR COALESCE(NEW.bg_fee_earned_cents, 0) <> COALESCE(NEW.application_fee_gross_confirmed_cents, 0)
  )
 BEGIN
-  SELECT RAISE(ABORT, 'PROTECTED transition requires succeeded payment and exact Builtegrity application-fee confirmation');
+  SELECT RAISE(ABORT, 'PROTECTED transition requires successful-payment history and exact gross application-fee confirmation');
 END;
 
 -- Once protection has been confirmed, preserve its gross historical evidence.
--- Current payment status and current collected-fee cash may change later because refunds are real lifecycle events.
+-- Current payment status and retained fee cash may change later because refunds are lifecycle events.
 CREATE TRIGGER IF NOT EXISTS transactions_protected_history_no_rewrite
 BEFORE UPDATE OF record_classification, bg_fee_earned_cents, protection_confirmed_at,
-                 stripe_application_fee_id ON transactions
+                 stripe_application_fee_id, application_fee_gross_confirmed_cents ON transactions
 WHEN OLD.record_classification = 'PROTECTED'
  AND (
    NEW.record_classification <> 'PROTECTED'
    OR NEW.bg_fee_earned_cents <> OLD.bg_fee_earned_cents
    OR COALESCE(NEW.protection_confirmed_at, '') <> COALESCE(OLD.protection_confirmed_at, '')
    OR COALESCE(NEW.stripe_application_fee_id, '') <> COALESCE(OLD.stripe_application_fee_id, '')
+   OR NEW.application_fee_gross_confirmed_cents <> OLD.application_fee_gross_confirmed_cents
  )
 BEGIN
   SELECT RAISE(ABORT, 'confirmed protection history is immutable; later cash changes must be adjustments');
+END;
+
+-- Webhook order is not authoritative. Protection can be confirmed once both durable truths exist,
+-- regardless of whether the payment event or application-fee event arrived first.
+CREATE TRIGGER IF NOT EXISTS transactions_confirm_protected_after_historical_truth
+AFTER UPDATE OF payment_at, stripe_application_fee_id, application_fee_gross_confirmed_cents,
+                integrity_fee_earned_cents ON transactions
+WHEN NEW.record_classification NOT IN ('OBSERVED','IMPORTED','PROTECTED')
+ AND NEW.payment_at IS NOT NULL
+ AND NEW.fee_collection_method = 'STRIPE_APPLICATION_FEE'
+ AND NEW.stripe_application_fee_id IS NOT NULL
+ AND NEW.application_fee_gross_confirmed_cents > 0
+ AND NEW.application_fee_gross_confirmed_cents = NEW.integrity_fee_earned_cents
+BEGIN
+  UPDATE transactions
+     SET record_classification = 'PROTECTED',
+         bg_fee_earned_cents = NEW.application_fee_gross_confirmed_cents,
+         protection_confirmed_at = COALESCE(protection_confirmed_at, CURRENT_TIMESTAMP),
+         protection_failure_reason = NULL,
+         updated_at = CURRENT_TIMESTAMP
+   WHERE id = NEW.id;
+END;
+
+-- If payment success is known but gross fee evidence is absent/mismatched, fail visibly.
+-- A later matching processor event can still promote FEE_EXCEPTION to PROTECTED.
+CREATE TRIGGER IF NOT EXISTS transactions_flag_fee_exception_after_historical_truth
+AFTER UPDATE OF payment_at, stripe_application_fee_id, application_fee_gross_confirmed_cents,
+                integrity_fee_earned_cents ON transactions
+WHEN NEW.record_classification NOT IN ('OBSERVED','IMPORTED','PROTECTED')
+ AND NEW.payment_at IS NOT NULL
+ AND NEW.fee_collection_method = 'STRIPE_APPLICATION_FEE'
+ AND NEW.integrity_fee_earned_cents > 0
+ AND (
+   NEW.stripe_application_fee_id IS NULL
+   OR NEW.application_fee_gross_confirmed_cents <= 0
+   OR NEW.application_fee_gross_confirmed_cents <> NEW.integrity_fee_earned_cents
+ )
+BEGIN
+  UPDATE transactions
+     SET record_classification = 'FEE_EXCEPTION',
+         bg_fee_earned_cents = 0,
+         protection_confirmed_at = NULL,
+         protection_failure_reason = CASE
+           WHEN NEW.stripe_application_fee_id IS NULL
+             THEN 'Successful payment has not yet exposed the required Builtegrity application fee.'
+           WHEN NEW.application_fee_gross_confirmed_cents <= 0
+             THEN 'Successful payment has an application fee reference but no confirmed gross fee amount.'
+           ELSE 'Confirmed gross Builtegrity application fee does not match the locked transaction fee.'
+         END,
+         updated_at = CURRENT_TIMESTAMP
+   WHERE id = NEW.id;
+END;
+
+-- If a refund webhook arrived before protection could be promoted, recognize gross revenue at protection
+-- and immediately mirror the already-known fee refund as an ACTUAL adjustment.
+CREATE TRIGGER IF NOT EXISTS transactions_record_fee_refund_present_at_protection
+AFTER UPDATE OF record_classification, bg_fee_earned_cents ON transactions
+WHEN NEW.record_classification = 'PROTECTED'
+ AND OLD.record_classification <> 'PROTECTED'
+ AND NEW.integrity_fee_collected_cents < NEW.bg_fee_earned_cents
+BEGIN
+  INSERT OR IGNORE INTO transaction_economics_ledger
+    (id, transaction_id, entry_kind, category, amount_micros, basis, source_ref, details_json)
+  VALUES (
+    'ECO_ACT_ADJ_PRE_' || NEW.id || '_' || NEW.integrity_fee_collected_cents,
+    NEW.id,
+    'ADJUSTMENT',
+    'INTEGRITY_FEE_ADJUSTMENT',
+    -((NEW.bg_fee_earned_cents - NEW.integrity_fee_collected_cents) * 10000),
+    'ACTUAL',
+    'fee-net-at-protection:' || NEW.integrity_fee_collected_cents,
+    '{"fee_payer":"MERCHANT","source":"processor_refund_before_protection_confirmation"}'
+  );
 END;
 
 -- Append-only merchant/Builtegrity cash adjustments. Amount is always a positive magnitude;
@@ -307,6 +420,7 @@ WHEN OLD.generated_at IS NOT NULL AND (
   OR NEW.tax_year <> OLD.tax_year
   OR NEW.currency <> OLD.currency
   OR NEW.summary_version <> OLD.summary_version
+  OR COALESCE(NEW.stripe_account_type_snapshot, '') <> COALESCE(OLD.stripe_account_type_snapshot, '')
   OR NEW.tax_form_responsibility_snapshot <> OLD.tax_form_responsibility_snapshot
   OR NEW.successful_charge_count <> OLD.successful_charge_count
   OR NEW.gross_payment_volume_cents <> OLD.gross_payment_volume_cents
