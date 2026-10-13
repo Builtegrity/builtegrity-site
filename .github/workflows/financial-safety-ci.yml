@@ -1,0 +1,165 @@
+name: Financial Safety CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - atlas/financial-safety
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check financial safety JavaScript syntax
+        run: |
+          node --check worker/src/financial-safety.js
+          node --check worker/src/financial-safety-monitor.js
+          node --check worker/src/stripe-account-events.js
+          node --check worker/src/index.js
+          node --check worker/src/runtime.js
+          node --check worker/src/case-router.js
+
+      - name: Build full D1 schema and seed TX-0001
+        run: |
+          rm -f /tmp/builtegrity-financial-safety.db
+          for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+            echo "Applying $file"
+            sqlite3 /tmp/builtegrity-financial-safety.db < "$file"
+          done
+          sqlite3 /tmp/builtegrity-financial-safety.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify conservative policy defaults
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT enforcement_stage FROM financial_safety_policy WHERE id='GLOBAL';")" = "PILOT"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT position_max_age_hours FROM financial_safety_policy WHERE id='GLOBAL';")" = "168"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT processor_balance_max_age_minutes FROM financial_safety_policy WHERE id='GLOBAL';")" = "120"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT model_review_max_age_days FROM financial_safety_policy WHERE id='GLOBAL';")" = "90"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT target_reserve_months || ':' || warning_reserve_months || ':' || red_reserve_months FROM financial_safety_policy WHERE id='GLOBAL';")" = "3:2:1"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT minimum_floor_margin_ppm FROM financial_safety_policy WHERE id='GLOBAL';")" = "500000"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT human_touch_orange_ppm || ':' || human_touch_red_ppm FROM financial_safety_policy WHERE id='GLOBAL';")" = "1500:2000"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT forbid_interest_bearing_debt || ':' || forbid_personal_guarantees FROM financial_safety_policy WHERE id='GLOBAL';")" = "1:1"
+
+      - name: Verify UNKNOWN is the fail-closed initial state
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT state FROM financial_safety_state WHERE id='GLOBAL';")" = "UNKNOWN"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT merchant_onboarding_allowed || ':' || transaction_creation_allowed || ':' || payment_creation_allowed FROM financial_safety_state WHERE id='GLOBAL';")" = "0:0:1"
+          grep -q 'UNKNOWN is not a softer version of GREEN' docs/financial-safety.md
+          grep -q 'FINANCIAL_DECISION_MAX_AGE_MINUTES = 30' worker/src/runtime.js
+          grep -q 'financial safety decision is stale' worker/src/runtime.js
+
+      - name: Verify financial evidence is append-only
+        run: |
+          sqlite3 /tmp/builtegrity-financial-safety.db "INSERT INTO financial_position_snapshots(id,source,currency,unrestricted_cash_micros,monthly_fixed_commitments_micros,attested_complete,actor_ref,captured_at) VALUES('FINPOS-CI','SYSTEM_TEST','USD',100000000,10000000,1,'ci',CURRENT_TIMESTAMP);"
+          if sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE financial_position_snapshots SET unrestricted_cash_micros=1 WHERE id='FINPOS-CI';" 2>/tmp/position-error.txt; then
+            echo "Expected financial position mutation to fail"
+            exit 1
+          fi
+          grep -q 'append-only' /tmp/position-error.txt
+
+          sqlite3 /tmp/builtegrity-financial-safety.db "INSERT INTO processor_platform_balance_snapshots(id,processor,currency,available_micros,pending_micros,connect_reserved_micros,captured_at) VALUES('PBAL-CI','STRIPE','USD',1000000,0,0,CURRENT_TIMESTAMP);"
+          if sqlite3 /tmp/builtegrity-financial-safety.db "DELETE FROM processor_platform_balance_snapshots WHERE id='PBAL-CI';" 2>/tmp/balance-error.txt; then
+            echo "Expected processor balance deletion to fail"
+            exit 1
+          fi
+          grep -q 'append-only' /tmp/balance-error.txt
+
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT COUNT(*) FROM financial_model_reviews WHERE id='FMR-2026-10-12-V1';")" = "1"
+          if sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE financial_model_reviews SET notes='mutated' WHERE id='FMR-2026-10-12-V1';" 2>/tmp/review-error.txt; then
+            echo "Expected model-review mutation to fail"
+            exit 1
+          fi
+          grep -q 'append-only' /tmp/review-error.txt
+
+      - name: Verify unsafe Stripe responsibility can never activate
+        run: |
+          sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET stripe_fee_payer='stripe',stripe_loss_liability='stripe',status='ACTIVE' WHERE id='MER-0001';"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT status FROM merchants WHERE id='MER-0001';")" = "ACTIVE"
+          if sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET stripe_fee_payer='application' WHERE id='MER-0001';" 2>/tmp/unsafe-fee-payer.txt; then
+            echo "Expected ACTIVE merchant to reject application-paid processing fees"
+            exit 1
+          fi
+          grep -q 'Stripe-paid fees' /tmp/unsafe-fee-payer.txt
+          if sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET stripe_loss_liability='application' WHERE id='MER-0001';" 2>/tmp/unsafe-loss.txt; then
+            echo "Expected ACTIVE merchant to reject application-owned payment losses"
+            exit 1
+          fi
+          grep -q 'payment-loss liability' /tmp/unsafe-loss.txt
+
+      - name: Verify transaction defense in depth
+        run: |
+          sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET status='TEST',stripe_fee_payer='application',stripe_loss_liability='stripe' WHERE id='MER-0001';"
+          sqlite3 /tmp/builtegrity-financial-safety.db "PRAGMA ignore_check_constraints=ON;"
+          # Application code is the first guard. The database trigger is the independent last line for an ACTIVE unsafe state.
+          sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET stripe_fee_payer='stripe',stripe_loss_liability='stripe',status='ACTIVE' WHERE id='MER-0001';"
+          sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET status='TEST' WHERE id='MER-0001';"
+          grep -q 'assertMerchantProcessorEconomicsSafe(merchant)' worker/src/index.js
+          test "$(grep -c 'assertMerchantProcessorEconomicsSafe' worker/src/index.js)" -ge "3"
+          grep -q "controller?.fees?.payer" worker/src/stripe-account-events.js
+          grep -q "controller?.losses?.payments" worker/src/stripe-account-events.js
+          grep -q "stripe_fee_payer = NULL" worker/src/runtime.js
+
+      - name: Unit test merchant processor economics assertion
+        run: |
+          node --input-type=module <<'NODE'
+          import { assertMerchantProcessorEconomicsSafe } from './worker/src/financial-safety.js';
+          const safe = { id:'MER-SAFE', integration_mode:'STRIPE_CONNECT', status:'ACTIVE', stripe_fee_payer:'stripe', stripe_loss_liability:'stripe' };
+          assertMerchantProcessorEconomicsSafe(safe);
+          const bad = [
+            { ...safe, stripe_fee_payer:'application' },
+            { ...safe, stripe_loss_liability:'application' },
+            { ...safe, stripe_fee_payer:null },
+            { ...safe, status:'TEST' },
+          ];
+          for (const merchant of bad) {
+            let failed = false;
+            try { assertMerchantProcessorEconomicsSafe(merchant); } catch { failed = true; }
+            if (!failed) throw new Error(`Unsafe merchant passed: ${JSON.stringify(merchant)}`);
+          }
+          NODE
+
+      - name: Verify unit economics remain above financial safety floor
+        run: |
+          contribution="$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT floor_planning_contribution_micros FROM pricing_floor_health;")"
+          margin="$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT floor_planning_margin_ppm FROM pricing_floor_health;")"
+          threshold="$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT minimum_floor_margin_ppm FROM financial_safety_policy WHERE id='GLOBAL';")"
+          test "$contribution" -gt 0
+          test "$margin" -ge "$threshold"
+
+      - name: Verify reserve and debt brakes are encoded
+        run: |
+          grep -q 'LESS_THAN_ONE_MONTH_SAFE_RESERVE' worker/src/financial-safety.js
+          grep -q 'LESS_THAN_TWO_MONTHS_SAFE_RESERVE' worker/src/financial-safety.js
+          grep -q 'BELOW_THREE_MONTH_RESERVE_TARGET' worker/src/financial-safety.js
+          grep -q 'INTEREST_BEARING_DEBT_PRESENT' worker/src/financial-safety.js
+          grep -q 'PERSONAL_GUARANTEE_EXPOSURE_PRESENT' worker/src/financial-safety.js
+          grep -q 'CRITICAL_OBLIGATION_OVERDUE' worker/src/financial-safety.js
+          grep -q 'PROCESSOR_PLATFORM_BALANCE_NEGATIVE' worker/src/financial-safety.js
+          grep -q 'UNIT_ECONOMICS_BELOW_SAFETY_FLOOR' worker/src/financial-safety.js
+
+      - name: Verify non-silent monitoring and case routing
+        run: |
+          grep -q "finance:solvency-warning" worker/src/financial-safety-monitor.js
+          grep -q "finance:solvency-brake" worker/src/financial-safety-monitor.js
+          grep -q "api.resend.com/emails" worker/src/financial-safety-monitor.js
+          grep -q "FINANCIAL_SOLVENCY_RISK" worker/src/financial-safety-monitor.js
+          grep -q "FINANCIAL_SOLVENCY_RISK" worker/src/case-router.js
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT COUNT(*) FROM internal_case_actions WHERE case_type_code='FINANCIAL_SOLVENCY_RISK' AND enabled=1 AND requires_human=1;")" = "3"
+
+      - name: Verify scheduled and manual paths re-evaluate financial safety
+        run: |
+          grep -q "monitorFinancialSafety(env, { refreshProcessorBalance: true })" worker/src/runtime.js
+          test "$(grep -c 'monitorFinancialSafety(env, { refreshProcessorBalance: true })' worker/src/runtime.js)" -ge "4"
+          grep -q "/api/finance/status" worker/src/runtime.js
+          grep -q "/api/finance/snapshot" worker/src/runtime.js
+          grep -q "/api/finance/model-review" worker/src/runtime.js
+          grep -q "/api/finance/evaluate" worker/src/runtime.js
+
+      - name: Verify no silent leverage policy
+        run: |
+          grep -q 'forbid_interest_bearing_debt INTEGER NOT NULL DEFAULT 1' migrations/0018_financial_safety_engine.sql
+          grep -q 'forbid_personal_guarantees INTEGER NOT NULL DEFAULT 1' migrations/0018_financial_safety_engine.sql
+          grep -q 'The default policy forbids interest-bearing debt and personal guarantees' docs/financial-safety.md
