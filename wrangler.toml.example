@@ -12,14 +12,15 @@ database_name = "builtegrity-v1"
 database_id = "REPLACE_AFTER_D1_CREATION"
 migrations_dir = "migrations"
 
-# Optional-but-recommended PDF cache. The PDF endpoint still generates on demand if this
-# binding is absent, so no human/manual document work is ever required.
+# Durable object storage for transaction PDFs and immutable monthly statement PDFs.
+# Monthly statements fail visibly and retry automatically if this binding is unavailable.
 [[r2_buckets]]
 binding = "TRANSACTION_RECORDS"
 bucket_name = "builtegrity-transaction-records"
 
-# One lightweight invariant/reconciliation sweep every 15 minutes, plus one daily
-# deep dependency probe. Cloudflare Cron Triggers run in UTC.
+# The 15-minute loop runs safety checks plus the idempotent monthly-statement reconciler.
+# The reconciler only creates the prior UTC calendar month's statement once, then retries
+# generation or delivery failures with bounded exponential backoff. Cloudflare cron is UTC.
 [triggers]
 crons = ["*/15 * * * *", "17 13 * * *"]
 
@@ -39,6 +40,9 @@ PDF_CACHE_HIT_COST_MICROS = "5"
 WATCHDOG_STAGE = "PREVIEW"
 ALERT_EMAIL_FROM = "Builtegrity Watchdog <alerts@builtegrity.com>"
 ALERT_EMAIL_TO = "REPLACE_OWNER_EMAIL"
+
+# Monthly merchant/partner statement delivery. This must be a verified Resend sender.
+STATEMENT_EMAIL_FROM = "Builtegrity Statements <statements@builtegrity.com>"
 
 # Primary application identity layer. Clerk proves identity only.
 # D1 merchant_access / partner_access own tenancy, roles, and permissions.
