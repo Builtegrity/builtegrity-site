@@ -144,6 +144,8 @@ async function handlePublicPayment(env, token) {
     refund_policy: tx.refund_policy_snapshot,
     cancellation_policy: tx.cancellation_policy_snapshot,
     consent_accepted: Boolean(tx.consent_accepted),
+    customer_jurisdiction_attested: Boolean(tx.customer_attested_at),
+    customer_attested_state_code: tx.customer_attested_state_code || null,
     lifecycle_status: tx.lifecycle_status,
     payment_status: tx.payment_status,
   });
@@ -155,21 +157,43 @@ async function handleConsent(request, env, token) {
   if (isExpired(tx.payment_access_expires_at)) return json({ error: 'Payment link expired' }, 410);
 
   const body = await readJson(request);
+  assertNoProhibitedSensitiveInput(body);
   if (body.accepted !== true) return json({ error: 'Explicit acceptance is required' }, 400);
   if (!tx.terms_snapshot) return json({ error: 'No terms snapshot exists for this transaction' }, 409);
 
-  if (!Number(tx.consent_accepted)) {
-    const termsHash = await sha256Hex(tx.terms_snapshot);
-    await env.DB.prepare(`
-      UPDATE transactions
-         SET consent_accepted = 1,
-             consent_accepted_at = CURRENT_TIMESTAMP,
-             consent_method = 'CHECKBOX_CONTINUE',
-             terms_snapshot_sha256 = ?,
-             updated_at = CURRENT_TIMESTAMP
-       WHERE id = ?
-    `).bind(termsHash, tx.id).run();
+  const countryCode = String(body.customer_country_code || '').toUpperCase();
+  const stateCode = String(body.customer_state_code || '').toUpperCase();
+  if (countryCode !== 'US') return json({ error: 'Builtegrity V1 supports U.S. customer transactions only' }, 400);
+  if (!/^[A-Z]{2}$/.test(stateCode)) return json({ error: 'A two-letter U.S. state code is required before payment' }, 400);
 
+  const termsHash = await sha256Hex(tx.terms_snapshot);
+  await env.DB.prepare(`
+    UPDATE transactions
+       SET consent_accepted = 1,
+           consent_accepted_at = COALESCE(consent_accepted_at, CURRENT_TIMESTAMP),
+           consent_method = COALESCE(consent_method, 'CHECKBOX_CONTINUE'),
+           terms_snapshot_sha256 = COALESCE(terms_snapshot_sha256, ?),
+           customer_attested_country_code = 'US',
+           customer_attested_state_code = ?,
+           customer_attested_at = CURRENT_TIMESTAMP,
+           checkout_legal_gate_at = NULL,
+           legal_compliance_state = 'PENDING',
+           legal_compliance_reason = NULL,
+           updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+  `).bind(termsHash, stateCode, tx.id).run();
+
+  await env.DB.prepare(`
+    UPDATE customers
+       SET country_code='US',
+           state_code=?,
+           jurisdiction_source='CUSTOMER_ATTESTATION',
+           jurisdiction_verified_at=CURRENT_TIMESTAMP,
+           jurisdiction_match_status='UNVERIFIED'
+     WHERE id=? AND merchant_id=?
+  `).bind(stateCode, tx.customer_id, tx.merchant_id).run();
+
+  if (!Number(tx.consent_accepted)) {
     await advanceLifecycle(env, tx.id, 'CONSENTED');
     await recordEvent(env, tx.id, 'TERMS_ACCEPTED', 'CUSTOMER', null, {
       terms_version: tx.terms_version,
@@ -177,9 +201,14 @@ async function handleConsent(request, env, token) {
       method: 'CHECKBOX_CONTINUE',
     });
   }
+  await recordEvent(env, tx.id, 'CUSTOMER_JURISDICTION_ATTESTED', 'CUSTOMER', null, {
+    country_code: 'US',
+    state_code: stateCode,
+    method: 'CUSTOMER_ATTESTATION',
+  });
 
   await recomputeIntegrity(env, tx.id);
-  return json({ accepted: true, transaction_id: tx.id });
+  return json({ accepted: true, jurisdiction_attested: true, transaction_id: tx.id });
 }
 
 async function handleCheckout(env, token) {
@@ -187,11 +216,11 @@ async function handleCheckout(env, token) {
   if (!tx) return json({ error: 'Payment link not found' }, 404);
   if (isExpired(tx.payment_access_expires_at)) return json({ error: 'Payment link expired' }, 410);
   if (!Number(tx.consent_accepted)) return json({ error: 'Terms must be accepted before payment' }, 409);
-  if (tx.customer_country_code !== 'US' || !tx.customer_jurisdiction_verified_at) {
-    return json({ error: 'Customer U.S. jurisdiction must be verified before payment' }, 409);
+  if (String(tx.customer_attested_country_code || '').toUpperCase() !== 'US' || !tx.customer_attested_at) {
+    return json({ error: 'Customer U.S. billing jurisdiction must be attested before payment' }, 409);
   }
-  if (tx.customer_jurisdiction_match_status === 'MISMATCH') {
-    return json({ error: 'Customer jurisdiction requires review before payment' }, 409);
+  if (!/^[A-Z]{2}$/.test(String(tx.customer_attested_state_code || '').toUpperCase())) {
+    return json({ error: 'Customer U.S. state must be attested before payment' }, 409);
   }
 
   const platformLegal = await evaluateLegalReadiness(env);
@@ -215,6 +244,15 @@ async function handleCheckout(env, token) {
     return json({ url: tx.stripe_checkout_url, checkout_session_id: tx.stripe_checkout_session_id });
   }
 
+  await env.DB.prepare(`
+    UPDATE transactions
+       SET checkout_legal_gate_at=CURRENT_TIMESTAMP,
+           legal_compliance_state='PENDING',
+           legal_compliance_reason=NULL,
+           updated_at=CURRENT_TIMESTAMP
+     WHERE id=?
+  `).bind(tx.id).run();
+
   const session = await createTrackedCheckout(env, tx);
   await env.DB.prepare(`
     UPDATE transactions
@@ -228,6 +266,7 @@ async function handleCheckout(env, token) {
   await advanceLifecycle(env, tx.id, 'PAYMENT_PENDING');
   await recordEvent(env, tx.id, 'CHECKOUT_CREATED', 'BUILTEGRITY', null, {
     checkout_session_id: session.id,
+    legal_gate: true,
   });
 
   return json({ url: session.url, checkout_session_id: session.id });
@@ -278,39 +317,31 @@ async function handleCreateTransaction(request, env) {
   if (!customerId) {
     const customer = body.customer || {};
     if (!customer.name) return json({ error: 'customer.name is required when customer_id is omitted' }, 400);
-    const countryCode = String(customer.country_code || '').toUpperCase();
-    const stateCode = String(customer.state_code || '').toUpperCase();
-    if (countryCode !== 'US') return json({ error: 'Builtegrity V1 supports U.S. customer transactions only' }, 400);
-    if (!/^[A-Z]{2}$/.test(stateCode)) return json({ error: 'customer.state_code is required as a two-letter U.S. jurisdiction code' }, 400);
+    const hintedCountry = String(customer.country_code || 'US').toUpperCase();
+    const hintedState = String(customer.state_code || '').toUpperCase() || null;
+    if (hintedCountry !== 'US') return json({ error: 'Builtegrity V1 supports U.S. customer transactions only' }, 400);
+    if (hintedState && !/^[A-Z]{2}$/.test(hintedState)) return json({ error: 'customer.state_code must be a two-letter U.S. jurisdiction code when provided' }, 400);
     customerId = await allocateId(env, 'CUST');
     await env.DB.prepare(`
       INSERT INTO customers (
         id, merchant_id, name, email, merchant_customer_reference,
         country_code, state_code, postal_code, jurisdiction_source,
         jurisdiction_verified_at, jurisdiction_match_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'MERCHANT_INPUT', CURRENT_TIMESTAMP, 'UNVERIFIED')
+      ) VALUES (?, ?, ?, ?, ?, 'US', ?, ?, 'UNVERIFIED', NULL, 'UNVERIFIED')
     `).bind(
       customerId,
       merchant.id,
       customer.name,
       customer.email || null,
       customer.reference || null,
-      countryCode,
-      stateCode,
+      hintedState,
       customer.postal_code || null,
     ).run();
   } else {
     const existing = await env.DB.prepare(`
-      SELECT id,country_code,state_code,jurisdiction_verified_at,jurisdiction_match_status
-      FROM customers WHERE id = ? AND merchant_id = ?
+      SELECT id FROM customers WHERE id = ? AND merchant_id = ?
     `).bind(customerId, merchant.id).first();
     if (!existing) return json({ error: 'Customer does not belong to this merchant' }, 400);
-    if (existing.country_code !== 'US' || !existing.jurisdiction_verified_at) {
-      return json({ error: 'Existing customer does not have verified U.S. jurisdiction' }, 409);
-    }
-    if (existing.jurisdiction_match_status === 'MISMATCH') {
-      return json({ error: 'Existing customer jurisdiction is under mismatch review' }, 409);
-    }
   }
 
   let purchaseId = body.purchase_id || null;
@@ -471,7 +502,10 @@ async function handleSimulation(request, env, txId) {
       const termsHash = await sha256Hex(tx.terms_snapshot || '');
       await env.DB.prepare(`
         UPDATE transactions SET consent_accepted = 1, consent_accepted_at = CURRENT_TIMESTAMP,
-          consent_method = 'DEV_SIMULATOR', terms_snapshot_sha256 = ?, updated_at = CURRENT_TIMESTAMP
+          consent_method = 'DEV_SIMULATOR', terms_snapshot_sha256 = ?,
+          customer_attested_country_code='US', customer_attested_state_code='RI',
+          customer_attested_at=CURRENT_TIMESTAMP, checkout_legal_gate_at=CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
       `).bind(termsHash, txId).run();
       await advanceLifecycle(env, txId, 'CONSENTED');
