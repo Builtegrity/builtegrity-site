@@ -12,15 +12,15 @@ database_name = "builtegrity-v1"
 database_id = "REPLACE_AFTER_D1_CREATION"
 migrations_dir = "migrations"
 
-# Durable object storage for transaction PDFs and immutable monthly statement PDFs.
-# Monthly statements fail visibly and retry automatically if this binding is unavailable.
+# Durable object storage for transaction PDFs, immutable statements, tax-support PDFs,
+# and hashed raw QuickBooks report snapshots used as company-books evidence.
 [[r2_buckets]]
 binding = "TRANSACTION_RECORDS"
 bucket_name = "builtegrity-transaction-records"
 
-# The 15-minute loop runs safety checks plus the idempotent monthly-statement reconciler.
-# The reconciler only creates the prior UTC calendar month's statement once, then retries
-# generation or delivery failures with bounded exponential backoff. Cloudflare cron is UTC.
+# The 15-minute loop runs safety checks, statements, tax-document delivery, company-books
+# freshness/reconciliation, and tax-workpaper readiness. Expensive accounting API syncs are
+# internally throttled and do not run every 15 minutes. Cloudflare cron is UTC.
 [triggers]
 crons = ["*/15 * * * *", "17 13 * * *"]
 
@@ -29,6 +29,13 @@ APP_BASE_URL = "https://builtegrity.com"
 ADMIN_BASE_URL = "https://admin.builtegrity.com"
 ADMIN_HOSTNAME = "admin.builtegrity.com"
 DEV_MODE = "false"
+
+# QuickBooks Online read-only company-books adapter.
+# Register this redirect URI in the Intuit app:
+# https://admin.builtegrity.com/api/accounting/quickbooks/callback
+QUICKBOOKS_CLIENT_ID = "REPLACE_ME"
+# QUICKBOOKS_CLIENT_SECRET and ACCOUNTING_TOKEN_ENCRYPTION_KEY_B64 must be Worker secrets,
+# never plaintext vars committed to source control.
 
 # PDF cost estimates are stored in transaction economics as ESTIMATED, never mislabeled as actual.
 # $1.00 = 1,000,000 micros. Tune these from observed production usage.
