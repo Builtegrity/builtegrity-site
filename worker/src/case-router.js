@@ -8,6 +8,8 @@ const INTERNAL_RULES = [
   { match: (a) => a.alert_key.startsWith('tx:missing-processor-records:'), caseType: 'PROCESSOR_RECORD_MISMATCH' },
   { match: (a) => a.alert_key.startsWith('tx:fee-shortfall:'), caseType: 'FEE_RECONCILIATION_FAILURE' },
   { match: (a) => a.alert_key.startsWith('merchant:processor-account:'), caseType: 'DATA_INTEGRITY_FAILURE' },
+  { match: (a) => a.alert_key.startsWith('merchant:financial-responsibility:'), caseType: 'FINANCIAL_SOLVENCY_RISK' },
+  { match: (a) => a.alert_key === 'finance:solvency-brake', caseType: 'FINANCIAL_SOLVENCY_RISK' },
   { match: (a) => a.alert_key === 'dependency:clerk-jwks', caseType: 'PLATFORM_PROVIDER_ACTION_REQUIRED' },
   { match: (a) => a.alert_key === 'dependency:public-health-route', caseType: 'PLATFORM_PROVIDER_ACTION_REQUIRED' },
 ];
@@ -78,6 +80,7 @@ export function classifyAlert(alert) {
   // A stuck webhook is still inside its automated recovery window; do not wake a human yet.
   if (alert.alert_key.startsWith('webhook:stuck:')) return { owner: 'SYSTEM' };
   if (alert.alert_key.startsWith('tx:stale-payment-pending:')) return { owner: 'SYSTEM' };
+  if (alert.alert_key === 'finance:solvency-warning') return { owner: 'SYSTEM' };
 
   // Unknown ERROR/CRITICAL conditions are engineering defects by definition. Lower-severity unknowns stay automated.
   if (['ERROR', 'CRITICAL'].includes(String(alert.severity || '').toUpperCase())) {
