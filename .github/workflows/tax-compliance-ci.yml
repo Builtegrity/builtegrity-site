@@ -1,0 +1,94 @@
+name: Tax Compliance Automation CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate-tax-compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tax automation JavaScript syntax
+        run: |
+          node --check worker/src/merchant-tax.js
+          node --check worker/src/tax-periods.js
+          node --check worker/src/company-tax-profile.js
+          node --check worker/src/company-tax-workpapers.js
+          node --check worker/src/quarterly-tax-documents.js
+          node --check worker/src/tax-document-pdf.js
+          node --check worker/src/tax-document-generation.js
+          node --check worker/src/tax-document-delivery.js
+          node --check worker/src/tax-document-pipeline.js
+          node --check worker/src/runtime.js
+
+      - name: Build full D1 schema
+        run: |
+          rm -f /tmp/builtegrity-tax-compliance.db
+          for migration in migrations/*.sql; do
+            echo "Applying ${migration}"
+            sqlite3 /tmp/builtegrity-tax-compliance.db < "${migration}"
+          done
+          sqlite3 /tmp/builtegrity-tax-compliance.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify merchant tax profile defaults fail closed
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT federal_tax_classification || ':' || tax_profile_status || ':' || tax_documentation_enabled FROM merchants WHERE id='MER-0001';")" = "UNKNOWN:UNKNOWN:1"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT federal_tax_classification || ':' || profile_status FROM merchant_tax_profiles WHERE merchant_id='MER-0001';")" = "UNKNOWN:UNKNOWN"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT COUNT(*) FROM pragma_table_info('merchant_tax_profiles') WHERE lower(name) IN ('ssn','ein','tin','taxpayer_identification_number');")" = "0"
+
+      - name: Verify 2026 federal and Rhode Island thresholds
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT threshold_cents FROM tax_compliance_rule_versions WHERE id='TCR-US-2026-IND-EST';")" = "100000"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT threshold_cents FROM tax_compliance_rule_versions WHERE id='TCR-US-2026-CORP-EST';")" = "50000"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT threshold_cents FROM tax_compliance_rule_versions WHERE id='TCR-US-2026-1099NEC';")" = "200000"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT threshold_cents FROM tax_compliance_rule_versions WHERE id='TCR-RI-2026-IND-EST';")" = "25000"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT threshold_cents FROM tax_compliance_rule_versions WHERE id='TCR-RI-2026-CORP-EST';")" = "50000"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT threshold_cents FROM tax_compliance_rule_versions WHERE id='TCR-RI-2026-1065';")" = "40000"
+
+      - name: Verify Builtegrity own tax profile cannot guess or direct auto-file
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT legal_entity_status || ':' || federal_tax_classification || ':' || home_state || ':' || accounting_data_status || ':' || prior_year_tax_data_status || ':' || direct_autofiling_allowed FROM builtegrity_tax_profile WHERE id='GLOBAL';")" = "UNCONFIRMED:UNKNOWN:RI:PARTIAL:MISSING:0"
+          if sqlite3 /tmp/builtegrity-tax-compliance.db "UPDATE builtegrity_tax_profile SET direct_autofiling_allowed=1 WHERE id='GLOBAL';" 2>/tmp/direct-autofile-error.txt; then
+            echo "Expected direct autonomous filing to be prohibited"
+            exit 1
+          fi
+          grep -q 'CHECK constraint failed' /tmp/direct-autofile-error.txt
+
+      - name: Verify provider evidence required before tax action confirmation
+        run: |
+          sqlite3 /tmp/builtegrity-tax-compliance.db "INSERT INTO builtegrity_tax_actions(id,jurisdiction,obligation_code,tax_year,period_label,action_type,status) VALUES('TAXACT-CI','US-FEDERAL','TEST',2026,'2026-Q4','FILE','PLANNED');"
+          if sqlite3 /tmp/builtegrity-tax-compliance.db "UPDATE builtegrity_tax_actions SET status='CONFIRMED' WHERE id='TAXACT-CI';" 2>/tmp/tax-confirm-error.txt; then
+            echo "Expected provider confirmation evidence gate to fail closed"
+            exit 1
+          fi
+          grep -q 'provider/portal confirmation evidence' /tmp/tax-confirm-error.txt
+          sqlite3 /tmp/builtegrity-tax-compliance.db "UPDATE builtegrity_tax_actions SET provider='CI_PROVIDER',provider_confirmation_ref='CONF-1',status='CONFIRMED' WHERE id='TAXACT-CI';"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT status FROM builtegrity_tax_actions WHERE id='TAXACT-CI';")" = "CONFIRMED"
+
+      - name: Verify quarterly summary snapshots are immutable
+        run: |
+          sqlite3 /tmp/builtegrity-tax-compliance.db "INSERT INTO quarterly_payment_summaries(id,merchant_id,tax_year,quarter,currency,summary_version,period_start,period_end_exclusive,status,federal_tax_classification_snapshot,tax_profile_status_snapshot,purpose_code,snapshot_json,generated_at) VALUES('QPS-CI','MER-0001',2026,3,'USD',1,'2026-07-01T00:00:00Z','2026-10-01T00:00:00Z','RECONCILED','UNKNOWN','UNKNOWN','GENERAL_ACCOUNTING_AND_ESTIMATED_TAX_SUPPORT','{}',CURRENT_TIMESTAMP);"
+          if sqlite3 /tmp/builtegrity-tax-compliance.db "UPDATE quarterly_payment_summaries SET gross_payment_volume_cents=1 WHERE id='QPS-CI';" 2>/tmp/quarter-immutable.txt; then
+            echo "Expected generated quarterly summary to be immutable"
+            exit 1
+          fi
+          grep -q 'generated quarterly payment summary snapshot is immutable' /tmp/quarter-immutable.txt
+
+      - name: Verify monthly quarterly annual documentation registry
+        run: |
+          sqlite3 /tmp/builtegrity-tax-compliance.db "INSERT INTO monthly_statements(id,scope_type,scope_id,period_start,period_end_exclusive,period_label,statement_version,status,generated_at) VALUES('STM-CI','MERCHANT','MER-0001','2026-09-01T00:00:00Z','2026-10-01T00:00:00Z','2026-09',1,'GENERATED',CURRENT_TIMESTAMP);"
+          sqlite3 /tmp/builtegrity-tax-compliance.db "INSERT INTO year_end_payment_summaries(id,merchant_id,tax_year,currency,summary_version,status,tax_form_responsibility_snapshot,snapshot_json,generated_at) VALUES('YEP-CI','MER-0001',2026,'USD',1,'NEEDS_REVIEW','UNKNOWN','{}',CURRENT_TIMESTAMP);"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT GROUP_CONCAT(cadence,',') FROM (SELECT cadence FROM merchant_tax_document_registry WHERE merchant_id='MER-0001' ORDER BY CASE cadence WHEN 'MONTHLY' THEN 1 WHEN 'QUARTERLY' THEN 2 ELSE 3 END);")" = "MONTHLY,QUARTERLY,ANNUAL"
+
+      - name: Verify runtime tax automation hooks
+        run: |
+          grep -q "runTaxDocumentPipeline(env)" worker/src/runtime.js
+          grep -q "runBuiltegrityTaxWorkpaperPipeline(env)" worker/src/runtime.js
+          grep -q "/api/tax/company/status" worker/src/runtime.js
+          grep -q "/tax-profile" worker/src/runtime.js
+          grep -q "direct_autofiling_allowed INTEGER NOT NULL DEFAULT 0 CHECK (direct_autofiling_allowed = 0)" migrations/0028_tax_compliance_automation.sql
