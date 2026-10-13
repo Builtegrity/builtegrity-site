@@ -1,3 +1,5 @@
+import { assertMerchantLegalReadyForLiveAction } from './legal-enforcement.js';
+
 function requireSecret(env, name) {
   const value = env[name];
   if (!value) throw new Error(`Missing required secret: ${name}`);
@@ -48,6 +50,11 @@ export async function stripeRequest(env, path, options = {}) {
 }
 
 export async function createTrackedCheckout(env, tx) {
+  // This is the final fail-closed gate immediately before a live processor object can be created.
+  // It is deliberately inside the Stripe adapter so a future caller cannot bypass compliance
+  // merely by invoking Checkout through a different HTTP route.
+  await assertMerchantLegalReadyForLiveAction(env, tx.merchant_id, 'Stripe Checkout creation');
+
   if (!tx.processor_account_id || !String(tx.processor_account_id).startsWith('acct_')) {
     throw new Error(`Merchant ${tx.merchant_id} does not have a usable Stripe connected account`);
   }
