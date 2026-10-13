@@ -21,13 +21,22 @@ async function handleAccountUpdated(env, event) {
   if (!accountId) return;
 
   const merchant = await env.DB.prepare(`
-    SELECT id, status FROM merchants WHERE processor = 'STRIPE' AND processor_account_id = ? LIMIT 1
+    SELECT id, status, integration_mode
+      FROM merchants
+     WHERE processor = 'STRIPE' AND processor_account_id = ?
+     LIMIT 1
   `).bind(accountId).first();
   if (!merchant) return;
 
   const payoutInterval = account.settings?.payouts?.schedule?.interval || null;
   const feePayer = normalizeResponsibility(account.controller?.fees?.payer);
   const lossLiability = normalizeResponsibility(account.controller?.losses?.payments);
+  const accountType = normalizeAccountType(account.type);
+  const requirementCollection = normalizeRequirementCollection(account.controller?.requirement_collection);
+  const dashboardType = account.controller?.stripe_dashboard?.type || null;
+  const taxFormResponsibility = accountType === 'standard'
+    ? 'STRIPE_EXPECTED'
+    : accountType ? 'PLATFORM_REVIEW_REQUIRED' : 'UNKNOWN';
   const requirements = uniqueStrings([
     ...(account.requirements?.past_due || []),
     ...(account.requirements?.currently_due || []),
@@ -36,11 +45,14 @@ async function handleAccountUpdated(env, event) {
 
   const processorReady = Boolean(account.charges_enabled && account.payouts_enabled && payoutInterval !== 'manual');
   const financialResponsibilitySafe = feePayer === 'stripe' && lossLiability === 'stripe';
-  const compatible = processorReady && financialResponsibilitySafe;
+  const requiresV1TaxLane = merchant.integration_mode === 'STRIPE_CONNECT';
+  const taxResponsibilitySafe = !requiresV1TaxLane || taxFormResponsibility === 'STRIPE_EXPECTED';
+  const compatible = processorReady && financialResponsibilitySafe && taxResponsibilitySafe;
   const explicitlyUnsafe = feePayer === 'application' || lossLiability === 'application';
 
-  // Never auto-unpause an operator/security pause. A processor-responsibility problem also forces PAUSED.
-  // Unknown responsibility stays TEST until Stripe confirms both responsibility fields.
+  // Never auto-unpause an operator/security pause. Processor financial responsibility can force PAUSED.
+  // Tax-responsibility uncertainty keeps a Connect merchant in TEST rather than letting the platform
+  // accidentally assume Express/Custom filing obligations.
   const nextStatus = merchant.status === 'PAUSED' || explicitlyUnsafe
     ? 'PAUSED'
     : compatible ? 'ACTIVE' : 'TEST';
@@ -55,6 +67,11 @@ async function handleAccountUpdated(env, event) {
            stripe_requirements_due_json = ?,
            stripe_fee_payer = ?,
            stripe_loss_liability = ?,
+           stripe_account_type = ?,
+           stripe_requirement_collection = ?,
+           stripe_dashboard_type = ?,
+           tax_form_responsibility = ?,
+           tax_form_responsibility_checked_at = CURRENT_TIMESTAMP,
            stripe_financial_responsibility_checked_at = CURRENT_TIMESTAMP,
            stripe_last_account_update_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
@@ -68,6 +85,10 @@ async function handleAccountUpdated(env, event) {
     JSON.stringify(requirements),
     feePayer,
     lossLiability,
+    accountType,
+    requirementCollection,
+    dashboardType,
+    taxFormResponsibility,
     merchant.id,
   ).run();
 
@@ -95,6 +116,21 @@ async function handleAccountUpdated(env, event) {
   } else {
     await resolveAlert(env, responsibilityKey);
   }
+
+  const taxKey = `merchant:tax-responsibility:${merchant.id}`;
+  if (requiresV1TaxLane && !taxResponsibilitySafe) {
+    const message = accountType
+      ? `Builtegrity V1 protected payments require a Standard Stripe connected account so Stripe remains the expected 1099-K filer. Stripe reported account_type=${accountType}; this merchant remains non-active for protected payments.`
+      : 'Builtegrity cannot yet confirm the Stripe account tax-reporting lane. Protected payments remain disabled until the account is confirmed as Standard.';
+    await upsertMerchantActionAlert(env, {
+      key: taxKey,
+      merchantId: merchant.id,
+      action: 'CONNECT_STANDARD_STRIPE_ACCOUNT',
+      message,
+    });
+  } else {
+    await resolveAlert(env, taxKey);
+  }
 }
 
 async function handleAccountDeauthorized(env, event) {
@@ -113,6 +149,11 @@ async function handleAccountDeauthorized(env, event) {
            stripe_payouts_enabled = 0,
            stripe_fee_payer = NULL,
            stripe_loss_liability = NULL,
+           stripe_account_type = NULL,
+           stripe_requirement_collection = NULL,
+           stripe_dashboard_type = NULL,
+           tax_form_responsibility = 'UNKNOWN',
+           tax_form_responsibility_checked_at = CURRENT_TIMESTAMP,
            stripe_financial_responsibility_checked_at = CURRENT_TIMESTAMP,
            stripe_last_account_update_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
@@ -126,6 +167,7 @@ async function handleAccountDeauthorized(env, event) {
     message: 'Stripe connection was deauthorized. Merchant must reconnect Stripe before protected payments can resume.',
   });
   await resolveAlert(env, `merchant:financial-responsibility:${merchant.id}`);
+  await resolveAlert(env, `merchant:tax-responsibility:${merchant.id}`);
 }
 
 async function upsertMerchantActionAlert(env, values) {
@@ -167,6 +209,16 @@ async function resolveAlert(env, key) {
 }
 
 function normalizeResponsibility(value) {
+  const normalized = String(value || '').toLowerCase();
+  return ['stripe', 'application'].includes(normalized) ? normalized : null;
+}
+
+function normalizeAccountType(value) {
+  const normalized = String(value || '').toLowerCase();
+  return ['standard', 'express', 'custom', 'none'].includes(normalized) ? normalized : null;
+}
+
+function normalizeRequirementCollection(value) {
   const normalized = String(value || '').toLowerCase();
   return ['stripe', 'application'].includes(normalized) ? normalized : null;
 }
