@@ -1,77 +1,38 @@
 {
   "version": "v1-draft",
-  "lifecycle": [
-    "CREATED",
-    "CONSENTED",
-    "PAYMENT_PENDING",
-    "PAID",
-    "PAYOUT_PENDING",
-    "COMPLETE"
-  ],
-  "integrity_statuses": [
-    "INCOMPLETE",
-    "ACCOUNTED",
-    "NEEDS_ATTENTION"
-  ],
-  "exception_statuses": [
-    "NONE",
-    "NEEDS_ATTENTION"
-  ],
-  "record_classifications": [
-    "PENDING_PROTECTED",
-    "PROTECTED",
-    "OBSERVED",
-    "IMPORTED",
-    "FEE_EXCEPTION"
-  ],
-  "merchant_facing_record_classes": [
-    "PROTECTED",
-    "OBSERVED",
-    "IMPORTED"
-  ],
-  "integration_modes": [
-    "STRIPE_CONNECT",
-    "STRIPE_APP",
-    "PARTNER_API",
-    "OTHER"
-  ],
-  "fee_collection_methods": [
-    "STRIPE_APPLICATION_FEE",
-    "AUTOMATIC_USAGE",
-    "PARTNER_SETTLEMENT",
-    "OTHER"
-  ],
+  "lifecycle": ["CREATED","CONSENTED","PAYMENT_PENDING","PAID","PAYOUT_PENDING","COMPLETE"],
+  "integrity_statuses": ["INCOMPLETE","ACCOUNTED","NEEDS_ATTENTION"],
+  "exception_statuses": ["NONE","NEEDS_ATTENTION"],
+  "record_classifications": ["PENDING_PROTECTED","PROTECTED","OBSERVED","IMPORTED","FEE_EXCEPTION"],
+  "merchant_facing_record_classes": ["PROTECTED","OBSERVED","IMPORTED"],
+  "integration_modes": ["STRIPE_CONNECT","STRIPE_APP","PARTNER_API","OTHER"],
+  "fee_collection_methods": ["STRIPE_APPLICATION_FEE","AUTOMATIC_USAGE","PARTNER_SETTLEMENT","OTHER"],
   "core_event_types": [
-    "TX_CREATED",
-    "TERMS_ACCEPTED",
-    "CHECKOUT_CREATED",
-    "PAYMENT_SUCCEEDED",
-    "PAYMENT_FAILED",
-    "APPLICATION_FEE_RECORDED",
-    "BALANCE_RECORDED",
-    "PAYOUT_IDENTIFIED",
-    "PAYOUT_PAID",
-    "PAYOUT_FAILED",
-    "REFUND_INITIATED",
-    "REFUND_SUCCEEDED",
-    "DISPUTE_OPENED",
-    "DISPUTE_CLOSED",
-    "TX_COMPLETE"
+    "TX_CREATED","TERMS_ACCEPTED","CHECKOUT_CREATED","PAYMENT_SUCCEEDED","PAYMENT_FAILED",
+    "APPLICATION_FEE_RECORDED","APPLICATION_FEE_REFUNDED","BALANCE_RECORDED","PAYOUT_IDENTIFIED",
+    "PAYOUT_PAID","PAYOUT_FAILED","REFUND_INITIATED","REFUND_SUCCEEDED","DISPUTE_OPENED",
+    "DISPUTE_CLOSED","TX_COMPLETE"
   ],
   "core_exception_types": [
-    "PAYMENT_FAILED",
-    "CONSENT_MISSING",
-    "PAYOUT_FAILED",
-    "REFUND_INITIATED",
-    "DISPUTE_OPENED",
-    "UNEXPECTED_FEE",
-    "EXPECTED_PAYOUT_NOT_FOUND",
-    "OTHER"
+    "PAYMENT_FAILED","CONSENT_MISSING","PAYOUT_FAILED","REFUND_INITIATED","DISPUTE_OPENED",
+    "UNEXPECTED_FEE","EXPECTED_PAYOUT_NOT_FOUND","OTHER"
   ],
-  "protected_definition": "A payment created through the Builtegrity protected flow that succeeded and for which the exact locked Builtegrity application fee was confirmed by the processor. Only PROTECTED transactions may recognize Builtegrity transaction revenue.",
+  "protected_definition": "A payment created through the Builtegrity protected flow for which successful-payment history and the exact locked gross Builtegrity application fee were confirmed by the processor. PROTECTED is historical truth and remains PROTECTED after later refunds or application-fee refunds. Only PROTECTED transactions may recognize Builtegrity transaction revenue.",
   "observed_definition": "A processor transaction Builtegrity detected or monitored but did not create/control and from which Builtegrity did not collect a transaction fee. OBSERVED records do not create Builtegrity transaction revenue.",
   "imported_definition": "Historical or externally supplied transaction data brought into Builtegrity after the fact for archival/reference purposes. IMPORTED records do not create Builtegrity transaction revenue.",
-  "transaction_funding_rule": "Merchants and partners are never separately billed by Builtegrity. Protected-flow revenue must be collected inside the successful processor transaction. PENDING_PROTECTED is an internal pre-confirmation state; FEE_EXCEPTION means payment truth succeeded but the required fee truth did not match and the transaction must not be called PROTECTED.",
+  "transaction_funding_rule": "Merchants and partners are never separately billed by Builtegrity. Protected-flow revenue must be collected inside the successful processor transaction. PENDING_PROTECTED is an internal pre-confirmation state; FEE_EXCEPTION means successful-payment truth exists but required gross application-fee truth is missing or mismatched and the transaction must not be called PROTECTED until resolved.",
+  "refund_accounting_rule": "Refunds never rewrite original gross transaction history. Customer refunds and Builtegrity application-fee refunds are append-only financial adjustments. Gross Builtegrity fee earned at protection confirmation is historical; current retained application-fee cash may decline later.",
+  "tax_season_principles": {
+    "v1_connect_account_lane": "STANDARD",
+    "merchant_tax_form_filer_expectation": "Stripe is expected to file eligible Standard Connect merchant 1099-K forms; Express, Custom, Unified, unknown, or changed Stripe configurations require review and cannot silently enter the V1 protected-payment lane.",
+    "year_end_product_name": "Year-End Payment Activity Summary",
+    "year_end_is_tax_form": false,
+    "gross_reporting_rule": "Gross payment volume is never reduced by processor fees, Builtegrity fees, refunds, disputes, or other adjustments in the gross line. Adjustments are shown separately.",
+    "stripe_tax_year_basis": "BALANCE_TRANSACTION_AVAILABLE_ON",
+    "sensitive_tax_identity_rule": "Do not collect or store raw SSN, EIN, or TIN in the Builtegrity transaction database solely for tax-season reporting. Preserve Stripe as the tax-identity system of record unless a future reviewed legal obligation requires otherwise.",
+    "state_threshold_rule": "Federal reference thresholds are advisory only; state rules can differ and must not be inferred from the federal rule table.",
+    "partner_compensation_rule": "If partner compensation is later paid, partner identity and actual payment/reversal events must be snapshotted in an append-only compensation ledger before tax-form automation is considered."
+  },
   "accounted_definition": "All required commercial context, consent evidence, processor payment records, economics, and the supported payout trail have been captured with no unresolved exception.",
   "complete_definition": "All expected lifecycle information through the supported processor payout state has been captured. COMPLETE is a current lifecycle state, not a guarantee that no later refund, dispute, adjustment, or payout failure can occur."
 }
