@@ -74,15 +74,22 @@ export async function generateBuiltegrityTaxWorkpaper(env, input = {}) {
 export async function runBuiltegrityTaxWorkpaperPipeline(env, options = {}) {
   const now = options.now ? new Date(options.now) : new Date();
   if (!Number.isFinite(now.getTime())) throw new Error('Invalid tax workpaper pipeline clock');
+  const profile = await env.DB.prepare(`SELECT * FROM builtegrity_tax_profile WHERE id='GLOBAL'`).first();
+  const automationState = companyAutomationState(profile);
+  if (!['READY_FOR_CALCULATION','READY_FOR_PROVIDER_REVIEW'].includes(automationState)) {
+    return { blocked: true, automation_state: automationState, quarter: null, year: null };
+  }
+
   const completed = previousCompletedQuarter(now);
   const quarter = await generateBuiltegrityTaxWorkpaper(env, {
     period_type: 'QUARTER', tax_year: completed.year, quarter: completed.quarter,
   });
   let year = null;
-  if (now.getUTCMonth() === 0) {
+  // Continue preparing the prior-year workpaper through the first half of the year so a late profile/provider setup does not miss it.
+  if (now.getUTCMonth() <= 5) {
     year = await generateBuiltegrityTaxWorkpaper(env, { period_type: 'YEAR', tax_year: now.getUTCFullYear() - 1 });
   }
-  return { quarter, year };
+  return { blocked: false, automation_state: automationState, quarter, year };
 }
 
 export async function listBuiltegrityTaxWorkpapers(env, options = {}) {

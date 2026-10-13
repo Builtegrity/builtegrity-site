@@ -77,7 +77,10 @@ async function relevantRules(env, profile, year) {
 function applies(rule, profile) {
   const list = String(rule.applies_to || '').split(',');
   const c = profile.federal_tax_classification;
-  if (profile.has_employees === 1 && (list.includes('EMPLOYER') || list.includes('EMPLOYER_FORM_941') || list.includes('RI_EMPLOYER'))) return true;
+  if (profile.has_employees === 1 && list.includes('EMPLOYER_FORM_941')) return profile.federal_payroll_return !== 'FORM_944';
+  if (profile.has_employees === 1 && list.includes('EMPLOYER_FORM_944')) return profile.federal_payroll_return === 'FORM_944';
+  if (profile.has_employees === 1 && list.includes('EMPLOYER_W2')) return true;
+  if (profile.has_employees === 1 && (list.includes('EMPLOYER') || list.includes('RI_EMPLOYER'))) return true;
   if (list.includes('BUSINESS_PAYER')) return true;
   if (c === 'SOLE_PROPRIETOR' && (list.includes('SOLE_PROPRIETOR') || list.includes('RI_INDIVIDUAL'))) return true;
   if (c === 'SMLLC_DISREGARDED' && (list.includes('SMLLC_DISREGARDED') || list.includes('RI_INDIVIDUAL'))) return true;

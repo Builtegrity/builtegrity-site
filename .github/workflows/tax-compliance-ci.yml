@@ -50,6 +50,17 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT threshold_cents FROM tax_compliance_rule_versions WHERE id='TCR-RI-2026-CORP-EST';")" = "50000"
           test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT threshold_cents FROM tax_compliance_rule_versions WHERE id='TCR-RI-2026-1065';")" = "40000"
 
+      - name: Verify federal annual entity and payroll filing matrix
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT filing_form FROM tax_compliance_rule_versions WHERE id='TCR-US-2026-SOLE-ANNUAL';")" = "1040 + applicable business schedule"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT filing_form FROM tax_compliance_rule_versions WHERE id='TCR-US-2026-1065';")" = "1065"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT filing_form FROM tax_compliance_rule_versions WHERE id='TCR-US-2026-1120S';")" = "1120-S"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT filing_form FROM tax_compliance_rule_versions WHERE id='TCR-US-2026-1120';")" = "1120"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT filing_form FROM tax_compliance_rule_versions WHERE id='TCR-US-2026-944';")" = "944"
+          test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT filing_form FROM tax_compliance_rule_versions WHERE id='TCR-US-2026-W2';")" = "W-2 / W-3"
+          grep -q "EMPLOYER_FORM_941.*FORM_944" worker/src/merchant-tax.js
+          grep -q "EMPLOYER_FORM_944.*FORM_944" worker/src/merchant-tax.js
+
       - name: Verify Builtegrity own tax profile cannot guess or direct auto-file
         run: |
           test "$(sqlite3 /tmp/builtegrity-tax-compliance.db "SELECT legal_entity_status || ':' || federal_tax_classification || ':' || home_state || ':' || accounting_data_status || ':' || prior_year_tax_data_status || ':' || direct_autofiling_allowed FROM builtegrity_tax_profile WHERE id='GLOBAL';")" = "UNCONFIRMED:UNKNOWN:RI:PARTIAL:MISSING:0"
@@ -92,3 +103,6 @@ jobs:
           grep -q "/api/tax/company/status" worker/src/runtime.js
           grep -q "/tax-profile" worker/src/runtime.js
           grep -q "direct_autofiling_allowed INTEGER NOT NULL DEFAULT 0 CHECK (direct_autofiling_allowed = 0)" migrations/0028_tax_compliance_automation.sql
+          grep -q "BLOCKED_PROFILE_UNKNOWN" worker/src/company-tax-profile.js
+          grep -q "companyAutomationState(profile)" worker/src/company-tax-workpapers.js
+          grep -q "return { blocked: true, automation_state: automationState, quarter: null, year: null }" worker/src/company-tax-workpapers.js
