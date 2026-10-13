@@ -1,0 +1,36 @@
+name: Owner Independence CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '19 12 * * 1'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate owner independence structure
+        run: node scripts/check-owner-independence.mjs --mode=structure
+
+      - name: Guard cornerstone documentation
+        run: |
+          grep -q 'OWNER-INDEPENDENCE-V1' docs/owner-independence-and-disaster-recovery.md
+          grep -q 'Owner Zero-AI Drill' docs/owner-independence-and-disaster-recovery.md
+          grep -q 'Private Owner Emergency Vault' docs/owner-independence-and-disaster-recovery.md
+          grep -q 'owner:gate:live' package.json
+          grep -q 'owner_independence' docs/production-readiness-gate.md
+          grep -q 'owner-independence-and-disaster-recovery.md' docs/provider-independence.md
+
+      - name: Prove live gate is fail-closed until verification is complete
+        run: |
+          if node scripts/check-owner-independence.mjs --mode=live >/tmp/owner-live.txt 2>&1; then
+            echo 'Live owner-independence gate unexpectedly passed while manifest still contains unverified required systems.'
+            cat /tmp/owner-live.txt
+            exit 1
+          fi
+          grep -q 'OWNER INDEPENDENCE LIVE GATE: FAIL' /tmp/owner-live.txt
