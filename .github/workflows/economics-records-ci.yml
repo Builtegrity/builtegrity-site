@@ -66,7 +66,7 @@ jobs:
 
       - name: Verify successful exact fee promotes transaction to PROTECTED and recognizes revenue
         run: |
-          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET payment_status='succeeded', stripe_application_fee_id='fee_test_0001', integrity_fee_collected_cents=25 WHERE id='TX-0001';"
+          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET payment_status='succeeded', payment_at='2026-10-13T00:00:00.000Z', stripe_application_fee_id='fee_test_0001', application_fee_gross_confirmed_cents=25, integrity_fee_collected_cents=25 WHERE id='TX-0001';"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-0001';")" = "PROTECTED"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-0001';")" = "25"
           test -n "$(sqlite3 /tmp/builtegrity-economics.db "SELECT protection_confirmed_at FROM transactions WHERE id='TX-0001';")"
@@ -77,12 +77,11 @@ jobs:
         run: |
           sqlite3 /tmp/builtegrity-economics.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,integrity_fee_earned_cents,fee_collection_method,payment_status) VALUES ('TX-FEE-EXC','PUR-0001','MER-0001','CUST-0001','PAYMENT','Fee exception test',50000,'USD',25,'STRIPE_APPLICATION_FEE','succeeded');"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-FEE-EXC';")" = "PENDING_PROTECTED"
-          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET payment_status='pending' WHERE id='TX-FEE-EXC';"
-          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET payment_status='succeeded' WHERE id='TX-FEE-EXC';"
+          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET payment_at='2026-10-13T00:01:00.000Z' WHERE id='TX-FEE-EXC';"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-FEE-EXC';")" = "FEE_EXCEPTION"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-FEE-EXC';")" = "0"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT actual_revenue_micros FROM transaction_economics_summary WHERE transaction_id='TX-FEE-EXC';")" = "0"
-          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET stripe_application_fee_id='fee_bad', integrity_fee_collected_cents=20 WHERE id='TX-FEE-EXC';"
+          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET stripe_application_fee_id='fee_bad', application_fee_gross_confirmed_cents=20, integrity_fee_collected_cents=20 WHERE id='TX-FEE-EXC';"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-FEE-EXC';")" = "FEE_EXCEPTION"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-FEE-EXC';")" = "0"
 
