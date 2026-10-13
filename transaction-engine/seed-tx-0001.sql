@@ -12,9 +12,11 @@ INSERT OR IGNORE INTO merchants (
 );
 
 INSERT OR IGNORE INTO customers (
-  id, merchant_id, name, email, merchant_customer_reference
+  id, merchant_id, name, email, merchant_customer_reference,
+  country_code, state_code, jurisdiction_source, jurisdiction_verified_at, jurisdiction_match_status
 ) VALUES (
-  'CUST-0001', 'MER-0001', 'John Smith', 'john@example.com', 'CUST-0001'
+  'CUST-0001', 'MER-0001', 'John Smith', 'john@example.com', 'CUST-0001',
+  'US', 'RI', 'MERCHANT_INPUT', CURRENT_TIMESTAMP, 'UNVERIFIED'
 );
 
 INSERT OR IGNORE INTO purchases (
