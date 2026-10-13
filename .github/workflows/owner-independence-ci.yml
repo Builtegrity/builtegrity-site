@@ -26,11 +26,17 @@ jobs:
           grep -q 'owner_independence' docs/production-readiness-gate.md
           grep -q 'owner-independence-and-disaster-recovery.md' docs/provider-independence.md
 
-      - name: Prove live gate is fail-closed until verification is complete
+      - name: Verify live gate matches manifest verification state
         run: |
-          if node scripts/check-owner-independence.mjs --mode=live >/tmp/owner-live.txt 2>&1; then
-            echo 'Live owner-independence gate unexpectedly passed while manifest still contains unverified required systems.'
-            cat /tmp/owner-live.txt
-            exit 1
+          UNVERIFIED_REQUIRED="$(node -e "const m=require('./ops/owner-control-manifest.json'); console.log(m.systems.filter(s => s.required_for_live && s.status !== 'VERIFIED').length)")"
+          if [ "$UNVERIFIED_REQUIRED" -eq 0 ]; then
+            node scripts/check-owner-independence.mjs --mode=live
+          else
+            if node scripts/check-owner-independence.mjs --mode=live >/tmp/owner-live.txt 2>&1; then
+              echo 'Live gate passed even though required systems remain unverified.'
+              cat /tmp/owner-live.txt
+              exit 1
+            fi
+            grep -q 'OWNER INDEPENDENCE LIVE GATE: FAIL' /tmp/owner-live.txt
+            echo "Live gate correctly blocked by $UNVERIFIED_REQUIRED unverified required system(s)."
           fi
-          grep -q 'OWNER INDEPENDENCE LIVE GATE: FAIL' /tmp/owner-live.txt
