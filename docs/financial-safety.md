@@ -39,7 +39,7 @@ A negative platform available balance is RED and blocks onboarding, new transact
 
 ### 3. Company cash, commitments, and reserve runway
 
-Until a bank/accounting connection supplies this information automatically, an authorized operator records an append-only complete financial-position snapshot. The snapshot explicitly includes:
+During PILOT, until a bank/accounting connection supplies this information automatically, an authorized operator can record an append-only complete financial-position snapshot. The snapshot explicitly includes:
 
 - unrestricted cash
 - restricted cash
@@ -52,6 +52,8 @@ Until a bank/accounting connection supplies this information automatically, an a
 - overdue critical obligations
 
 A manual snapshot must explicitly attest that those categories are complete. It expires after seven days. Missing or stale data becomes UNKNOWN and freezes new onboarding and new transaction creation.
+
+**LIVE cannot rely on a manual or test financial snapshot.** In LIVE, the latest complete financial position must come from a `BANK`, `ACCOUNTING`, or `COMPOSITE` source. Otherwise the safety engine adds `LIVE_AUTOMATED_FINANCIAL_SOURCE_REQUIRED`, moves to UNKNOWN, and freezes new growth. This turns automated financial telemetry into a production-readiness gate rather than an optional convenience.
 
 The default operating reserve target is three months after near-term liabilities and required reserves:
 
@@ -76,6 +78,7 @@ The machine requires:
 - a Stripe platform-balance snapshot no older than two hours
 - a pricing/cost/provider responsibility review no older than 90 days
 - a current financial-safety decision no older than 30 minutes during PILOT/LIVE
+- an automated financial-position source before LIVE growth is permitted
 
 If the monitor itself stops running, the last GREEN decision expires. Production activity does not get unlimited permission from stale evidence.
 
@@ -108,6 +111,8 @@ The brake alert routes to `FINANCIAL_SOLVENCY_RISK`, which has only three operat
 
 The correct resolution path is never “override the warning.” Correct the underlying financial input/economics, run a new evaluation, and allow the machine to clear the brake.
 
+The internal monitor should not be the only production observer. Before LIVE activation, the public readiness endpoint must also be watched externally for a stale/missing watchdog heartbeat so a stopped Worker cron cannot fail silently. Builtegrity already has an external Machine Watch workflow designed to inspect the readiness route once the Worker is deployed; external notifications must be enabled as part of the LIVE checklist.
+
 ## Financial model expiry
 
 Provider prices and processor responsibility semantics are not permanent facts. `financial_model_reviews` require both provider pricing and processor responsibility assumptions to be re-reviewed at least every 90 days. An expired review becomes UNKNOWN and freezes growth.
@@ -118,4 +123,6 @@ This prevents a vendor price increase or processor-policy change from remaining 
 
 Financial safety enforcement begins at PILOT by default. PILOT/LIVE require an enforced, fresh financial-safety evaluation before merchant onboarding, new transaction creation, or payment creation can proceed.
 
-The repository implementation does not become production protection until migration `0018_financial_safety_engine.sql` and the corresponding Worker code are deployed to the production Cloudflare D1/Worker environment.
+LIVE additionally requires automated `BANK`, `ACCOUNTING`, or `COMPOSITE` financial-position telemetry and an externally monitored readiness heartbeat with notifications enabled. Those are launch gates, not post-launch cleanup items.
+
+The repository implementation does not become production protection until migrations `0018_financial_safety_engine.sql` and `0019_financial_safety_hardening.sql` and the corresponding Worker code are deployed to the production Cloudflare D1/Worker environment.
