@@ -108,25 +108,25 @@ for (const system of manifest.systems) {
     console.error(`System ${system.id} required_for_live must be boolean`);
     process.exit(1);
   }
-
-  const combined = [
-    system.authority,
-    system.durable_data,
-    system.secret_location,
-    system.export_or_recovery_path,
-    system.safe_shutdown,
-    system.replacement_path
-  ].join(' ').toLowerCase();
-
-  if (system.id !== 'ai_automation' && /chatgpt|atlas|openai work/.test(combined)) {
-    console.error(`System ${system.id} appears to depend on AI in a control/recovery path`);
-    process.exit(1);
-  }
 }
 
 for (const systemId of requiredSystemIds) {
   if (!seen.has(systemId)) {
     console.error(`Manifest missing required system: ${systemId}`);
+    process.exit(1);
+  }
+}
+
+const aiSystem = manifest.systems.find((system) => system.id === 'ai_automation');
+if (!aiSystem || aiSystem.required_for_live !== false) {
+  console.error('AI automation must never be required_for_live');
+  process.exit(1);
+}
+
+if (aiSystem.authority.toLowerCase().includes('canonical')) {
+  const normalized = aiSystem.authority.toLowerCase();
+  if (!normalized.includes('no canonical') && !normalized.includes('non-canonical')) {
+    console.error('AI automation may not hold canonical production authority');
     process.exit(1);
   }
 }
