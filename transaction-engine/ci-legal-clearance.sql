@@ -36,8 +36,25 @@ SET status='APPROVED',
     counsel_reviewed_at=COALESCE(counsel_reviewed_at,CURRENT_TIMESTAMP),
     counsel_reference=COALESCE(counsel_reference,'CI_TEST_FIXTURE');
 
+UPDATE state_jurisdiction_support
+SET merchant_onboarding_status='READY',
+    money_transmission_review_status='CLEARED_NON_LICENSED',
+    sales_tax_review_status='REGISTERED',
+    privacy_review_status='CLEARED',
+    breach_review_status='CLEARED',
+    entity_nexus_review_status='CLEARED',
+    income_tax_review_status='CLEARED',
+    electronic_transactions_review_status='CLEARED',
+    counsel_reference='CI_TEST_FIXTURE',
+    tax_reference='CI_TEST_FIXTURE',
+    reviewed_at=CURRENT_TIMESTAMP,
+    next_review_due_at=datetime('now','+1 year'),
+    updated_at=CURRENT_TIMESTAMP
+WHERE state_code='RI';
+
 UPDATE merchants
 SET country_code='US',
+    state_code='RI',
     customer_market_scope='US_ONLY',
     restricted_business_status='CLEARED',
     sanctions_review_status='CLEAR',
