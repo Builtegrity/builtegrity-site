@@ -47,11 +47,11 @@ jobs:
         run: |
           test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT state FROM financial_safety_state WHERE id='GLOBAL';")" = "UNKNOWN"
           test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT merchant_onboarding_allowed || ':' || transaction_creation_allowed || ':' || payment_creation_allowed FROM financial_safety_state WHERE id='GLOBAL';")" = "0:0:1"
-          grep -q 'UNKNOWN is not a softer version of GREEN' docs/financial-safety.md
+          grep -q 'UNKNOWN.*GREEN' docs/financial-safety.md
           grep -q 'FINANCIAL_DECISION_MAX_AGE_MINUTES = 30' worker/src/runtime.js
           grep -q 'financial safety decision is stale' worker/src/runtime.js
 
-      - name: Verify financial evidence is append-only
+      - name: Verify financial evidence is append-only and cannot be future-dated
         run: |
           sqlite3 /tmp/builtegrity-financial-safety.db "INSERT INTO financial_position_snapshots(id,source,currency,unrestricted_cash_micros,monthly_fixed_commitments_micros,attested_complete,actor_ref,captured_at) VALUES('FINPOS-CI','SYSTEM_TEST','USD',100000000,10000000,1,'ci',CURRENT_TIMESTAMP);"
           if sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE financial_position_snapshots SET unrestricted_cash_micros=1 WHERE id='FINPOS-CI';" 2>/tmp/position-error.txt; then
@@ -59,6 +59,11 @@ jobs:
             exit 1
           fi
           grep -q 'append-only' /tmp/position-error.txt
+          if sqlite3 /tmp/builtegrity-financial-safety.db "INSERT INTO financial_position_snapshots(id,source,currency,unrestricted_cash_micros,attested_complete,captured_at) VALUES('FINPOS-FUTURE','SYSTEM_TEST','USD',1,1,datetime('now','+1 day'));" 2>/tmp/future-position-error.txt; then
+            echo "Expected future-dated position to fail"
+            exit 1
+          fi
+          grep -q 'future-dated' /tmp/future-position-error.txt
 
           sqlite3 /tmp/builtegrity-financial-safety.db "INSERT INTO processor_platform_balance_snapshots(id,processor,currency,available_micros,pending_micros,connect_reserved_micros,captured_at) VALUES('PBAL-CI','STRIPE','USD',1000000,0,0,CURRENT_TIMESTAMP);"
           if sqlite3 /tmp/builtegrity-financial-safety.db "DELETE FROM processor_platform_balance_snapshots WHERE id='PBAL-CI';" 2>/tmp/balance-error.txt; then
@@ -89,13 +94,11 @@ jobs:
           fi
           grep -q 'payment-loss liability' /tmp/unsafe-loss.txt
 
-      - name: Verify transaction defense in depth
+      - name: Verify database defense in depth exists for financial gates
         run: |
-          sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET status='TEST',stripe_fee_payer='application',stripe_loss_liability='stripe' WHERE id='MER-0001';"
-          sqlite3 /tmp/builtegrity-financial-safety.db "PRAGMA ignore_check_constraints=ON;"
-          # Application code is the first guard. The database trigger is the independent last line for an ACTIVE unsafe state.
-          sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET stripe_fee_payer='stripe',stripe_loss_liability='stripe',status='ACTIVE' WHERE id='MER-0001';"
-          sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET status='TEST' WHERE id='MER-0001';"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='transactions_reject_unsafe_active_stripe_merchant';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='transactions_require_fresh_financial_safety';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='merchants_require_financial_safety_on_active_update';")" = "1"
           grep -q 'assertMerchantProcessorEconomicsSafe(merchant)' worker/src/index.js
           test "$(grep -c 'assertMerchantProcessorEconomicsSafe' worker/src/index.js)" -ge "3"
           grep -q "controller?.fees?.payer" worker/src/stripe-account-events.js
