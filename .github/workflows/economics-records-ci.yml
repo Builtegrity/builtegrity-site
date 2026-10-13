@@ -29,6 +29,7 @@ jobs:
             sqlite3 /tmp/builtegrity-economics.db < "$file"
           done
           sqlite3 /tmp/builtegrity-economics.db < transaction-engine/seed-tx-0001.sql
+          sqlite3 /tmp/builtegrity-economics.db < transaction-engine/ci-transaction-jurisdiction.sql
 
       - name: Verify identity and tenancy boundaries
         run: |
