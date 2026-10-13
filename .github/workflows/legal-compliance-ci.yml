@@ -31,6 +31,7 @@ jobs:
         run: |
           test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT launch_country||':'||launch_currency||':'||payment_architecture||':'||funds_custody_allowed||':'||platform_transfers_allowed||':'||marketplace_funds_routing_allowed||':'||international_merchants_allowed||':'||international_customer_sales_allowed||':'||subscriptions_allowed||':'||manual_payouts_allowed||':'||raw_card_data_allowed||':'||legal_launch_state FROM platform_compliance_controls WHERE id='GLOBAL';")" = "US:USD:STRIPE_DIRECT_CHARGE:0:0:0:0:0:0:0:0:BLOCKED"
           test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT state FROM platform_legal_readiness;")" = "BLOCKED"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT merchant_onboarding_status FROM state_jurisdiction_support WHERE state_code='RI';")" = "COUNSEL_REVIEW"
 
       - name: Verify forbidden architecture cannot be enabled in D1
         run: |
@@ -49,7 +50,7 @@ jobs:
 
       - name: Verify live merchant activation fails closed
         run: |
-          if sqlite3 /tmp/builtegrity-legal.db "UPDATE merchants SET status='ACTIVE' WHERE id='MER-0001';" 2>/tmp/merchant-active-error.txt; then
+          if sqlite3 /tmp/builtegrity-legal.db "UPDATE merchants SET state_code='RI',status='ACTIVE' WHERE id='MER-0001';" 2>/tmp/merchant-active-error.txt; then
             echo "Expected uncleared merchant activation to fail"
             exit 1
           fi
@@ -77,13 +78,14 @@ jobs:
           fi
           grep -q "immutable" /tmp/legal-evidence.txt
 
-      - name: Verify privacy security and retention machinery exists
+      - name: Verify privacy security state and retention machinery exists
         run: |
           test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM pragma_table_info('privacy_requests');")" -gt "5"
           test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM pragma_table_info('security_incidents');")" -gt "10"
           test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM data_retention_policies;")" -ge "5"
-          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM compliance_obligations WHERE obligation_type='REQUIRED';")" -ge "10"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM compliance_obligations WHERE obligation_type='REQUIRED';")" -ge "14"
           test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM service_provider_registry WHERE personal_data_access=1 OR financial_data_access=1;")" -ge "5"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM state_jurisdiction_support WHERE state_code='RI';")" = "1"
 
       - name: Verify Stripe path stays direct charge and card only
         run: |
@@ -122,6 +124,15 @@ jobs:
           test -s docs/data-retention-policy.md
           test -s docs/sales-tax-program.md
           test -s docs/international-expansion-gates.md
-          grep -q "RI sales-tax" docs/legal-compliance-program.md
+          grep -q "Rhode Island sales-tax" docs/legal-compliance-program.md
           grep -q "money-transmitter" docs/legal-compliance-program.md
           grep -q "INTERNATIONAL DISABLED" docs/international-expansion-gates.md
+
+      - name: Verify a fully evidenced synthetic state can activate
+        run: |
+          sqlite3 /tmp/builtegrity-legal.db < transaction-engine/ci-legal-clearance.sql
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT state FROM platform_legal_readiness;")" = "READY"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT legal_state FROM merchant_legal_readiness WHERE merchant_id='MER-0001';")" = "READY"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT merchant_onboarding_status FROM state_jurisdiction_support WHERE state_code='RI';")" = "READY"
+          sqlite3 /tmp/builtegrity-legal.db "UPDATE merchants SET stripe_fee_payer='stripe',stripe_loss_liability='stripe',stripe_account_type='standard',tax_form_responsibility='STRIPE_EXPECTED',status='ACTIVE' WHERE id='MER-0001';"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT status FROM merchants WHERE id='MER-0001';")" = "ACTIVE"
