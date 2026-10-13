@@ -49,16 +49,62 @@ jobs:
       - name: Verify automatic record token and hidden unit economics
         run: |
           test -n "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_access_token FROM transactions WHERE id='TX-0001';")"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-0001';")" = "PENDING_PROTECTED"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-0001';")" = "0"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT estimated_revenue_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "250000"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT estimated_cost_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "2594"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT estimated_contribution_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "247406"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT COUNT(*) FROM transaction_economics_ledger WHERE transaction_id='TX-0001' AND basis='ESTIMATED';")" = "4"
 
-      - name: Verify actual Stripe fee revenue posts automatically
+      - name: Verify fee cash alone cannot create Builtegrity revenue
         run: |
           sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET integrity_fee_collected_cents=25 WHERE id='TX-0001';"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-0001';")" = "PENDING_PROTECTED"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-0001';")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT actual_revenue_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "0"
+          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET integrity_fee_collected_cents=0 WHERE id='TX-0001';"
+
+      - name: Verify successful exact fee promotes transaction to PROTECTED and recognizes revenue
+        run: |
+          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET payment_status='succeeded', stripe_application_fee_id='fee_test_0001', integrity_fee_collected_cents=25 WHERE id='TX-0001';"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-0001';")" = "PROTECTED"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-0001';")" = "25"
+          test -n "$(sqlite3 /tmp/builtegrity-economics.db "SELECT protection_confirmed_at FROM transactions WHERE id='TX-0001';")"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT actual_revenue_micros FROM transaction_economics_summary WHERE transaction_id='TX-0001';")" = "250000"
           test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT COUNT(*) FROM transaction_economics_ledger WHERE transaction_id='TX-0001' AND basis='ACTUAL' AND entry_kind='REVENUE' AND category='INTEGRITY_FEE';")" = "1"
+
+      - name: Verify missing or mismatched fee cannot be PROTECTED
+        run: |
+          sqlite3 /tmp/builtegrity-economics.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,integrity_fee_earned_cents,fee_collection_method,payment_status) VALUES ('TX-FEE-EXC','PUR-0001','MER-0001','CUST-0001','PAYMENT','Fee exception test',50000,'USD',25,'STRIPE_APPLICATION_FEE','succeeded');"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-FEE-EXC';")" = "PENDING_PROTECTED"
+          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET payment_status='pending' WHERE id='TX-FEE-EXC';"
+          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET payment_status='succeeded' WHERE id='TX-FEE-EXC';"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-FEE-EXC';")" = "FEE_EXCEPTION"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-FEE-EXC';")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT actual_revenue_micros FROM transaction_economics_summary WHERE transaction_id='TX-FEE-EXC';")" = "0"
+          sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET stripe_application_fee_id='fee_bad', integrity_fee_collected_cents=20 WHERE id='TX-FEE-EXC';"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT record_classification FROM transactions WHERE id='TX-FEE-EXC';")" = "FEE_EXCEPTION"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-FEE-EXC';")" = "0"
+
+      - name: Verify OBSERVED and IMPORTED records cannot recognize fee revenue
+        run: |
+          sqlite3 /tmp/builtegrity-economics.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,integrity_fee_earned_cents,fee_collection_method,record_classification) VALUES ('TX-OBS','PUR-0001','MER-0001','CUST-0001','PAYMENT','Observed payment',30000,'USD',0,'STRIPE_APPLICATION_FEE','OBSERVED');"
+          sqlite3 /tmp/builtegrity-economics.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,integrity_fee_earned_cents,fee_collection_method,record_classification) VALUES ('TX-IMP','PUR-0001','MER-0001','CUST-0001','PAYMENT','Imported payment',30000,'USD',0,'STRIPE_APPLICATION_FEE','IMPORTED');"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-OBS';")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-economics.db "SELECT bg_fee_earned_cents FROM transactions WHERE id='TX-IMP';")" = "0"
+          if sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET bg_fee_earned_cents=25 WHERE id='TX-OBS';" 2>/tmp/observed-revenue-error.txt; then
+            echo "Expected D1 to reject revenue on OBSERVED record"
+            exit 1
+          fi
+          grep -q 'Only PROTECTED transactions may recognize Builtegrity fee revenue' /tmp/observed-revenue-error.txt
+
+      - name: Verify separate billing cannot replace protected transaction fee
+        run: |
+          if sqlite3 /tmp/builtegrity-economics.db "UPDATE transactions SET record_classification='PENDING_PROTECTED', fee_collection_method='AUTOMATIC_USAGE' WHERE id='TX-OBS';" 2>/tmp/separate-billing-error.txt; then
+            echo "Expected protected-flow separate billing to be rejected"
+            exit 1
+          fi
+          grep -q 'separate billing is prohibited' /tmp/separate-billing-error.txt
 
       - name: Verify automated PDF route and cache configuration
         run: |
@@ -68,3 +114,5 @@ jobs:
           grep -q 'TRANSACTION_RECORDS' wrangler.toml.example
           grep -q 'Download transaction record PDF' public/pay/success/index.html
           grep -q 'transaction_pdf_requests' migrations/0008_economics_records_pdf.sql
+          grep -q 'Only PROTECTED transactions may recognize Builtegrity fee revenue' migrations/0025_transaction_protection_classification.sql
+          grep -q 'Builtegrity does not separately bill merchants or partners' docs/transaction-protection-classification.md
