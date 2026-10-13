@@ -1,0 +1,186 @@
+name: Legal Compliance CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate-legal-compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check compliance JavaScript syntax
+        run: |
+          node --check worker/src/legal-compliance.js
+          node --check worker/src/legal-enforcement.js
+          node --check worker/src/merchant-compliance-routes.js
+          node --check worker/src/compliance-monitor.js
+          node --check worker/src/records.js
+          node --check worker/src/stripe.js
+
+      - name: Build complete D1 schema
+        run: |
+          rm -f /tmp/builtegrity-legal.db
+          for migration in migrations/*.sql; do
+            echo "Applying ${migration}"
+            sqlite3 /tmp/builtegrity-legal.db < "${migration}"
+          done
+          sqlite3 /tmp/builtegrity-legal.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify V1 architecture defaults are fail closed
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT launch_country||':'||launch_currency||':'||payment_architecture||':'||funds_custody_allowed||':'||platform_transfers_allowed||':'||marketplace_funds_routing_allowed||':'||international_merchants_allowed||':'||international_customer_sales_allowed||':'||subscriptions_allowed||':'||manual_payouts_allowed||':'||raw_card_data_allowed||':'||legal_launch_state FROM platform_compliance_controls WHERE id='GLOBAL';")" = "US:USD:STRIPE_DIRECT_CHARGE:0:0:0:0:0:0:0:0:BLOCKED"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT state FROM platform_legal_readiness;")" = "BLOCKED"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT merchant_onboarding_status FROM state_jurisdiction_support WHERE state_code='RI';")" = "COUNSEL_REVIEW"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT customer_transaction_status FROM state_jurisdiction_support WHERE state_code='RI';")" = "COUNSEL_REVIEW"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM state_jurisdiction_support;")" = "51"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT GROUP_CONCAT(country_code,',') FROM (SELECT country_code FROM country_jurisdiction_support ORDER BY country_code);")" = "AU,CA,GB,NZ,US"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM country_jurisdiction_support WHERE country_code<>'US' AND expansion_status<>'FUTURE_REVIEW';")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM compliance_due_queue;")" -gt "0"
+
+      - name: Verify forbidden architecture cannot be enabled in D1
+        run: |
+          for sql in \
+            "UPDATE platform_compliance_controls SET funds_custody_allowed=1 WHERE id='GLOBAL';" \
+            "UPDATE platform_compliance_controls SET platform_transfers_allowed=1 WHERE id='GLOBAL';" \
+            "UPDATE platform_compliance_controls SET marketplace_funds_routing_allowed=1 WHERE id='GLOBAL';" \
+            "UPDATE platform_compliance_controls SET international_merchants_allowed=1 WHERE id='GLOBAL';" \
+            "UPDATE platform_compliance_controls SET subscriptions_allowed=1 WHERE id='GLOBAL';" \
+            "UPDATE platform_compliance_controls SET raw_card_data_allowed=1 WHERE id='GLOBAL';"; do
+            if sqlite3 /tmp/builtegrity-legal.db "$sql" >/dev/null 2>&1; then
+              echo "Expected immutable legal architecture constraint to reject: $sql"
+              exit 1
+            fi
+          done
+
+      - name: Verify live merchant activation fails closed
+        run: |
+          if sqlite3 /tmp/builtegrity-legal.db "UPDATE merchants SET state_code='RI',status='ACTIVE' WHERE id='MER-0001';" 2>/tmp/merchant-active-error.txt; then
+            echo "Expected uncleared merchant activation to fail"
+            exit 1
+          fi
+          grep -Eq "legal/compliance clearance|evidenced PCI|sanctions and restricted-business evidence" /tmp/merchant-active-error.txt
+
+      - name: Verify customer-state pack blocks checkout legal gate
+        run: |
+          sqlite3 /tmp/builtegrity-legal.db "UPDATE transactions SET customer_attested_country_code='US',customer_attested_state_code='CA',customer_attested_at=CURRENT_TIMESTAMP WHERE id='TX-0001';"
+          if sqlite3 /tmp/builtegrity-legal.db "UPDATE transactions SET checkout_legal_gate_at=CURRENT_TIMESTAMP WHERE id='TX-0001';" 2>/tmp/customer-state-gate.txt; then
+            echo "Expected uncleared California customer-state pack to fail closed"
+            exit 1
+          fi
+          grep -q "customer state transaction pack is not legally cleared" /tmp/customer-state-gate.txt
+
+      - name: Verify PCI status without evidence cannot activate
+        run: |
+          sqlite3 /tmp/builtegrity-legal.db < transaction-engine/ci-legal-clearance.sql
+          sqlite3 /tmp/builtegrity-legal.db "UPDATE merchants SET status='TEST' WHERE id='MER-0001'; UPDATE platform_compliance_controls SET pci_validation_reference=NULL WHERE id='GLOBAL';"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT state FROM platform_legal_readiness;")" = "BLOCKED"
+          if sqlite3 /tmp/builtegrity-legal.db "UPDATE merchants SET status='ACTIVE' WHERE id='MER-0001';" 2>/tmp/pci-evidence.txt; then
+            echo "Expected missing PCI evidence to block activation"
+            exit 1
+          fi
+          grep -q "PCI" /tmp/pci-evidence.txt
+
+      - name: Rebuild schema for remaining tests
+        run: |
+          rm -f /tmp/builtegrity-legal.db
+          for migration in migrations/*.sql; do sqlite3 /tmp/builtegrity-legal.db < "$migration"; done
+          sqlite3 /tmp/builtegrity-legal.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify USD-only database boundary
+        run: |
+          if sqlite3 /tmp/builtegrity-legal.db "UPDATE transactions SET currency='EUR' WHERE id='TX-0001';" 2>/tmp/nonusd.txt; then
+            echo "Expected non-USD transaction to fail"
+            exit 1
+          fi
+          grep -q "USD transactions only" /tmp/nonusd.txt
+
+      - name: Verify legal documents start as unapproved drafts
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM legal_document_versions WHERE status='DRAFT';")" -ge "8"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM legal_document_versions WHERE status='APPROVED';")" = "0"
+
+      - name: Verify legal acceptance evidence is immutable
+        run: |
+          sqlite3 /tmp/builtegrity-legal.db "INSERT INTO merchant_legal_acceptances(id,merchant_id,external_user_id,document_type,document_version) VALUES('MLA-CI','MER-0001','user_ci','PLATFORM_AGREEMENT','draft-ci');"
+          if sqlite3 /tmp/builtegrity-legal.db "UPDATE merchant_legal_acceptances SET document_version='rewritten' WHERE id='MLA-CI';" 2>/tmp/legal-evidence.txt; then
+            echo "Expected legal acceptance evidence to be immutable"
+            exit 1
+          fi
+          grep -q "immutable" /tmp/legal-evidence.txt
+
+      - name: Verify privacy security state and retention machinery exists
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM pragma_table_info('privacy_requests');")" -gt "5"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM pragma_table_info('security_incidents');")" -gt "10"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM data_retention_policies;")" -ge "5"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM compliance_obligations WHERE obligation_type='REQUIRED';")" -ge "18"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM service_provider_registry WHERE personal_data_access=1 OR financial_data_access=1;")" -ge "5"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM state_jurisdiction_support WHERE state_code='RI';")" = "1"
+
+      - name: Verify merchant-authenticated acceptance route is isolated from owner auth
+        run: |
+          grep -q "authenticateClerkSession" worker/src/merchant-compliance-routes.js
+          grep -q "requireMerchantMembership" worker/src/merchant-compliance-routes.js
+          grep -q "recordMerchantLegalAcceptances" worker/src/merchant-compliance-routes.js
+          grep -q "Cross-origin merchant compliance request rejected" worker/src/merchant-compliance-routes.js
+          grep -q "handleMerchantComplianceRoute" worker/src/records.js
+          ! grep -q "requireOperator" worker/src/merchant-compliance-routes.js
+
+      - name: Verify Stripe path stays direct charge and card only
+        run: |
+          grep -q "accountId: tx.processor_account_id" worker/src/stripe.js
+          grep -q "payment_method_types\[0\].*card" worker/src/stripe.js
+          grep -q "billing_address_collection.*required" worker/src/stripe.js
+          grep -q "payment_intent_data\[application_fee_amount\]" worker/src/stripe.js
+          grep -q "assertMerchantLegalReadyForLiveAction" worker/src/stripe.js
+          grep -q "assertCustomerStateReady" worker/src/stripe.js
+          ! grep -R "stripeRequest(env, '/v1/transfers'.*POST" worker/src
+          ! grep -R "stripeRequest(env, '/v1/topups'.*POST" worker/src
+          ! grep -R "transfer_data\|destination\[\|on_behalf_of" worker/src
+
+      - name: Verify no raw card or tax-ID columns were added
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM pragma_table_info('customers') WHERE lower(name) IN ('card_number','pan','cvc','cvv','ssn','ein','tin','routing_number','bank_account_number','password');")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT COUNT(*) FROM pragma_table_info('transactions') WHERE lower(name) IN ('card_number','pan','cvc','cvv','ssn','ein','tin','routing_number','bank_account_number','password');")" = "0"
+
+      - name: Verify public legal and payment disclosures exist
+        run: |
+          test -s public/privacy/index.html
+          test -s public/terms/index.html
+          test -s public/legal/dpa/index.html
+          test -s public/legal/acceptable-use/index.html
+          test -s public/legal/fees/index.html
+          test -s public/legal/electronic-records/index.html
+          test -s public/legal/security/index.html
+          test -s public/legal/subprocessors/index.html
+          ! grep -R "This legacy Builtegrity route is no longer in use" public/privacy public/terms public/legal
+          grep -q "Stripe processes" public/pay/index.html
+          grep -q "not the seller, bank, insurer, or guarantor" public/pay/index.html
+
+      - name: Verify required internal programs exist
+        run: |
+          test -s docs/legal-compliance-program.md
+          test -s docs/information-security-program.md
+          test -s docs/incident-response-plan.md
+          test -s docs/data-retention-policy.md
+          test -s docs/sales-tax-program.md
+          test -s docs/international-expansion-gates.md
+          test -s docs/state-jurisdiction-program.md
+          grep -q "Rhode Island sales-tax" docs/legal-compliance-program.md
+          grep -q "money-transmitter" docs/legal-compliance-program.md
+          grep -q "INTERNATIONAL DISABLED" docs/international-expansion-gates.md
+
+      - name: Verify a fully evidenced synthetic state can activate
+        run: |
+          sqlite3 /tmp/builtegrity-legal.db < transaction-engine/ci-legal-clearance.sql
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT state FROM platform_legal_readiness;")" = "READY"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT legal_state FROM merchant_legal_readiness WHERE merchant_id='MER-0001';")" = "READY"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT merchant_onboarding_status FROM state_jurisdiction_support WHERE state_code='RI';")" = "READY"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT customer_transaction_status FROM state_jurisdiction_support WHERE state_code='RI';")" = "READY"
+          sqlite3 /tmp/builtegrity-legal.db "UPDATE merchants SET stripe_fee_payer='stripe',stripe_loss_liability='stripe',stripe_account_type='standard',tax_form_responsibility='STRIPE_EXPECTED',status='ACTIVE' WHERE id='MER-0001';"
+          test "$(sqlite3 /tmp/builtegrity-legal.db "SELECT status FROM merchants WHERE id='MER-0001';")" = "ACTIVE"

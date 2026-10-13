@@ -1,6 +1,18 @@
 const card = document.querySelector('#paymentCard');
 const token = new URLSearchParams(location.search).get('token');
 
+const US_STATES = [
+  ['AL','Alabama'],['AK','Alaska'],['AZ','Arizona'],['AR','Arkansas'],['CA','California'],['CO','Colorado'],
+  ['CT','Connecticut'],['DE','Delaware'],['DC','District of Columbia'],['FL','Florida'],['GA','Georgia'],['HI','Hawaii'],
+  ['ID','Idaho'],['IL','Illinois'],['IN','Indiana'],['IA','Iowa'],['KS','Kansas'],['KY','Kentucky'],['LA','Louisiana'],
+  ['ME','Maine'],['MD','Maryland'],['MA','Massachusetts'],['MI','Michigan'],['MN','Minnesota'],['MS','Mississippi'],
+  ['MO','Missouri'],['MT','Montana'],['NE','Nebraska'],['NV','Nevada'],['NH','New Hampshire'],['NJ','New Jersey'],
+  ['NM','New Mexico'],['NY','New York'],['NC','North Carolina'],['ND','North Dakota'],['OH','Ohio'],['OK','Oklahoma'],
+  ['OR','Oregon'],['PA','Pennsylvania'],['RI','Rhode Island'],['SC','South Carolina'],['SD','South Dakota'],
+  ['TN','Tennessee'],['TX','Texas'],['UT','Utah'],['VT','Vermont'],['VA','Virginia'],['WA','Washington'],
+  ['WV','West Virginia'],['WI','Wisconsin'],['WY','Wyoming'],
+];
+
 function money(cents, currency = 'USD') {
   const value = Number(cents || 0) / 100;
   try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: String(currency || 'USD').toUpperCase() }).format(value); }
@@ -20,6 +32,13 @@ async function api(path, options = {}) {
   return data;
 }
 
+function stateOptions(selected = '') {
+  return [
+    '<option value="">Select billing state…</option>',
+    ...US_STATES.map(([code, name]) => `<option value="${code}"${selected === code ? ' selected' : ''}>${escapeHtml(name)} (${code})</option>`),
+  ].join('');
+}
+
 async function load() {
   if (!token) {
     card.innerHTML = '<h2>Invalid payment link</h2><p class="error">This payment URL is missing its access token.</p>';
@@ -36,6 +55,10 @@ async function load() {
 
 function render(payment) {
   const accepted = Boolean(payment.consent_accepted);
+  const jurisdictionAttested = Boolean(payment.customer_jurisdiction_attested);
+  const readyForCheckout = accepted && jurisdictionAttested;
+  const currentState = String(payment.customer_attested_state_code || '').toUpperCase();
+
   card.innerHTML = `
     <p class="eyebrow">${escapeHtml(payment.merchant_name)}</p>
     <h1 style="font-size:clamp(30px,7vw,48px)">${escapeHtml(payment.transaction_description)}</h1>
@@ -52,41 +75,70 @@ function render(payment) {
     ${payment.refund_policy ? `<p><strong>Refund policy:</strong> ${escapeHtml(payment.refund_policy)}</p>` : ''}
     ${payment.cancellation_policy ? `<p><strong>Cancellation policy:</strong> ${escapeHtml(payment.cancellation_policy)}</p>` : ''}
 
-    ${accepted ? `
-      <div class="notice" style="margin-top:18px">Terms acceptance has already been recorded for this transaction.</div>
-      <div class="actions"><button id="payButton">Continue to secure Stripe payment</button></div>
-    ` : `
+    ${accepted ? '<div class="notice" style="margin-top:18px">Terms acceptance has already been recorded for this transaction.</div>' : `
       <label class="checkline">
         <input id="acceptTerms" type="checkbox">
         <span>I have reviewed and accept the terms shown above for this payment.</span>
       </label>
-      <div class="actions"><button id="continueButton" disabled>Accept terms and continue to Stripe</button></div>
+    `}
+
+    ${readyForCheckout ? `
+      <div class="notice" style="margin-top:12px">U.S. billing jurisdiction confirmed: ${escapeHtml(currentState)}.</div>
+      <div class="actions"><button id="payButton">Continue to secure Stripe payment</button></div>
+    ` : `
+      <div class="panel" style="margin-top:16px;padding:16px">
+        <h3 style="margin-top:0">Billing jurisdiction</h3>
+        <p class="muted">Builtegrity V1 supports U.S. customer payments only. Stripe will collect your full billing address securely; Builtegrity only records the country/state needed for legal and tax jurisdiction checks.</p>
+        <label for="billingState"><strong>Billing state</strong></label>
+        <select id="billingState" style="width:100%;margin-top:8px">${stateOptions(currentState)}</select>
+        <label class="checkline" style="margin-top:14px">
+          <input id="confirmJurisdiction" type="checkbox">
+          <span>I confirm that my billing address for this payment is in the United States and in the state selected above.</span>
+        </label>
+      </div>
+      <div class="actions"><button id="continueButton" disabled>${accepted ? 'Confirm jurisdiction and continue to Stripe' : 'Accept terms and continue to Stripe'}</button></div>
     `}
     <p id="status" class="muted"></p>
   `;
 
-  if (accepted) {
+  if (readyForCheckout) {
     document.querySelector('#payButton').addEventListener('click', startCheckout);
-  } else {
-    const checkbox = document.querySelector('#acceptTerms');
-    const button = document.querySelector('#continueButton');
-    checkbox.addEventListener('change', () => { button.disabled = !checkbox.checked; });
-    button.addEventListener('click', async () => {
-      button.disabled = true;
-      setStatus('Recording your acceptance…');
-      try {
-        await api(`/api/payments/${encodeURIComponent(token)}/consent`, {
-          method: 'POST',
-          body: JSON.stringify({ accepted: true }),
-        });
-        setStatus('Acceptance recorded. Opening Stripe…');
-        await startCheckout();
-      } catch (error) {
-        setStatus(error.message, true);
-        button.disabled = false;
-      }
-    });
+    return;
   }
+
+  const termsCheckbox = document.querySelector('#acceptTerms');
+  const jurisdictionCheckbox = document.querySelector('#confirmJurisdiction');
+  const stateSelect = document.querySelector('#billingState');
+  const button = document.querySelector('#continueButton');
+
+  const refreshEnabled = () => {
+    const termsOk = accepted || Boolean(termsCheckbox?.checked);
+    const jurisdictionOk = Boolean(jurisdictionCheckbox?.checked) && Boolean(stateSelect?.value);
+    button.disabled = !(termsOk && jurisdictionOk);
+  };
+  termsCheckbox?.addEventListener('change', refreshEnabled);
+  jurisdictionCheckbox?.addEventListener('change', refreshEnabled);
+  stateSelect?.addEventListener('change', refreshEnabled);
+
+  button.addEventListener('click', async () => {
+    button.disabled = true;
+    setStatus(accepted ? 'Recording your jurisdiction confirmation…' : 'Recording your acceptance and jurisdiction confirmation…');
+    try {
+      await api(`/api/payments/${encodeURIComponent(token)}/consent`, {
+        method: 'POST',
+        body: JSON.stringify({
+          accepted: true,
+          customer_country_code: 'US',
+          customer_state_code: stateSelect.value,
+        }),
+      });
+      setStatus('Confirmation recorded. Opening Stripe…');
+      await startCheckout();
+    } catch (error) {
+      setStatus(error.message, true);
+      refreshEnabled();
+    }
+  });
 }
 
 async function startCheckout() {
