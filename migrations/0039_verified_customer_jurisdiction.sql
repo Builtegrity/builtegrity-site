@@ -1,7 +1,7 @@
 PRAGMA foreign_keys = ON;
 
 -- A default country must never be mistaken for verified jurisdiction evidence.
-ALTER TABLE customers ADD COLUMN state_code TEXT;
+-- customers.state_code is introduced by the preceding jurisdiction-catalog migration.
 ALTER TABLE customers ADD COLUMN postal_code TEXT;
 ALTER TABLE customers ADD COLUMN jurisdiction_source TEXT NOT NULL DEFAULT 'UNVERIFIED'
   CHECK (jurisdiction_source IN ('UNVERIFIED','MERCHANT_INPUT','CUSTOMER_ATTESTATION','STRIPE_BILLING','MANUAL_REVIEW'));
