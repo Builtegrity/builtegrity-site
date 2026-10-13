@@ -57,11 +57,18 @@ export async function createTrackedCheckout(env, tx) {
   if (!tx.payment_access_token) {
     throw new Error(`Transaction ${tx.id} does not have a customer payment access token`);
   }
+  if (String(tx.currency || 'USD').toUpperCase() !== 'USD') {
+    throw new Error('Builtegrity V1 supports USD checkout only');
+  }
 
   const baseUrl = env.APP_BASE_URL || 'http://localhost:8787';
   const publicToken = encodeURIComponent(tx.payment_access_token);
   const form = {
     mode: 'payment',
+    // V1 deliberately permits cards only. Enabling bank debits, wallets, BNPL or other methods
+    // requires a separate legal/operational review before changing this allowlist.
+    'payment_method_types[0]': 'card',
+    billing_address_collection: 'required',
     success_url: `${baseUrl}/pay/success/?token=${publicToken}`,
     cancel_url: `${baseUrl}/pay/?token=${publicToken}`,
     client_reference_id: tx.id,
