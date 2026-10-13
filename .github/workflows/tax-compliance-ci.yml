@@ -103,4 +103,6 @@ jobs:
           grep -q "/api/tax/company/status" worker/src/runtime.js
           grep -q "/tax-profile" worker/src/runtime.js
           grep -q "direct_autofiling_allowed INTEGER NOT NULL DEFAULT 0 CHECK (direct_autofiling_allowed = 0)" migrations/0028_tax_compliance_automation.sql
-          grep -q "BLOCKED_PROFILE_UNKNOWN" worker/src/company-tax-workpapers.js
+          grep -q "BLOCKED_PROFILE_UNKNOWN" worker/src/company-tax-profile.js
+          grep -q "companyAutomationState(profile)" worker/src/company-tax-workpapers.js
+          grep -q "return { blocked: true, automation_state: automationState, quarter: null, year: null }" worker/src/company-tax-workpapers.js
