@@ -15,6 +15,7 @@ import {
 } from './stripe.js';
 import { processStripeWebhook } from './webhooks.js';
 import { priceTransaction } from './pricing.js';
+import { assertMerchantProcessorEconomicsSafe } from './financial-safety.js';
 
 const FORBIDDEN_TRANSACTION_PRICING_INPUTS = [
   'integrity_fee_earned_cents',
@@ -178,6 +179,14 @@ async function handleCheckout(env, token) {
   if (isExpired(tx.payment_access_expires_at)) return json({ error: 'Payment link expired' }, 410);
   if (!Number(tx.consent_accepted)) return json({ error: 'Terms must be accepted before payment' }, 409);
 
+  assertMerchantProcessorEconomicsSafe({
+    id: tx.merchant_id,
+    status: tx.merchant_status,
+    integration_mode: tx.merchant_integration_mode,
+    stripe_fee_payer: tx.stripe_fee_payer,
+    stripe_loss_liability: tx.stripe_loss_liability,
+  });
+
   if (tx.stripe_checkout_url && ['CREATED', 'CONSENTED', 'PAYMENT_PENDING'].includes(tx.lifecycle_status)) {
     return json({ url: tx.stripe_checkout_url, checkout_session_id: tx.stripe_checkout_session_id });
   }
@@ -205,6 +214,7 @@ async function handleCreateTransaction(request, env) {
   if (!body.merchant_id) return json({ error: 'merchant_id is required' }, 400);
   const merchant = await env.DB.prepare(`SELECT * FROM merchants WHERE id = ?`).bind(body.merchant_id).first();
   if (!merchant) return json({ error: 'Merchant not found' }, 404);
+  assertMerchantProcessorEconomicsSafe(merchant);
 
   const txInput = body.transaction || {};
   const pricingOverrides = FORBIDDEN_TRANSACTION_PRICING_INPUTS.filter((key) =>
@@ -336,15 +346,37 @@ async function handleVerifyMerchant(env, merchantId) {
   const account = await retrieveConnectedAccount(env, merchant.processor_account_id);
   const payoutInterval = account.settings?.payouts?.schedule?.interval || null;
   const automaticPayouts = payoutInterval ? payoutInterval !== 'manual' : null;
-  const compatible = Boolean(account.charges_enabled && account.payouts_enabled && automaticPayouts !== false);
+  const feePayer = normalizeStripeResponsibility(account.controller?.fees?.payer);
+  const lossLiability = normalizeStripeResponsibility(account.controller?.losses?.payments);
+  const financialResponsibilitySafe = feePayer === 'stripe' && lossLiability === 'stripe';
+  const processorReady = Boolean(account.charges_enabled && account.payouts_enabled && automaticPayouts !== false);
+  const compatible = processorReady && financialResponsibilitySafe;
+  const explicitlyUnsafe = feePayer === 'application' || lossLiability === 'application';
+  const nextStatus = explicitlyUnsafe ? 'PAUSED' : compatible ? 'ACTIVE' : 'TEST';
 
   await env.DB.prepare(`
     UPDATE merchants
-       SET status = ?, updated_at = COALESCE(updated_at, created_at)
+       SET status = ?,
+           stripe_charges_enabled = ?,
+           stripe_payouts_enabled = ?,
+           stripe_details_submitted = ?,
+           stripe_payout_interval = ?,
+           stripe_fee_payer = ?,
+           stripe_loss_liability = ?,
+           stripe_financial_responsibility_checked_at = CURRENT_TIMESTAMP,
+           stripe_last_account_update_at = CURRENT_TIMESTAMP,
+           updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
-  `).bind(compatible ? 'ACTIVE' : 'TEST', merchantId).run().catch(async () => {
-    await env.DB.prepare(`UPDATE merchants SET status = ? WHERE id = ?`).bind(compatible ? 'ACTIVE' : 'TEST', merchantId).run();
-  });
+  `).bind(
+    nextStatus,
+    account.charges_enabled ? 1 : 0,
+    account.payouts_enabled ? 1 : 0,
+    account.details_submitted ? 1 : 0,
+    payoutInterval,
+    feePayer,
+    lossLiability,
+    merchantId,
+  ).run();
 
   return json({
     compatible,
@@ -354,6 +386,10 @@ async function handleVerifyMerchant(env, merchantId) {
     payout_interval: payoutInterval,
     automatic_payouts: automaticPayouts,
     details_submitted: Boolean(account.details_submitted),
+    processing_fee_payer: feePayer,
+    payment_loss_liability: lossLiability,
+    financial_responsibility_safe: financialResponsibilitySafe,
+    status: nextStatus,
   });
 }
 
@@ -433,7 +469,11 @@ async function findByPaymentToken(env, token) {
       p.merchant_reference,
       p.description AS purchase_description,
       m.name AS merchant_name,
+      m.status AS merchant_status,
+      m.integration_mode AS merchant_integration_mode,
       m.processor_account_id,
+      m.stripe_fee_payer,
+      m.stripe_loss_liability,
       c.email AS customer_email
     FROM transactions t
     JOIN purchases p ON p.id = t.purchase_id
@@ -464,6 +504,11 @@ function timingSafeEqual(a, b) {
   let mismatch = 0;
   for (let i = 0; i < a.length; i += 1) mismatch |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return mismatch === 0;
+}
+
+function normalizeStripeResponsibility(value) {
+  const normalized = String(value || '').toLowerCase();
+  return ['stripe', 'application'].includes(normalized) ? normalized : null;
 }
 
 async function sha256Hex(value) {

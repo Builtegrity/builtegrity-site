@@ -19,6 +19,8 @@ jobs:
           node --check worker/src/case-router.js
           node --check worker/src/stripe-account-events.js
           node --check worker/src/runtime.js
+          node --check worker/src/financial-safety.js
+          node --check worker/src/financial-safety-monitor.js
           node --check public/console/app.js
 
       - name: Build full D1 schema and seed TX-0001
@@ -32,11 +34,12 @@ jobs:
 
       - name: Verify finite internal case catalog
         run: |
-          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_types;")" = "13"
-          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_actions;")" -ge "30"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_types;")" = "14"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_actions;")" -ge "33"
           test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COALESCE(MAX(action_count),0) FROM (SELECT COUNT(*) action_count FROM internal_case_actions WHERE enabled=1 AND requires_human=1 GROUP BY case_type_code);")" -le "3"
           test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_types WHERE code='UNKNOWN_EXCEPTION';")" = "1"
           test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_types WHERE code='CATASTROPHIC_INCIDENT';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-cases.db "SELECT COUNT(*) FROM internal_case_types WHERE code='FINANCIAL_SOLVENCY_RISK';")" = "1"
 
       - name: Verify database rejects a fourth human action
         run: |
@@ -64,10 +67,13 @@ jobs:
           fi
           grep -q 'append-only' /tmp/immutable-action-error.txt
 
-      - name: Verify merchant-first routing and account remediation
+      - name: Verify merchant-first routing and financial safety routing
         run: |
           grep -q "tx:payout-failed:" worker/src/case-router.js
           grep -q "owner: 'MERCHANT'" worker/src/case-router.js
+          grep -q "merchant:financial-responsibility:" worker/src/case-router.js
+          grep -q "finance:solvency-brake" worker/src/case-router.js
+          grep -q "FINANCIAL_SOLVENCY_RISK" worker/src/case-router.js
           grep -q "account.updated" worker/src/runtime.js
           grep -q "RESOLVE_WITH_STRIPE" worker/src/stripe-account-events.js
           grep -q "RECONNECT_STRIPE" worker/src/stripe-account-events.js

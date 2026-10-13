@@ -29,6 +29,14 @@ import {
   registerMerchantTransactionSource,
   updateMerchantTransactionPreferences,
 } from './transaction-intelligence.js';
+import {
+  getFinancialSafetyStatus,
+  recordFinancialModelReview,
+  recordFinancialPosition,
+} from './financial-safety.js';
+import { monitorFinancialSafety, syncFinancialSafetyAlerts } from './financial-safety-monitor.js';
+
+const FINANCIAL_DECISION_MAX_AGE_MINUTES = 30;
 
 export default {
   async fetch(request, env, ctx) {
@@ -169,10 +177,35 @@ export default {
         const executed = await executeInternalCaseAction(env, caseActionMatch[1], caseActionMatch[2], principal, body);
 
         // Every operator action is verified by the machine; humans never decide that a technical alert is cleared.
+        const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
         const watchdog = await runWatchdogs(env, { kind: 'FAST', trigger: `case:${caseActionMatch[1]}:${caseActionMatch[2]}` });
         const routing = await syncInternalCasesFromWatchdogs(env);
         const verified = await verifyInternalCase(env, caseActionMatch[1]);
-        return json({ executed, watchdog, routing, case: verified });
+        return json({ executed, financial_safety: financial, watchdog, routing, case: verified });
+      }
+
+      if (path === '/api/finance/status' && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getFinancialSafetyStatus(env));
+      }
+
+      if (path === '/api/finance/snapshot' && request.method === 'POST') {
+        const principal = await requireOperator(request, env);
+        const result = await recordFinancialPosition(env, await readJson(request), principal);
+        await syncFinancialSafetyAlerts(env, result.safety);
+        return json(result, 201);
+      }
+
+      if (path === '/api/finance/model-review' && request.method === 'POST') {
+        const principal = await requireOperator(request, env);
+        const result = await recordFinancialModelReview(env, await readJson(request), principal);
+        await syncFinancialSafetyAlerts(env, result.safety);
+        return json(result, 201);
+      }
+
+      if (path === '/api/finance/evaluate' && request.method === 'POST') {
+        await requireOperator(request, env);
+        return json(await monitorFinancialSafety(env, { refreshProcessorBalance: true }));
       }
 
       if (path === '/api/watchdogs/status' && request.method === 'GET') {
@@ -183,9 +216,10 @@ export default {
       if (path === '/api/watchdogs/run' && request.method === 'POST') {
         await requireOperator(request, env);
         requireSameOriginBrowserRequest(request, url);
+        const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
         const watchdog = await runWatchdogs(env, { kind: 'MANUAL', trigger: 'operator' });
         const routing = await syncInternalCasesFromWatchdogs(env);
-        return json({ ...watchdog, case_routing: routing });
+        return json({ ...watchdog, financial_safety: financial, case_routing: routing });
       }
 
       if (path.startsWith('/console')) {
@@ -194,7 +228,7 @@ export default {
         return env.ASSETS.fetch(request);
       }
 
-      // Catastrophic controls are enforced before requests enter the core engine.
+      // Catastrophic and financial controls are enforced before requests enter the core engine.
       if (path === '/api/transactions' && request.method === 'POST') {
         await requireOperator(request, env);
         await requirePlatformControl(env, 'transaction_creation_enabled', 'New transaction creation');
@@ -221,11 +255,12 @@ export default {
 
   async scheduled(controller, env) {
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
+    const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const result = await runWatchdogs(env, { kind, trigger: controller.cron || 'cron' });
     const routing = await syncInternalCasesFromWatchdogs(env);
-    console.log('Builtegrity watchdog run', { ...result, case_routing: routing });
-    if (result.status === 'FAIL') {
-      throw new Error(`Builtegrity watchdog detected ${result.critical} critical alert(s)`);
+    console.log('Builtegrity watchdog run', { ...result, financial_safety: financial, case_routing: routing });
+    if (result.status === 'FAIL' || financial.state === 'RED') {
+      throw new Error(`Builtegrity safety monitor failed: watchdog_critical=${result.critical}, financial_state=${financial.state}`);
     }
   },
 };
@@ -369,14 +404,21 @@ async function handleOAuthCallback(url, env) {
     UPDATE stripe_oauth_states SET consumed_at = CURRENT_TIMESTAMP WHERE state_token = ?
   `).bind(state).run();
 
-  const controls = await env.DB.prepare(`SELECT merchant_onboarding_enabled FROM platform_controls WHERE id = 'GLOBAL'`).first().catch(() => null);
-  const merchantStatus = controls && Number(controls.merchant_onboarding_enabled) !== 1 ? 'PAUSED' : 'TEST';
+  let merchantStatus = 'TEST';
+  try {
+    await requirePlatformControl(env, 'merchant_onboarding_enabled', 'Merchant onboarding');
+  } catch {
+    merchantStatus = 'PAUSED';
+  }
 
   await env.DB.prepare(`
     UPDATE merchants
        SET processor_account_id = ?,
            integration_mode = 'STRIPE_CONNECT',
            status = ?,
+           stripe_fee_payer = NULL,
+           stripe_loss_liability = NULL,
+           stripe_financial_responsibility_checked_at = NULL,
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
   `).bind(result.stripe_user_id, merchantStatus, stateRow.merchant_id).run();
@@ -423,6 +465,9 @@ async function handleDisconnect(env, merchantId) {
            stripe_details_submitted = NULL,
            stripe_payout_interval = NULL,
            stripe_requirements_due_json = NULL,
+           stripe_fee_payer = NULL,
+           stripe_loss_liability = NULL,
+           stripe_financial_responsibility_checked_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
   `).bind(merchantId).run();
@@ -433,11 +478,70 @@ async function handleDisconnect(env, merchantId) {
 async function requirePlatformControl(env, column, label) {
   const allowed = new Set(['transaction_creation_enabled', 'payment_creation_enabled', 'merchant_onboarding_enabled']);
   if (!allowed.has(column)) throw new Error(`Unknown platform control: ${column}`);
+
   const controls = await env.DB.prepare(`SELECT ${column} AS enabled, reason FROM platform_controls WHERE id = 'GLOBAL'`).first().catch(() => null);
-  if (!controls || Number(controls.enabled) === 1) return;
-  const error = new Error(`${label} is temporarily paused by Builtegrity safety controls${controls.reason ? `: ${controls.reason}` : ''}`);
-  error.status = 503;
-  throw error;
+  if (controls && Number(controls.enabled) !== 1) {
+    const error = new Error(`${label} is temporarily paused by Builtegrity safety controls${controls.reason ? `: ${controls.reason}` : ''}`);
+    error.status = 503;
+    throw error;
+  }
+
+  const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').toUpperCase();
+  const mustHaveFinancialSafety = ['PILOT', 'LIVE'].includes(stage);
+  const financialColumn = {
+    merchant_onboarding_enabled: 'merchant_onboarding_allowed',
+    transaction_creation_enabled: 'transaction_creation_allowed',
+    payment_creation_enabled: 'payment_creation_allowed',
+  }[column];
+
+  const financial = await env.DB.prepare(`
+    SELECT state, enforcement_active, ${financialColumn} AS allowed, reason_codes_json, evaluated_at
+    FROM financial_safety_state WHERE id='GLOBAL'
+  `).first().catch(() => null);
+
+  if (!financial) {
+    if (mustHaveFinancialSafety) {
+      const error = new Error(`${label} is paused because the financial safety engine is unavailable.`);
+      error.status = 503;
+      throw error;
+    }
+    return;
+  }
+
+  if (mustHaveFinancialSafety && Number(financial.enforcement_active) !== 1) {
+    const error = new Error(`${label} is paused until the financial safety engine completes an enforced evaluation.`);
+    error.status = 503;
+    throw error;
+  }
+
+  if (mustHaveFinancialSafety && minutesAgo(financial.evaluated_at) > FINANCIAL_DECISION_MAX_AGE_MINUTES) {
+    const error = new Error(`${label} is paused because the financial safety decision is stale. The monitor must complete a fresh evaluation before activity resumes.`);
+    error.status = 503;
+    throw error;
+  }
+
+  if (Number(financial.enforcement_active) === 1 && Number(financial.allowed) !== 1) {
+    const reasons = parseReasonCodes(financial.reason_codes_json);
+    const error = new Error(`${label} is paused by Builtegrity financial safety${reasons.length ? `: ${reasons.join(', ')}` : ''}`);
+    error.status = 503;
+    throw error;
+  }
+}
+
+function minutesAgo(value) {
+  const time = Date.parse(value || '');
+  if (!Number.isFinite(time)) return Number.POSITIVE_INFINITY;
+  return Math.max(0, (Date.now() - time) / 60000);
+}
+
+function parseReasonCodes(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.slice(0, 10).map((item) => String(item)) : [];
+  } catch {
+    return [];
+  }
 }
 
 function redirectToConsole(env, values) {
