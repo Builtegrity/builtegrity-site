@@ -29,6 +29,12 @@ import {
   registerMerchantTransactionSource,
   updateMerchantTransactionPreferences,
 } from './transaction-intelligence.js';
+import {
+  evaluateFinancialSafety,
+  getFinancialSafetyStatus,
+  recordFinancialModelReview,
+  recordFinancialPosition,
+} from './financial-safety.js';
 
 export default {
   async fetch(request, env, ctx) {
@@ -175,6 +181,26 @@ export default {
         return json({ executed, watchdog, routing, case: verified });
       }
 
+      if (path === '/api/finance/status' && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getFinancialSafetyStatus(env));
+      }
+
+      if (path === '/api/finance/snapshot' && request.method === 'POST') {
+        const principal = await requireOperator(request, env);
+        return json(await recordFinancialPosition(env, await readJson(request), principal), 201);
+      }
+
+      if (path === '/api/finance/model-review' && request.method === 'POST') {
+        const principal = await requireOperator(request, env);
+        return json(await recordFinancialModelReview(env, await readJson(request), principal), 201);
+      }
+
+      if (path === '/api/finance/evaluate' && request.method === 'POST') {
+        await requireOperator(request, env);
+        return json(await evaluateFinancialSafety(env, { refreshProcessorBalance: true }));
+      }
+
       if (path === '/api/watchdogs/status' && request.method === 'GET') {
         await requireOperator(request, env);
         return json(await getWatchdogStatus(env));
@@ -194,7 +220,7 @@ export default {
         return env.ASSETS.fetch(request);
       }
 
-      // Catastrophic controls are enforced before requests enter the core engine.
+      // Catastrophic and financial controls are enforced before requests enter the core engine.
       if (path === '/api/transactions' && request.method === 'POST') {
         await requireOperator(request, env);
         await requirePlatformControl(env, 'transaction_creation_enabled', 'New transaction creation');
@@ -369,14 +395,21 @@ async function handleOAuthCallback(url, env) {
     UPDATE stripe_oauth_states SET consumed_at = CURRENT_TIMESTAMP WHERE state_token = ?
   `).bind(state).run();
 
-  const controls = await env.DB.prepare(`SELECT merchant_onboarding_enabled FROM platform_controls WHERE id = 'GLOBAL'`).first().catch(() => null);
-  const merchantStatus = controls && Number(controls.merchant_onboarding_enabled) !== 1 ? 'PAUSED' : 'TEST';
+  let merchantStatus = 'TEST';
+  try {
+    await requirePlatformControl(env, 'merchant_onboarding_enabled', 'Merchant onboarding');
+  } catch {
+    merchantStatus = 'PAUSED';
+  }
 
   await env.DB.prepare(`
     UPDATE merchants
        SET processor_account_id = ?,
            integration_mode = 'STRIPE_CONNECT',
            status = ?,
+           stripe_fee_payer = NULL,
+           stripe_loss_liability = NULL,
+           stripe_financial_responsibility_checked_at = NULL,
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
   `).bind(result.stripe_user_id, merchantStatus, stateRow.merchant_id).run();
@@ -423,6 +456,9 @@ async function handleDisconnect(env, merchantId) {
            stripe_details_submitted = NULL,
            stripe_payout_interval = NULL,
            stripe_requirements_due_json = NULL,
+           stripe_fee_payer = NULL,
+           stripe_loss_liability = NULL,
+           stripe_financial_responsibility_checked_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
   `).bind(merchantId).run();
@@ -433,11 +469,58 @@ async function handleDisconnect(env, merchantId) {
 async function requirePlatformControl(env, column, label) {
   const allowed = new Set(['transaction_creation_enabled', 'payment_creation_enabled', 'merchant_onboarding_enabled']);
   if (!allowed.has(column)) throw new Error(`Unknown platform control: ${column}`);
+
   const controls = await env.DB.prepare(`SELECT ${column} AS enabled, reason FROM platform_controls WHERE id = 'GLOBAL'`).first().catch(() => null);
-  if (!controls || Number(controls.enabled) === 1) return;
-  const error = new Error(`${label} is temporarily paused by Builtegrity safety controls${controls.reason ? `: ${controls.reason}` : ''}`);
-  error.status = 503;
-  throw error;
+  if (controls && Number(controls.enabled) !== 1) {
+    const error = new Error(`${label} is temporarily paused by Builtegrity safety controls${controls.reason ? `: ${controls.reason}` : ''}`);
+    error.status = 503;
+    throw error;
+  }
+
+  const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').toUpperCase();
+  const mustHaveFinancialSafety = ['PILOT', 'LIVE'].includes(stage);
+  const financialColumn = {
+    merchant_onboarding_enabled: 'merchant_onboarding_allowed',
+    transaction_creation_enabled: 'transaction_creation_allowed',
+    payment_creation_enabled: 'payment_creation_allowed',
+  }[column];
+
+  const financial = await env.DB.prepare(`
+    SELECT state, enforcement_active, ${financialColumn} AS allowed, reason_codes_json, evaluated_at
+    FROM financial_safety_state WHERE id='GLOBAL'
+  `).first().catch(() => null);
+
+  if (!financial) {
+    if (mustHaveFinancialSafety) {
+      const error = new Error(`${label} is paused because the financial safety engine is unavailable.`);
+      error.status = 503;
+      throw error;
+    }
+    return;
+  }
+
+  if (mustHaveFinancialSafety && Number(financial.enforcement_active) !== 1) {
+    const error = new Error(`${label} is paused until the financial safety engine completes an enforced evaluation.`);
+    error.status = 503;
+    throw error;
+  }
+
+  if (Number(financial.enforcement_active) === 1 && Number(financial.allowed) !== 1) {
+    const reasons = parseReasonCodes(financial.reason_codes_json);
+    const error = new Error(`${label} is paused by Builtegrity financial safety${reasons.length ? `: ${reasons.join(', ')}` : ''}`);
+    error.status = 503;
+    throw error;
+  }
+}
+
+function parseReasonCodes(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.slice(0, 10).map((item) => String(item)) : [];
+  } catch {
+    return [];
+  }
 }
 
 function redirectToConsole(env, values) {
