@@ -11,12 +11,12 @@ INSERT OR IGNORE INTO merchants (
   'STRIPE', NULL, 'STRIPE_CONNECT', 1, 'TEST'
 );
 
+-- Keep the base seed compatible with the earliest transaction-engine schema. Later
+-- compliance migrations/fixtures add jurisdiction evidence after the full schema exists.
 INSERT OR IGNORE INTO customers (
-  id, merchant_id, name, email, merchant_customer_reference,
-  country_code, state_code, jurisdiction_source, jurisdiction_verified_at, jurisdiction_match_status
+  id, merchant_id, name, email, merchant_customer_reference
 ) VALUES (
-  'CUST-0001', 'MER-0001', 'John Smith', 'john@example.com', 'CUST-0001',
-  'US', 'RI', 'MERCHANT_INPUT', CURRENT_TIMESTAMP, 'UNVERIFIED'
+  'CUST-0001', 'MER-0001', 'John Smith', 'john@example.com', 'CUST-0001'
 );
 
 INSERT OR IGNORE INTO purchases (
