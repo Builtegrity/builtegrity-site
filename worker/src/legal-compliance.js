@@ -49,6 +49,10 @@ export async function evaluateLegalReadiness(env) {
     (v.next_review_due_at && Date.parse(v.next_review_due_at) <= Date.now())
   );
 
+  const launchState = await env.DB.prepare(`
+    SELECT * FROM state_jurisdiction_support WHERE state_code='RI'
+  `).first().catch(() => null);
+
   const reasons = [];
   if (controls.legal_entity_status !== 'CONFIRMED') reasons.push('LEGAL_ENTITY_UNCONFIRMED');
   if (controls.money_transmission_review_status !== 'CONFIRMED_NON_MSB') reasons.push('MONEY_TRANSMISSION_REVIEW_INCOMPLETE');
@@ -58,6 +62,7 @@ export async function evaluateLegalReadiness(env) {
   if (controls.vendor_contract_status !== 'COMPLETE') reasons.push('VENDOR_CONTRACT_REVIEW_INCOMPLETE');
   if (controls.privacy_program_status !== 'APPROVED') reasons.push('PRIVACY_PROGRAM_NOT_APPROVED');
   if (controls.information_security_program_status !== 'APPROVED') reasons.push('INFORMATION_SECURITY_PROGRAM_NOT_APPROVED');
+  if (!statePackReady(launchState)) reasons.push('RI_STATE_JURISDICTION_PACK_NOT_READY');
   if (missingDocs.length) reasons.push(`LEGAL_DOCUMENTS_MISSING:${missingDocs.join(',')}`);
   if ((obligations.results || []).length) reasons.push(`REQUIRED_OBLIGATIONS_OPEN:${(obligations.results || []).map((o) => o.id).join(',')}`);
   if (vendorFailures.length) reasons.push(`SERVICE_PROVIDER_REVIEWS_OPEN:${vendorFailures.map((v) => v.id).join(',')}`);
@@ -95,6 +100,7 @@ export async function evaluateLegalReadiness(env) {
     state,
     reasons,
     controls: sanitizeControls(controls),
+    launch_state_pack: launchState || null,
     missing_approved_documents: missingDocs,
     open_required_obligations: obligations.results || [],
     service_provider_review_failures: vendorFailures,
@@ -131,17 +137,31 @@ export async function getMerchantComplianceStatus(env, merchantId) {
      WHERE merchant_id=?
      ORDER BY accepted_at DESC
   `).bind(merchantId).all();
+  const statePack = merchant.state_code
+    ? await env.DB.prepare(`SELECT * FROM state_jurisdiction_support WHERE state_code=?`).bind(merchant.state_code).first().catch(() => null)
+    : null;
   const acceptedKeys = new Set((acceptances.results || []).map((a) => `${a.document_type}:${a.document_version}`));
   const missing = approved.filter((doc) => !acceptedKeys.has(`${doc.document_type}:${doc.version}`));
   const reasons=[];
   if (merchant.country_code !== 'US') reasons.push('MERCHANT_COUNTRY_NOT_US');
+  if (!merchant.state_code) reasons.push('MERCHANT_STATE_MISSING');
   if (merchant.customer_market_scope !== 'US_ONLY') reasons.push('MERCHANT_MARKET_NOT_US_ONLY');
   if (merchant.restricted_business_status !== 'CLEARED') reasons.push('RESTRICTED_BUSINESS_REVIEW_NOT_CLEARED');
   if (merchant.sanctions_review_status !== 'CLEAR') reasons.push('SANCTIONS_REVIEW_NOT_CLEAR');
+  if (!statePack) reasons.push('MERCHANT_STATE_NOT_SUPPORTED');
+  else if (!statePackReady(statePack)) reasons.push('MERCHANT_STATE_PACK_NOT_READY');
   if (approved.length !== REQUIRED_MERCHANT_DOCUMENTS.length) reasons.push('REQUIRED_LEGAL_DOCUMENTS_NOT_APPROVED');
   if (missing.length) reasons.push(`LEGAL_ACCEPTANCES_MISSING:${missing.map((d) => d.document_type).join(',')}`);
   const ready=reasons.length===0;
-  return {merchant,ready,reasons,required_documents:approved,acceptances:acceptances.results||[],missing_acceptances:missing};
+  return {
+    merchant,
+    state_pack: statePack || null,
+    ready,
+    reasons,
+    required_documents:approved,
+    acceptances:acceptances.results||[],
+    missing_acceptances:missing,
+  };
 }
 
 export async function recordMerchantLegalAcceptances(env, merchantId, externalUserId, input={}, requestEvidence={}) {
@@ -257,6 +277,20 @@ async function currentApprovedDocuments(env,types){
   `).all();
   const wanted=new Set(types);
   return (result.results||[]).filter((d)=>wanted.has(d.document_type));
+}
+
+function statePackReady(state){
+  if(!state)return false;
+  if(state.merchant_onboarding_status!=='READY')return false;
+  if(!['CLEARED_NON_LICENSED','LICENSE_ACTIVE'].includes(state.money_transmission_review_status))return false;
+  if(!['CLEARED','REGISTERED','NOT_APPLICABLE'].includes(state.sales_tax_review_status))return false;
+  if(state.privacy_review_status!=='CLEARED')return false;
+  if(state.breach_review_status!=='CLEARED')return false;
+  if(!['CLEARED','REGISTERED'].includes(state.entity_nexus_review_status))return false;
+  if(!['CLEARED','REGISTERED','NOT_APPLICABLE'].includes(state.income_tax_review_status))return false;
+  if(state.electronic_transactions_review_status!=='CLEARED')return false;
+  if(state.next_review_due_at&&Date.parse(state.next_review_due_at)<=Date.now())return false;
+  return true;
 }
 
 function sanitizeControls(row){
