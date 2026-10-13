@@ -8,6 +8,16 @@ Builtegrity must remain operable if ChatGPT, Work, a connector, an authenticatio
 - Runtime accounts, domains, secrets, databases, payment-platform accounts, and backups belong to Builtegrity/the owner rather than an AI workspace.
 - ChatGPT and Work may assist with engineering and operations, but they are not runtime dependencies.
 
+## Owner control gate
+
+Provider independence is necessary but not sufficient. A theoretically replaceable provider is still a single point of failure if the owner cannot directly recover the account, export its durable data, rotate credentials, pause it safely, or execute the replacement path without ChatGPT.
+
+The controlling policy is `docs/owner-independence-and-disaster-recovery.md` under policy ID `OWNER-INDEPENDENCE-V1`.
+
+The machine-readable control inventory is `ops/owner-control-manifest.json`. It records each critical system's authority, durable data, secret location, recovery/export path, safe-shutdown path, replacement path and verification state without storing credential values.
+
+Before live commercial processing, every manifest system marked `required_for_live: true` must be `VERIFIED`, and `npm run owner:gate:live` must pass. This is a hard production gate, not an advisory checklist.
+
 ## Locked V1 service boundaries
 
 - GitHub: source code, migrations, CI, technical documentation and infrastructure configuration.
@@ -90,6 +100,8 @@ A future hosting/database migration should change infrastructure adapters, not t
 
 Secrets remain inside owner-controlled provider/runtime secret stores. Google Drive, Google Sheets, GitHub source, and chat may document the *name and intended location* of a credential, but never the credential value itself.
 
+Owner recovery material, MFA backup codes and emergency credential inventory belong in the private Owner Emergency Vault defined by the owner-independence policy, not in this repository.
+
 ## Switching rule
 
 Before adopting any service, ask:
@@ -99,5 +111,6 @@ Before adopting any service, ask:
 3. Can credentials/secrets be moved without changing merchant records?
 4. Can a replacement provider be wired at an adapter boundary?
 5. Does disabling ChatGPT leave the production system operational?
+6. Can the owner personally recover, pause, rotate and migrate the service without AI assistance?
 
-If the answer to #5 is no, the design is rejected.
+If the answer to #5 or #6 is no, the design is rejected.
