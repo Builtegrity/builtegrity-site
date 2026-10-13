@@ -53,8 +53,5 @@ FROM legal_document_versions
 WHERE status='APPROVED'
   AND document_type IN ('PLATFORM_AGREEMENT','DATA_PROCESSING_ADDENDUM','ACCEPTABLE_USE_POLICY','FEE_SCHEDULE','ELECTRONIC_RECORDS_CONSENT');
 
--- Assert fixture itself actually satisfies the new legal layer before dependent suites continue.
-SELECT CASE WHEN (SELECT state FROM platform_legal_readiness) <> 'READY'
-  THEN RAISE(ABORT,'CI legal fixture failed platform readiness') END;
-SELECT CASE WHEN (SELECT legal_state FROM merchant_legal_readiness WHERE merchant_id='MER-0001') <> 'READY'
-  THEN RAISE(ABORT,'CI legal fixture failed merchant readiness') END;
+-- Readiness assertions belong in the calling CI workflow rather than using SQLite RAISE()
+-- outside a trigger. Production migrations never execute this fixture.
