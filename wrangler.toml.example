@@ -38,11 +38,14 @@ PDF_CACHE_HIT_COST_MICROS = "5"
 # Watchdog stage controls which configuration omissions count as failures.
 # Keep PREVIEW until provider accounts are created; then advance TEST -> PILOT -> LIVE.
 WATCHDOG_STAGE = "PREVIEW"
-ALERT_EMAIL_FROM = "Builtegrity Watchdog <alerts@builtegrity.com>"
+# Use the monitored Builtegrity mailbox as the sender so replies cannot disappear into
+# an unmonitored automation-only local part. The display name identifies the message type.
+ALERT_EMAIL_FROM = "Builtegrity Watchdog <hello@builtegrity.com>"
 ALERT_EMAIL_TO = "REPLACE_OWNER_EMAIL"
 
 # Monthly merchant/partner statement delivery. This must be a verified Resend sender.
-STATEMENT_EMAIL_FROM = "Builtegrity Statements <statements@builtegrity.com>"
+# hello@builtegrity.com is also the monitored customer-reply mailbox.
+STATEMENT_EMAIL_FROM = "Builtegrity Statements <hello@builtegrity.com>"
 
 # Primary application identity layer. Clerk proves identity only.
 # D1 merchant_access / partner_access own tenancy, roles, and permissions.
