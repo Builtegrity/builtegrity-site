@@ -3,6 +3,7 @@ import { stripeRequest } from './stripe.js';
 const STAGE_RANK = { PREVIEW: 0, TEST: 1, PILOT: 2, LIVE: 3 };
 const STATE_RANK = { GREEN: 0, YELLOW: 1, ORANGE: 2, UNKNOWN: 3, RED: 4 };
 const MICROS_PER_CENT = 10000;
+const LIVE_FINANCIAL_SOURCES = new Set(['BANK', 'ACCOUNTING', 'COMPOSITE']);
 
 export async function recordFinancialPosition(env, input = {}, principal = null) {
   if (input.attested_complete !== true) {
@@ -194,6 +195,14 @@ export async function evaluateFinancialSafety(env, options = {}) {
     });
   }
 
+  // Manual attestations are a PILOT bridge, not a scaled-production control.
+  if (stage === 'LIVE' && position && !LIVE_FINANCIAL_SOURCES.has(String(position.source || '').toUpperCase())) {
+    worsen('UNKNOWN', 'LIVE_AUTOMATED_FINANCIAL_SOURCE_REQUIRED', {
+      onboarding: false,
+      transactions: false,
+    });
+  }
+
   if (!modelReview || !Number.isFinite(modelAgeDays) || modelAgeDays > Number(policy.model_review_max_age_days)) {
     worsen('UNKNOWN', modelReview ? 'ECONOMIC_MODEL_REVIEW_STALE' : 'ECONOMIC_MODEL_REVIEW_MISSING', {
       onboarding: false,
@@ -276,6 +285,7 @@ export async function evaluateFinancialSafety(env, options = {}) {
 
   const metrics = {
     stage,
+    financial_position_source: position?.source || null,
     position_age_hours: finiteOrNull(positionAgeHours),
     model_review_age_days: finiteOrNull(modelAgeDays),
     processor_balance_age_minutes: finiteOrNull(processorAgeMinutes),
