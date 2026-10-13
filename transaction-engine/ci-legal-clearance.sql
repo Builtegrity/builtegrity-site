@@ -85,5 +85,14 @@ FROM legal_document_versions
 WHERE status='APPROVED'
   AND document_type IN ('PLATFORM_AGREEMENT','DATA_PROCESSING_ADDENDUM','ACCEPTABLE_USE_POLICY','FEE_SCHEDULE','ELECTRONIC_RECORDS_CONSENT');
 
+-- Synthetic transaction evidence used only by CI suites that exercise PROTECTED transitions.
+UPDATE transactions
+SET customer_attested_country_code='US',
+    customer_attested_state_code='RI',
+    customer_attested_at=COALESCE(customer_attested_at,CURRENT_TIMESTAMP),
+    checkout_legal_gate_at=COALESCE(checkout_legal_gate_at,CURRENT_TIMESTAMP),
+    legal_compliance_state=CASE WHEN legal_compliance_state='PENDING' THEN 'CLEARED' ELSE legal_compliance_state END
+WHERE id='TX-0001';
+
 -- Readiness assertions belong in the calling CI workflow rather than using SQLite RAISE()
 -- outside a trigger. Production migrations never execute this fixture.
