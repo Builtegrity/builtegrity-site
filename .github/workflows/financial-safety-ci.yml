@@ -31,6 +31,9 @@ jobs:
             sqlite3 /tmp/builtegrity-financial-safety.db < "$file"
           done
           sqlite3 /tmp/builtegrity-financial-safety.db < transaction-engine/seed-tx-0001.sql
+          sqlite3 /tmp/builtegrity-financial-safety.db < transaction-engine/ci-legal-clearance.sql
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT state FROM platform_legal_readiness;")" = "READY"
+          test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT legal_state FROM merchant_legal_readiness WHERE merchant_id='MER-0001';")" = "READY"
 
       - name: Verify conservative policy defaults
         run: |
