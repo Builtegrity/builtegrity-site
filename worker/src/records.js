@@ -1,7 +1,11 @@
 import { getTransaction } from './db.js';
 import { serveTransactionPdf } from './pdf.js';
+import { handleResendStatementWebhook } from './resend-statement-webhooks.js';
 
 export async function handlePublicRecordRoute(request, env) {
+  const resendWebhookResponse = await handleResendStatementWebhook(request, env);
+  if (resendWebhookResponse) return resendWebhookResponse;
+
   const url = new URL(request.url);
   const match = url.pathname.match(/^\/api\/records\/([^/]+)(\/pdf)?$/);
   if (!match || request.method !== 'GET') return null;
