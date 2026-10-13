@@ -27,6 +27,7 @@ export async function updateMerchantTaxProfile(env, merchantId, input = {}) {
   const state = nullableUpper(input.tax_home_state ?? current.tax_home_state);
   const employees = nullableBooleanInt(input.has_employees ?? current.has_employees, 'has_employees');
   const payroll = enumValue(input.federal_payroll_return ?? current.federal_payroll_return, ['UNKNOWN','NONE','FORM_941','FORM_944'], 'federal_payroll_return');
+  if (employees === 0 && !['NONE','UNKNOWN'].includes(payroll)) throw Object.assign(new Error('A no-employees merchant cannot claim Form 941/944 filing status'), { status: 400 });
   const status = enumValue(input.profile_status ?? current.profile_status, ['UNKNOWN','SELF_ATTESTED','VERIFIED'], 'profile_status');
   const source = enumValue(input.source ?? 'OPERATOR', ['MERCHANT','PROCESSOR','OPERATOR','TAX_PROVIDER'], 'source');
   const notes = input.notes == null ? current.notes : String(input.notes).slice(0, 2000);
@@ -101,7 +102,10 @@ function ruleApplies(rule, profile) {
   const applies = String(rule.applies_to || '').split(',');
   const c = profile.federal_tax_classification;
   if (applies.includes('BUSINESS_PAYER')) return true;
-  if (profile.has_employees === 1 && (applies.includes('EMPLOYER') || applies.includes('EMPLOYER_FORM_941') || applies.includes('RI_EMPLOYER'))) return true;
+  if (profile.has_employees === 1 && applies.includes('EMPLOYER_FORM_941')) return profile.federal_payroll_return !== 'FORM_944';
+  if (profile.has_employees === 1 && applies.includes('EMPLOYER_FORM_944')) return profile.federal_payroll_return === 'FORM_944';
+  if (profile.has_employees === 1 && applies.includes('EMPLOYER_W2')) return true;
+  if (profile.has_employees === 1 && (applies.includes('EMPLOYER') || applies.includes('RI_EMPLOYER'))) return true;
   if (c === 'SOLE_PROPRIETOR' && (applies.includes('SOLE_PROPRIETOR') || applies.includes('RI_INDIVIDUAL'))) return true;
   if (c === 'SMLLC_DISREGARDED' && (applies.includes('SMLLC_DISREGARDED') || applies.includes('RI_INDIVIDUAL'))) return true;
   if (c === 'PARTNERSHIP' && (applies.includes('PARTNERSHIP') || applies.includes('PARTNER'))) return true;
