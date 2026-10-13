@@ -4,9 +4,26 @@ export async function assertMerchantLegalReadyForLiveAction(env, merchantId, act
   const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').toUpperCase();
   if (!['PILOT','LIVE'].includes(stage)) return { enforced: false, stage };
 
+  // The SQL readiness views are deliberately stricter than status labels: they require
+  // current evidence, counsel/tax references, vendor reviews, PCI expiry dates, etc.
+  const strictPlatform = await env.DB.prepare(`SELECT state,blocker_count,blockers FROM platform_legal_readiness`).first();
+  if (!strictPlatform || strictPlatform.state !== 'READY') {
+    throw complianceError(
+      `${actionLabel} is blocked because evidenced platform compliance is not READY`,
+      splitBlockers(strictPlatform?.blockers),
+    );
+  }
+
   const platform = await evaluateLegalReadiness(env);
   if (platform.state !== 'READY') {
     throw complianceError(`${actionLabel} is blocked because Builtegrity platform compliance is not READY`, platform.reasons);
+  }
+
+  const strictMerchant = await env.DB.prepare(`
+    SELECT legal_state FROM merchant_legal_readiness WHERE merchant_id=?
+  `).bind(merchantId).first();
+  if (!strictMerchant || strictMerchant.legal_state !== 'READY') {
+    throw complianceError(`${actionLabel} is blocked because evidenced merchant compliance is not READY`, ['MERCHANT_EVIDENCE_GATE_BLOCKED']);
   }
 
   const merchant = await env.DB.prepare(`
@@ -59,16 +76,18 @@ export async function assertMerchantLegalReadyForLiveAction(env, merchantId, act
 
 export async function getLegalEnforcementStatus(env, merchantId = null) {
   const platform = await evaluateLegalReadiness(env);
-  if (!merchantId) return { platform };
+  const evidenced = await env.DB.prepare(`SELECT state,blocker_count,blockers FROM platform_legal_readiness`).first().catch(()=>null);
+  if (!merchantId) return { platform, evidenced_platform: evidenced };
   try {
     const merchant=await assertMerchantLegalReadyForLiveAction(env,merchantId,'Compliance evaluation');
-    return { platform, merchant:{ state:'READY', ...merchant } };
+    return { platform, evidenced_platform:evidenced, merchant:{ state:'READY', ...merchant } };
   } catch(error) {
     if (error.status !== 503 && error.status !== 409) throw error;
-    return { platform, merchant:{ state:'BLOCKED', reasons:error.compliance_reasons || [error.message] } };
+    return { platform, evidenced_platform:evidenced, merchant:{ state:'BLOCKED', reasons:error.compliance_reasons || [error.message] } };
   }
 }
 
+function splitBlockers(value){return String(value||'PLATFORM_EVIDENCE_GATE_BLOCKED').split('|').filter(Boolean);}
 function complianceError(message,reasons=[]){
   const error=new Error(`${message}: ${reasons.join('; ')}`);
   error.status=503;
