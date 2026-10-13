@@ -29,6 +29,7 @@ export async function generateQuarterlyPaymentSummary(env, merchantId, taxYear, 
            COALESCE(processor_fee_cents,0) AS processor_fee_cents,
            COALESCE(bg_fee_earned_cents,0) AS builtegrity_gross_fee_cents,
            COALESCE(integrity_fee_collected_cents,0) AS current_builtegrity_fee_cash_cents,
+           COALESCE(actual_merchant_net_cents,expected_merchant_net_cents,0) AS merchant_net_observed_cents,
            COALESCE(refunded_cents,0) AS refunded_cents,payout_accounted,
            payment_status,processor_payout_status,processor_fee_source,
            exception_status,stripe_charge_id,stripe_balance_transaction_id,stripe_application_fee_id
@@ -71,7 +72,7 @@ export async function generateQuarterlyPaymentSummary(env, merchantId, taxYear, 
     processor_fee_cents: sum(items,'processor_fee_cents'),
     builtegrity_gross_fee_earned_cents: sum(items,'builtegrity_gross_fee_cents'),
     builtegrity_fee_refunds_cents: Number(adjustments?.fee_refunds || 0),
-    merchant_net_observed_cents: items.reduce((total,row) => total + Math.max(0, Number(row.gross_payment_cents||0)-Number(row.processor_fee_cents||0)-Number(row.current_builtegrity_fee_cash_cents||0)),0),
+    merchant_net_observed_cents: sum(items,'merchant_net_observed_cents'),
   };
   const unverifiedFees = items.filter((x) => x.processor_fee_source === 'BALANCE_TOTAL_UNVERIFIED').length;
   const status = counts.exception_count || counts.missing_available_on_count || counts.unreconciled_payout_count || unverifiedFees ? 'NEEDS_REVIEW' : 'RECONCILED';
@@ -107,7 +108,7 @@ export async function generateQuarterlyPaymentSummary(env, merchantId, taxYear, 
     const item = { transaction_id:row.id,record_classification:row.record_classification,stripe_available_on:row.stripe_available_on,
       gross_payment_cents:Number(row.gross_payment_cents||0),processor_fee_cents:Number(row.processor_fee_cents||0),
       builtegrity_gross_fee_cents:Number(row.builtegrity_gross_fee_cents||0),current_builtegrity_fee_cash_cents:Number(row.current_builtegrity_fee_cash_cents||0),
-      refunded_cents:Number(row.refunded_cents||0),payout_accounted:Number(row.payout_accounted||0),payment_status:row.payment_status,
+      merchant_net_observed_cents:Number(row.merchant_net_observed_cents||0),refunded_cents:Number(row.refunded_cents||0),payout_accounted:Number(row.payout_accounted||0),payment_status:row.payment_status,
       processor_payout_status:row.processor_payout_status,stripe_charge_id:row.stripe_charge_id,stripe_balance_transaction_id:row.stripe_balance_transaction_id,
       stripe_application_fee_id:row.stripe_application_fee_id };
     await env.DB.prepare(`
