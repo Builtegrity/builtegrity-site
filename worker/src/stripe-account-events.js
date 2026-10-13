@@ -21,7 +21,7 @@ async function handleAccountUpdated(env, event) {
   if (!accountId) return;
 
   const merchant = await env.DB.prepare(`
-    SELECT id, status, integration_mode
+    SELECT id, status, integration_mode, state_code
       FROM merchants
      WHERE processor = 'STRIPE' AND processor_account_id = ?
      LIMIT 1
@@ -47,12 +47,13 @@ async function handleAccountUpdated(env, event) {
   const financialResponsibilitySafe = feePayer === 'stripe' && lossLiability === 'stripe';
   const requiresV1TaxLane = merchant.integration_mode === 'STRIPE_CONNECT';
   const taxResponsibilitySafe = !requiresV1TaxLane || taxFormResponsibility === 'STRIPE_EXPECTED';
-  const compatible = processorReady && financialResponsibilitySafe && taxResponsibilitySafe;
+  const legal = await legalActivationState(env, merchant.id, merchant.state_code);
+  const compatible = processorReady && financialResponsibilitySafe && taxResponsibilitySafe && legal.ready;
   const explicitlyUnsafe = feePayer === 'application' || lossLiability === 'application';
 
   // Never auto-unpause an operator/security pause. Processor financial responsibility can force PAUSED.
-  // Tax-responsibility uncertainty keeps a Connect merchant in TEST rather than letting the platform
-  // accidentally assume Express/Custom filing obligations.
+  // Tax or legal uncertainty keeps a Connect merchant in TEST rather than letting a Stripe webhook
+  // bypass Builtegrity's independent launch/compliance perimeter.
   const nextStatus = merchant.status === 'PAUSED' || explicitlyUnsafe
     ? 'PAUSED'
     : compatible ? 'ACTIVE' : 'TEST';
@@ -131,6 +132,18 @@ async function handleAccountUpdated(env, event) {
   } else {
     await resolveAlert(env, taxKey);
   }
+
+  const legalKey = `merchant:legal-readiness:${merchant.id}`;
+  if (!legal.ready) {
+    await upsertMerchantActionAlert(env, {
+      key: legalKey,
+      merchantId: merchant.id,
+      action: 'COMPLETE_BUILTEGRITY_COMPLIANCE',
+      message: `Stripe is not sufficient to activate this merchant. Builtegrity legal/compliance clearance remains incomplete: ${legal.reasons.join(', ')}.`,
+    });
+  } else {
+    await resolveAlert(env, legalKey);
+  }
 }
 
 async function handleAccountDeauthorized(env, event) {
@@ -168,6 +181,31 @@ async function handleAccountDeauthorized(env, event) {
   });
   await resolveAlert(env, `merchant:financial-responsibility:${merchant.id}`);
   await resolveAlert(env, `merchant:tax-responsibility:${merchant.id}`);
+}
+
+async function legalActivationState(env, merchantId, stateCode) {
+  const [platform, merchant, state] = await Promise.all([
+    env.DB.prepare(`SELECT state,blockers FROM platform_legal_readiness LIMIT 1`).first().catch(() => null),
+    env.DB.prepare(`SELECT legal_state FROM merchant_legal_readiness WHERE merchant_id=?`).bind(merchantId).first().catch(() => null),
+    stateCode ? env.DB.prepare(`SELECT * FROM state_jurisdiction_support WHERE state_code=?`).bind(stateCode).first().catch(() => null) : Promise.resolve(null),
+  ]);
+  const reasons = [];
+  if (platform?.state !== 'READY') reasons.push('PLATFORM_LEGAL_BLOCKED');
+  if (merchant?.legal_state !== 'READY') reasons.push('MERCHANT_LEGAL_BLOCKED');
+  if (!stateCode) reasons.push('MERCHANT_STATE_MISSING');
+  if (!state) reasons.push('STATE_NOT_SUPPORTED');
+  if (state) {
+    if (state.merchant_onboarding_status !== 'READY') reasons.push('STATE_NOT_READY');
+    if (!['CLEARED_NON_LICENSED','LICENSE_ACTIVE'].includes(state.money_transmission_review_status)) reasons.push('STATE_PAYMENTS_REVIEW_OPEN');
+    if (!['CLEARED','REGISTERED','NOT_APPLICABLE'].includes(state.sales_tax_review_status)) reasons.push('STATE_SALES_TAX_REVIEW_OPEN');
+    if (state.privacy_review_status !== 'CLEARED') reasons.push('STATE_PRIVACY_REVIEW_OPEN');
+    if (state.breach_review_status !== 'CLEARED') reasons.push('STATE_BREACH_REVIEW_OPEN');
+    if (!['CLEARED','REGISTERED'].includes(state.entity_nexus_review_status)) reasons.push('STATE_ENTITY_REVIEW_OPEN');
+    if (!['CLEARED','REGISTERED','NOT_APPLICABLE'].includes(state.income_tax_review_status)) reasons.push('STATE_INCOME_TAX_REVIEW_OPEN');
+    if (state.electronic_transactions_review_status !== 'CLEARED') reasons.push('STATE_ESIGN_REVIEW_OPEN');
+    if (state.next_review_due_at && Date.parse(state.next_review_due_at) <= Date.now()) reasons.push('STATE_REVIEW_EXPIRED');
+  }
+  return { ready: reasons.length === 0, reasons };
 }
 
 async function upsertMerchantActionAlert(env, values) {
