@@ -1,12 +1,16 @@
 import { generateDueMerchantTaxDocuments, ensureMissingExports } from './tax-document-generation.js';
 import { prepareTaxDocumentDeliveries, deliverDueTaxDocuments, listTaxDocumentDeliveries } from './tax-document-delivery.js';
+import { runComplianceMonitor, getComplianceQueue } from './compliance-monitor.js';
 
 export async function runTaxDocumentPipeline(env, options = {}) {
+  // Reuse the existing scheduled pipeline so compliance deadlines are continuously monitored
+  // without introducing a second independent cron clock.
+  const compliance=await runComplianceMonitor(env);
   const generated=await generateDueMerchantTaxDocuments(env,options);
   const recovered=await ensureMissingExports(env,100);
   const prepared=await prepareTaxDocumentDeliveries(env,200);
   const delivered=await deliverDueTaxDocuments(env,options.deliveryBatchSize||20);
-  return { generated, recovered_exports:recovered, prepared, delivered };
+  return { compliance, generated, recovered_exports:recovered, prepared, delivered };
 }
 
 export async function getTaxDocumentStatus(env, options = {}) {
@@ -20,5 +24,10 @@ export async function getTaxDocumentStatus(env, options = {}) {
     SELECT id,document_kind,source_id,merchant_id,period_label,object_key,pdf_sha256,pdf_byte_length,generated_at
       FROM tax_document_exports ORDER BY generated_at DESC LIMIT ?
   `).bind(limit).all();
-  return { documents:documents.results||[], exports:exports.results||[], deliveries:await listTaxDocumentDeliveries(env,limit) };
+  return {
+    documents:documents.results||[],
+    exports:exports.results||[],
+    deliveries:await listTaxDocumentDeliveries(env,limit),
+    compliance_due:await getComplianceQueue(env,limit),
+  };
 }
