@@ -1,5 +1,6 @@
 import { periodBounds, previousCompletedQuarter, normalizeYear, normalizeQuarter } from './tax-periods.js';
 import { companyAutomationState } from './company-tax-profile.js';
+import { runCompanyBooksSync, syncPeriod, getPeriodBooksEvidence } from './company-books-sync.js';
 
 export async function generateBuiltegrityTaxWorkpaper(env, input = {}) {
   const periodType = String(input.period_type || '').toUpperCase();
@@ -13,6 +14,25 @@ export async function generateBuiltegrityTaxWorkpaper(env, input = {}) {
 
   const profile = await env.DB.prepare(`SELECT * FROM builtegrity_tax_profile WHERE id='GLOBAL'`).first();
   if (!profile) throw new Error('Builtegrity tax profile is missing');
+  const automationState = companyAutomationState(profile);
+  if (!['READY_FOR_CALCULATION','READY_FOR_PROVIDER_REVIEW'].includes(automationState)) {
+    throw blockedError(`Company tax workpaper blocked by ${automationState}`, automationState);
+  }
+
+  const settings = await env.DB.prepare(`SELECT * FROM company_books_settings WHERE id='GLOBAL'`).first();
+  const reconciliation = await syncPeriod(env, {
+    kind: periodType,
+    start: new Date(period.start),
+    endExclusive: new Date(period.endExclusive),
+  }, settings);
+  if (!reconciliation || reconciliation.status !== 'PASS') {
+    throw blockedError(`Exact ${periodType.toLowerCase()} books reconciliation is ${reconciliation?.status || 'missing'}`, `PERIOD_BOOKS_${reconciliation?.status || 'MISSING'}`);
+  }
+  const books = await getPeriodBooksEvidence(env, reconciliation.id);
+  if (!books?.profit_and_loss || books.profit_and_loss.net_income_micros == null) {
+    throw blockedError('Exact-period profit and loss evidence is missing net income', 'PERIOD_PNL_INCOMPLETE');
+  }
+
   const economics = await env.DB.prepare(`
     SELECT
       COALESCE(SUM(CASE WHEN basis='ACTUAL' AND entry_kind='REVENUE' THEN amount_micros ELSE 0 END),0) AS revenue,
@@ -28,8 +48,15 @@ export async function generateBuiltegrityTaxWorkpaper(env, input = {}) {
   const partnerShare = Number(economics?.partner_share || 0);
   const cost = Number(economics?.cost || 0);
   const contribution = revenue + adjustment - partnerShare - cost;
-  const automationState = companyAutomationState(profile);
-  const ready = ['READY_FOR_CALCULATION','READY_FOR_PROVIDER_REVIEW'].includes(automationState);
+  const bookNetIncome = Number(books.profit_and_loss.net_income_micros);
+  const booksStateSnapshot = {
+    state: 'COMPLETE_VERIFIED',
+    provider: 'QUICKBOOKS_ONLINE',
+    accounting_method: settings.accounting_method,
+    reconciliation_id: reconciliation.id,
+    profit_and_loss_snapshot_id: books.profit_and_loss.id,
+    balance_sheet_snapshot_id: books.balance_sheet?.id || null,
+  };
   const snapshot = {
     kind: 'BUILTEGRITY_TAX_WORKPAPER', id, period_type: periodType, tax_year: taxYear, quarter,
     period_start: period.start, period_end_exclusive: period.endExclusive,
@@ -43,6 +70,19 @@ export async function generateBuiltegrityTaxWorkpaper(env, input = {}) {
       prior_year_tax_data_status: profile.prior_year_tax_data_status,
       filing_authorization_status: profile.filing_authorization_status,
     },
+    complete_books: {
+      provider: 'QUICKBOOKS_ONLINE',
+      accounting_method: settings.accounting_method,
+      reconciliation_id: reconciliation.id,
+      profit_and_loss_snapshot_id: books.profit_and_loss.id,
+      balance_sheet_snapshot_id: books.balance_sheet?.id || null,
+      total_income_micros: books.profit_and_loss.total_income_micros,
+      total_expenses_micros: books.profit_and_loss.total_expenses_micros,
+      book_net_income_micros: bookNetIncome,
+      total_assets_micros: books.balance_sheet?.total_assets_micros ?? null,
+      total_liabilities_micros: books.balance_sheet?.total_liabilities_micros ?? null,
+      total_equity_micros: books.balance_sheet?.total_equity_micros ?? null,
+    },
     tracked_platform_economics: {
       actual_revenue_micros: revenue,
       actual_adjustment_micros: adjustment,
@@ -50,9 +90,10 @@ export async function generateBuiltegrityTaxWorkpaper(env, input = {}) {
       actual_cost_micros: cost,
       tracked_contribution_micros: contribution,
     },
+    accounting_income_starting_point_micros: bookNetIncome,
     estimated_tax_amount_micros: null,
     automation_state: automationState,
-    disclaimer: 'Tracked Builtegrity economics are bookkeeping evidence, not taxable income. A tax amount requires a confirmed entity classification, complete verified books and prior-year tax inputs.',
+    disclaimer: 'QuickBooks net income is the verified accounting starting point, not final taxable income. Tax-specific adjustments, depreciation, credits, elections, owner-level items and prior-year safe-harbor inputs can change the return and estimated tax.',
   };
 
   await env.DB.prepare(`
@@ -60,13 +101,14 @@ export async function generateBuiltegrityTaxWorkpaper(env, input = {}) {
       (id,period_type,tax_year,quarter,period_start,period_end_exclusive,status,
        profile_status_snapshot,federal_tax_classification_snapshot,accounting_data_status_snapshot,
        actual_revenue_micros,actual_adjustment_micros,actual_partner_share_micros,actual_cost_micros,
-       tracked_contribution_micros,estimated_tax_amount_micros,automation_state,snapshot_json,generated_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+       tracked_contribution_micros,estimated_tax_amount_micros,automation_state,snapshot_json,generated_at,
+       accounting_snapshot_id,books_state_snapshot,book_net_income_micros)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,?,?,?)
   `).bind(
-    id, periodType, taxYear, quarter, period.start, period.endExclusive,
-    ready ? 'READY_FOR_PROVIDER' : 'NEEDS_REVIEW',
+    id, periodType, taxYear, quarter, period.start, period.endExclusive, 'READY_FOR_PROVIDER',
     profile.legal_entity_status, profile.federal_tax_classification, profile.accounting_data_status,
     revenue, adjustment, partnerShare, cost, contribution, null, automationState, JSON.stringify(snapshot),
+    books.profit_and_loss.id, JSON.stringify(booksStateSnapshot), bookNetIncome,
   ).run();
   return hydrate(await env.DB.prepare(`SELECT * FROM builtegrity_tax_workpapers WHERE id=?`).bind(id).first());
 }
@@ -74,22 +116,31 @@ export async function generateBuiltegrityTaxWorkpaper(env, input = {}) {
 export async function runBuiltegrityTaxWorkpaperPipeline(env, options = {}) {
   const now = options.now ? new Date(options.now) : new Date();
   if (!Number.isFinite(now.getTime())) throw new Error('Invalid tax workpaper pipeline clock');
+
+  // Books stay synchronized even while Builtegrity's legal tax classification is still unresolved.
+  const books = await runCompanyBooksSync(env, { now });
   const profile = await env.DB.prepare(`SELECT * FROM builtegrity_tax_profile WHERE id='GLOBAL'`).first();
   const automationState = companyAutomationState(profile);
   if (!['READY_FOR_CALCULATION','READY_FOR_PROVIDER_REVIEW'].includes(automationState)) {
-    return { blocked: true, automation_state: automationState, quarter: null, year: null };
+    return { blocked:true, automation_state:automationState, books_state:books?.state?.state || null, quarter:null, year:null };
   }
 
-  const completed = previousCompletedQuarter(now);
-  const quarter = await generateBuiltegrityTaxWorkpaper(env, {
-    period_type: 'QUARTER', tax_year: completed.year, quarter: completed.quarter,
-  });
-  let year = null;
-  // Continue preparing the prior-year workpaper through the first half of the year so a late profile/provider setup does not miss it.
-  if (now.getUTCMonth() <= 5) {
-    year = await generateBuiltegrityTaxWorkpaper(env, { period_type: 'YEAR', tax_year: now.getUTCFullYear() - 1 });
+  try {
+    const completed = previousCompletedQuarter(now);
+    const quarter = await generateBuiltegrityTaxWorkpaper(env, {
+      period_type:'QUARTER', tax_year:completed.year, quarter:completed.quarter,
+    });
+    let year = null;
+    if (now.getUTCMonth() <= 5) {
+      year = await generateBuiltegrityTaxWorkpaper(env, { period_type:'YEAR', tax_year:now.getUTCFullYear()-1 });
+    }
+    return { blocked:false, automation_state:automationState, books_state:books?.state?.state || null, quarter, year };
+  } catch (error) {
+    if (error.status === 409) {
+      return { blocked:true, automation_state:error.code || automationState, books_state:books?.state?.state || null, reason:error.message, quarter:null, year:null };
+    }
+    throw error;
   }
-  return { blocked: false, automation_state: automationState, quarter, year };
 }
 
 export async function listBuiltegrityTaxWorkpapers(env, options = {}) {
@@ -100,8 +151,6 @@ export async function listBuiltegrityTaxWorkpapers(env, options = {}) {
   return (result.results || []).map(hydrate);
 }
 
-function hydrate(row) {
-  if (!row) return null;
-  return { ...row, snapshot: parse(row.snapshot_json) };
-}
+function blockedError(message, code) { const error=new Error(message); error.status=409; error.code=code; return error; }
+function hydrate(row) { if (!row) return null; return { ...row, snapshot:parse(row.snapshot_json), books_state:parse(row.books_state_snapshot) }; }
 function parse(value) { if (!value) return null; try { return JSON.parse(value); } catch { return null; } }

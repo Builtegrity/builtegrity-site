@@ -1,0 +1,121 @@
+name: Company Books CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate-company-books:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check company books JavaScript syntax
+        run: |
+          node --check worker/src/books-crypto.js
+          node --check worker/src/quickbooks-oauth.js
+          node --check worker/src/quickbooks-api.js
+          node --check worker/src/company-books-sync.js
+          node --check worker/src/company-books-runtime.js
+          node --check worker/src/company-tax-workpapers.js
+          node --check worker/src/index.js
+          node --check worker/src/runtime.js
+
+      - name: Build full D1 schema
+        run: |
+          rm -f /tmp/builtegrity-company-books.db
+          for migration in migrations/*.sql; do
+            echo "Applying ${migration}"
+            sqlite3 /tmp/builtegrity-company-books.db < "${migration}"
+          done
+          sqlite3 /tmp/builtegrity-company-books.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify books defaults fail closed
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-company-books.db "SELECT provider || ':' || status FROM accounting_connections WHERE id='BOOKS-PRIMARY';")" = "QUICKBOOKS_ONLINE:NOT_CONFIGURED"
+          test "$(sqlite3 /tmp/builtegrity-company-books.db "SELECT state || ':' || connection_status FROM company_books_state WHERE id='GLOBAL';")" = "NOT_CONNECTED:NOT_CONFIGURED"
+          test "$(sqlite3 /tmp/builtegrity-company-books.db "SELECT accounting_data_status FROM builtegrity_tax_profile WHERE id='GLOBAL';")" = "PARTIAL"
+          test "$(sqlite3 /tmp/builtegrity-company-books.db "SELECT accounting_method || ':' || all_business_financial_accounts_status || ':' || settlement_lag_days FROM company_books_settings WHERE id='GLOBAL';")" = "CASH:UNKNOWN:7"
+
+      - name: Verify tax readiness requires reconciled books
+        run: |
+          if sqlite3 /tmp/builtegrity-company-books.db "UPDATE builtegrity_tax_profile SET accounting_data_status='COMPLETE_VERIFIED' WHERE id='GLOBAL';" 2>/tmp/books-gate-error.txt; then
+            echo "Expected COMPLETE_VERIFIED tax books gate to fail while books are not reconciled"
+            exit 1
+          fi
+          grep -q 'tax profile cannot mark books complete until company books reconcile' /tmp/books-gate-error.txt
+          sqlite3 /tmp/builtegrity-company-books.db "UPDATE company_books_state SET state='COMPLETE_VERIFIED',connection_status='ACTIVE' WHERE id='GLOBAL';"
+          sqlite3 /tmp/builtegrity-company-books.db "UPDATE builtegrity_tax_profile SET accounting_data_status='COMPLETE_VERIFIED' WHERE id='GLOBAL';"
+          test "$(sqlite3 /tmp/builtegrity-company-books.db "SELECT accounting_data_status FROM builtegrity_tax_profile WHERE id='GLOBAL';")" = "COMPLETE_VERIFIED"
+          sqlite3 /tmp/builtegrity-company-books.db "UPDATE company_books_state SET state='MISMATCH' WHERE id='GLOBAL';"
+          test "$(sqlite3 /tmp/builtegrity-company-books.db "SELECT accounting_data_status FROM builtegrity_tax_profile WHERE id='GLOBAL';")" = "PARTIAL"
+
+      - name: Verify accounting evidence is immutable
+        run: |
+          sqlite3 /tmp/builtegrity-company-books.db "INSERT INTO accounting_report_snapshots(id,connection_id,provider,report_type,period_kind,period_start,period_end_exclusive,accounting_method,status,raw_sha256,snapshot_json) VALUES('BOOK-CI','BOOKS-PRIMARY','QUICKBOOKS_ONLINE','PROFIT_AND_LOSS','YTD','2026-01-01T00:00:00Z','2026-10-01T00:00:00Z','CASH','COMPLETE','abc','{}');"
+          if sqlite3 /tmp/builtegrity-company-books.db "UPDATE accounting_report_snapshots SET status='NEEDS_REVIEW' WHERE id='BOOK-CI';" 2>/tmp/book-snapshot-error.txt; then
+            echo "Expected accounting snapshot update to fail"
+            exit 1
+          fi
+          grep -q 'accounting report snapshots are immutable' /tmp/book-snapshot-error.txt
+          sqlite3 /tmp/builtegrity-company-books.db "INSERT INTO accounting_reconciliation_runs(id,period_kind,period_start,period_end_exclusive,accounting_method,tolerance_micros,status,reason_codes_json,evidence_json) VALUES('BOOK-REC-CI','YTD','2026-01-01T00:00:00Z','2026-10-01T00:00:00Z','CASH',10000,'PASS','[\"RECONCILED\"]','{}');"
+          if sqlite3 /tmp/builtegrity-company-books.db "DELETE FROM accounting_reconciliation_runs WHERE id='BOOK-REC-CI';" 2>/tmp/book-rec-error.txt; then
+            echo "Expected reconciliation deletion to fail"
+            exit 1
+          fi
+          grep -q 'accounting reconciliation runs are append-only' /tmp/book-rec-error.txt
+
+      - name: Verify OAuth token storage cannot use plaintext token columns
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-company-books.db "SELECT COUNT(*) FROM pragma_table_info('accounting_connections') WHERE lower(name) IN ('access_token','refresh_token');")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-company-books.db "SELECT COUNT(*) FROM pragma_table_info('accounting_connections') WHERE lower(name) IN ('access_token_ciphertext','refresh_token_ciphertext');")" = "2"
+          grep -q "AES-GCM" worker/src/books-crypto.js
+          grep -q "token_version=token_version+1" worker/src/quickbooks-oauth.js
+          grep -q "ACCOUNTING_TOKEN_ENCRYPTION_KEY_B64" .dev.vars.example
+
+      - name: Verify QuickBooks report normalization
+        run: |
+          node --input-type=module <<'NODE'
+          import { summarizeProfitAndLoss, summarizeBalanceSheet } from './worker/src/quickbooks-api.js';
+          const pnl={Rows:{Row:[
+            {ColData:[{value:'Builtegrity Fee Income',id:'42'},{value:'100.00'}]},
+            {Summary:{ColData:[{value:'Total Income'},{value:'123.45'}]}},
+            {Summary:{ColData:[{value:'Total Expenses'},{value:'43.45'}]}},
+            {Summary:{ColData:[{value:'Net Income'},{value:'80.00'}]}},
+          ]}};
+          const ps=summarizeProfitAndLoss(pnl,{fee_income_account_ref:'42'});
+          if(ps.mapped_fee_income_micros!==100000000) throw new Error(`mapped fee income: ${ps.mapped_fee_income_micros}`);
+          if(ps.total_income_micros!==123450000) throw new Error(`total income: ${ps.total_income_micros}`);
+          if(ps.total_expenses_micros!==43450000) throw new Error(`expenses: ${ps.total_expenses_micros}`);
+          if(ps.net_income_micros!==80000000) throw new Error(`net income: ${ps.net_income_micros}`);
+          const bs={Rows:{Row:[
+            {Summary:{ColData:[{value:'Total Assets'},{value:'500.00'}]}},
+            {Summary:{ColData:[{value:'Total Liabilities'},{value:'125.00'}]}},
+            {Summary:{ColData:[{value:'Total Equity'},{value:'375.00'}]}},
+          ]}};
+          const b=summarizeBalanceSheet(bs);
+          if(b.total_assets_micros!==500000000 || b.total_liabilities_micros!==125000000 || b.total_equity_micros!==375000000) throw new Error('balance sheet normalization failed');
+          NODE
+
+      - name: Verify company books is wired into tax and admin runtime
+        run: |
+          grep -q "handleCompanyBooksRoute" worker/src/index.js
+          grep -q "runCompanyBooksSync" worker/src/company-tax-workpapers.js
+          grep -q "book_net_income_micros" worker/src/company-tax-workpapers.js
+          grep -q "WHERE period_kind='YTD'" worker/src/company-books-sync.js
+          grep -q "QUICKBOOKS_CLIENT_ID" wrangler.toml.example
+          grep -q "quickbooks/callback" wrangler.toml.example
+
+      - name: Verify report insert bind count contract
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const source=fs.readFileSync('worker/src/company-books-sync.js','utf8');
+          const match=source.match(/INSERT INTO accounting_report_snapshots[\s\S]*?VALUES\(([^)]*)\)/);
+          if(!match) throw new Error('accounting report insert not found');
+          const placeholders=(match[1].match(/\?/g)||[]).length;
+          if(placeholders!==26) throw new Error(`expected 26 accounting snapshot placeholders, found ${placeholders}`);
+          NODE
