@@ -81,7 +81,7 @@ jobs:
 
       - name: Verify unsafe Stripe responsibility can never activate
         run: |
-          sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET stripe_fee_payer='stripe',stripe_loss_liability='stripe',status='ACTIVE' WHERE id='MER-0001';"
+          sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET stripe_fee_payer='stripe',stripe_loss_liability='stripe',stripe_account_type='standard',tax_form_responsibility='STRIPE_EXPECTED',status='ACTIVE' WHERE id='MER-0001';"
           test "$(sqlite3 /tmp/builtegrity-financial-safety.db "SELECT status FROM merchants WHERE id='MER-0001';")" = "ACTIVE"
           if sqlite3 /tmp/builtegrity-financial-safety.db "UPDATE merchants SET stripe_fee_payer='application' WHERE id='MER-0001';" 2>/tmp/unsafe-fee-payer.txt; then
             echo "Expected ACTIVE merchant to reject application-paid processing fees"
