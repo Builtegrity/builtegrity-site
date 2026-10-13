@@ -17,6 +17,11 @@ import { processStripeWebhook } from './webhooks.js';
 import { priceTransaction } from './pricing.js';
 import { assertMerchantProcessorEconomicsSafe } from './financial-safety.js';
 import { handleCompanyBooksRoute } from './company-books-runtime.js';
+import {
+  assertNoProhibitedSensitiveInput,
+  evaluateLegalReadiness,
+  getMerchantComplianceStatus,
+} from './legal-compliance.js';
 
 const FORBIDDEN_TRANSACTION_PRICING_INPUTS = [
   'integrity_fee_earned_cents',
@@ -182,6 +187,21 @@ async function handleCheckout(env, token) {
   if (!tx) return json({ error: 'Payment link not found' }, 404);
   if (isExpired(tx.payment_access_expires_at)) return json({ error: 'Payment link expired' }, 410);
   if (!Number(tx.consent_accepted)) return json({ error: 'Terms must be accepted before payment' }, 409);
+  if (tx.customer_country_code !== 'US' || !tx.customer_jurisdiction_verified_at) {
+    return json({ error: 'Customer U.S. jurisdiction must be verified before payment' }, 409);
+  }
+  if (tx.customer_jurisdiction_match_status === 'MISMATCH') {
+    return json({ error: 'Customer jurisdiction requires review before payment' }, 409);
+  }
+
+  const platformLegal = await evaluateLegalReadiness(env);
+  if (platformLegal.state !== 'READY') {
+    return json({ error: 'Builtegrity live payment creation is blocked by unresolved legal/compliance controls' }, 503);
+  }
+  const merchantLegal = await getMerchantComplianceStatus(env, tx.merchant_id);
+  if (!merchantLegal.ready) {
+    return json({ error: 'Merchant legal/compliance clearance is incomplete', reasons: merchantLegal.reasons }, 409);
+  }
 
   assertMerchantProcessorEconomicsSafe({
     id: tx.merchant_id,
@@ -215,9 +235,19 @@ async function handleCheckout(env, token) {
 
 async function handleCreateTransaction(request, env) {
   const body = await readJson(request);
+  assertNoProhibitedSensitiveInput(body);
   if (!body.merchant_id) return json({ error: 'merchant_id is required' }, 400);
   const merchant = await env.DB.prepare(`SELECT * FROM merchants WHERE id = ?`).bind(body.merchant_id).first();
   if (!merchant) return json({ error: 'Merchant not found' }, 404);
+
+  const platformLegal = await evaluateLegalReadiness(env);
+  if (platformLegal.state !== 'READY') {
+    return json({ error: 'Transaction creation is blocked by unresolved platform legal/compliance controls' }, 503);
+  }
+  const merchantLegal = await getMerchantComplianceStatus(env, merchant.id);
+  if (!merchantLegal.ready) {
+    return json({ error: 'Merchant legal/compliance clearance is incomplete', reasons: merchantLegal.reasons }, 409);
+  }
   assertMerchantProcessorEconomicsSafe(merchant);
 
   const txInput = body.transaction || {};
@@ -238,6 +268,7 @@ async function handleCreateTransaction(request, env) {
   }
 
   const currency = String(txInput.currency || 'USD').toUpperCase();
+  if (currency !== 'USD') return json({ error: 'Builtegrity V1 supports USD transactions only' }, 400);
   const pricing = await priceTransaction(env, txInput.amount_cents, { currency });
   const collectionMethod = merchant.integration_mode === 'STRIPE_CONNECT'
     ? 'STRIPE_APPLICATION_FEE'
@@ -247,21 +278,46 @@ async function handleCreateTransaction(request, env) {
   if (!customerId) {
     const customer = body.customer || {};
     if (!customer.name) return json({ error: 'customer.name is required when customer_id is omitted' }, 400);
+    const countryCode = String(customer.country_code || '').toUpperCase();
+    const stateCode = String(customer.state_code || '').toUpperCase();
+    if (countryCode !== 'US') return json({ error: 'Builtegrity V1 supports U.S. customer transactions only' }, 400);
+    if (!/^[A-Z]{2}$/.test(stateCode)) return json({ error: 'customer.state_code is required as a two-letter U.S. jurisdiction code' }, 400);
     customerId = await allocateId(env, 'CUST');
     await env.DB.prepare(`
-      INSERT INTO customers (id, merchant_id, name, email, merchant_customer_reference)
-      VALUES (?, ?, ?, ?, ?)
-    `).bind(customerId, merchant.id, customer.name, customer.email || null, customer.reference || null).run();
+      INSERT INTO customers (
+        id, merchant_id, name, email, merchant_customer_reference,
+        country_code, state_code, postal_code, jurisdiction_source,
+        jurisdiction_verified_at, jurisdiction_match_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'MERCHANT_INPUT', CURRENT_TIMESTAMP, 'UNVERIFIED')
+    `).bind(
+      customerId,
+      merchant.id,
+      customer.name,
+      customer.email || null,
+      customer.reference || null,
+      countryCode,
+      stateCode,
+      customer.postal_code || null,
+    ).run();
   } else {
     const existing = await env.DB.prepare(`
-      SELECT id FROM customers WHERE id = ? AND merchant_id = ?
+      SELECT id,country_code,state_code,jurisdiction_verified_at,jurisdiction_match_status
+      FROM customers WHERE id = ? AND merchant_id = ?
     `).bind(customerId, merchant.id).first();
     if (!existing) return json({ error: 'Customer does not belong to this merchant' }, 400);
+    if (existing.country_code !== 'US' || !existing.jurisdiction_verified_at) {
+      return json({ error: 'Existing customer does not have verified U.S. jurisdiction' }, 409);
+    }
+    if (existing.jurisdiction_match_status === 'MISMATCH') {
+      return json({ error: 'Existing customer jurisdiction is under mismatch review' }, 409);
+    }
   }
 
   let purchaseId = body.purchase_id || null;
   if (!purchaseId) {
     const purchase = body.purchase || {};
+    const purchaseCurrency = String(purchase.currency || currency).toUpperCase();
+    if (purchaseCurrency !== 'USD') return json({ error: 'Builtegrity V1 supports USD purchases only' }, 400);
     purchaseId = await allocateId(env, 'PUR');
     await env.DB.prepare(`
       INSERT INTO purchases
@@ -275,13 +331,14 @@ async function handleCreateTransaction(request, env) {
       purchase.purchase_type || null,
       purchase.description || txInput.description,
       Number.isInteger(purchase.total_value_cents) ? purchase.total_value_cents : null,
-      String(purchase.currency || currency).toUpperCase(),
+      purchaseCurrency,
     ).run();
   } else {
     const existing = await env.DB.prepare(`
-      SELECT id FROM purchases WHERE id = ? AND merchant_id = ? AND customer_id = ?
+      SELECT id,currency FROM purchases WHERE id = ? AND merchant_id = ? AND customer_id = ?
     `).bind(purchaseId, merchant.id, customerId).first();
     if (!existing) return json({ error: 'Purchase does not belong to this merchant/customer relationship' }, 400);
+    if (String(existing.currency || '').toUpperCase() !== 'USD') return json({ error: 'Existing purchase is outside the V1 USD legal envelope' }, 409);
   }
 
   const txId = await allocateId(env, 'TX');
@@ -298,8 +355,8 @@ async function handleCreateTransaction(request, env) {
       payment_access_token, payment_access_expires_at,
       pricing_version_id, pricing_percentage_bps, pricing_minimum_cents,
       pricing_maximum_cents, pricing_density_band_id, pricing_calculated_cents,
-      pricing_locked_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      pricing_locked_at, legal_compliance_state
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
   `).bind(
     txId,
     purchaseId,
@@ -332,6 +389,7 @@ async function handleCreateTransaction(request, env) {
     merchant_id: merchant.id,
     pricing_version_id: pricing.pricing_version_id,
     integrity_fee_earned_cents: pricing.integrity_fee_earned_cents,
+    legal_compliance_state: 'PENDING',
   });
 
   return json({
@@ -354,9 +412,12 @@ async function handleVerifyMerchant(env, merchantId) {
   const lossLiability = normalizeStripeResponsibility(account.controller?.losses?.payments);
   const financialResponsibilitySafe = feePayer === 'stripe' && lossLiability === 'stripe';
   const processorReady = Boolean(account.charges_enabled && account.payouts_enabled && automaticPayouts !== false);
-  const compatible = processorReady && financialResponsibilitySafe;
+  const platformLegal = await evaluateLegalReadiness(env);
+  const merchantLegal = await getMerchantComplianceStatus(env, merchantId);
+  const legalReady = platformLegal.state === 'READY' && merchantLegal.ready;
+  const compatible = processorReady && financialResponsibilitySafe && legalReady;
   const explicitlyUnsafe = feePayer === 'application' || lossLiability === 'application';
-  const nextStatus = explicitlyUnsafe ? 'PAUSED' : compatible ? 'ACTIVE' : 'TEST';
+  const nextStatus = merchant.status === 'PAUSED' || explicitlyUnsafe ? 'PAUSED' : compatible ? 'ACTIVE' : 'TEST';
 
   await env.DB.prepare(`
     UPDATE merchants
@@ -393,6 +454,8 @@ async function handleVerifyMerchant(env, merchantId) {
     processing_fee_payer: feePayer,
     payment_loss_liability: lossLiability,
     financial_responsibility_safe: financialResponsibilitySafe,
+    legal_ready: legalReady,
+    legal_reasons: legalReady ? [] : [...platformLegal.reasons, ...merchantLegal.reasons],
     status: nextStatus,
   });
 }
@@ -478,7 +541,11 @@ async function findByPaymentToken(env, token) {
       m.processor_account_id,
       m.stripe_fee_payer,
       m.stripe_loss_liability,
-      c.email AS customer_email
+      c.email AS customer_email,
+      c.country_code AS customer_country_code,
+      c.state_code AS customer_state_code,
+      c.jurisdiction_verified_at AS customer_jurisdiction_verified_at,
+      c.jurisdiction_match_status AS customer_jurisdiction_match_status
     FROM transactions t
     JOIN purchases p ON p.id = t.purchase_id
     JOIN merchants m ON m.id = t.merchant_id
