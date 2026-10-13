@@ -12,6 +12,11 @@ QUICKBOOKS_CLIENT_SECRET=REPLACE_ME
 # Base64 of exactly 32 random bytes. Used only to AES-GCM encrypt QuickBooks OAuth tokens stored in D1.
 ACCOUNTING_TOKEN_ENCRYPTION_KEY_B64=REPLACE_32_BYTE_BASE64_KEY
 
+# Compliance evidence
+# Long random secret used only to salt one-way hashes of network/user-agent evidence for legal clickwrap records.
+# Never use this value as an auth/session secret and never commit the production value.
+COMPLIANCE_EVIDENCE_SALT=REPLACE_WITH_LONG_RANDOM_SECRET
+
 # Clerk
 # CLERK_JWT_KEY is the PEM public JWT verification key from Clerk. It is not a password,
 # but keep environment-specific configuration out of source control anyway.
