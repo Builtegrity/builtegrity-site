@@ -16,6 +16,7 @@ import {
 import { processStripeWebhook } from './webhooks.js';
 import { priceTransaction } from './pricing.js';
 import { assertMerchantProcessorEconomicsSafe } from './financial-safety.js';
+import { handleCompanyBooksRoute } from './company-books-runtime.js';
 
 const FORBIDDEN_TRANSACTION_PRICING_INPUTS = [
   'integrity_fee_earned_cents',
@@ -65,6 +66,9 @@ export default {
       if (path.startsWith('/api/')) {
         requireInternal(request, env);
       }
+
+      const booksResponse = await handleCompanyBooksRoute(request, env);
+      if (booksResponse) return booksResponse;
 
       if (path === '/api/transactions' && request.method === 'GET') {
         return json({ transactions: await listTransactions(env, url.searchParams.get('limit')) });
