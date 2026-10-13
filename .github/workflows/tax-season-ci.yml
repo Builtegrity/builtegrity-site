@@ -1,0 +1,167 @@
+name: Tax Season CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate-tax-season:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tax-season JavaScript syntax
+        run: |
+          node --check worker/src/webhooks.js
+          node --check worker/src/stripe-account-events.js
+          node --check worker/src/year-end.js
+          node -e "JSON.parse(require('fs').readFileSync('transaction-engine/definitions.json','utf8'))"
+
+      - name: Build complete D1 schema
+        run: |
+          rm -f /tmp/builtegrity-tax.db
+          for migration in migrations/*.sql; do
+            echo "Applying ${migration}"
+            sqlite3 /tmp/builtegrity-tax.db < "${migration}"
+          done
+          sqlite3 /tmp/builtegrity-tax.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify Standard Connect tax-responsibility gate
+        run: |
+          sqlite3 /tmp/builtegrity-tax.db "
+            UPDATE merchants
+               SET processor_account_id='acct_tax_test',
+                   stripe_fee_payer='stripe',
+                   stripe_loss_liability='stripe',
+                   stripe_account_type='standard',
+                   tax_form_responsibility='STRIPE_EXPECTED',
+                   status='ACTIVE'
+             WHERE id='MER-0001';
+          "
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT status || ':' || stripe_account_type || ':' || tax_form_responsibility FROM merchants WHERE id='MER-0001';")" = "ACTIVE:standard:STRIPE_EXPECTED"
+
+          if sqlite3 /tmp/builtegrity-tax.db "UPDATE merchants SET stripe_account_type='express', tax_form_responsibility='PLATFORM_REVIEW_REQUIRED' WHERE id='MER-0001';" 2>/tmp/tax-lane-error.txt; then
+            echo "Expected active protected merchant tax-lane trigger to reject Express"
+            exit 1
+          fi
+          grep -q 'Standard-account tax-reporting lane' /tmp/tax-lane-error.txt
+
+      - name: Verify PROTECTED remains historical after refunds
+        run: |
+          sqlite3 /tmp/builtegrity-tax.db "
+            UPDATE transactions
+               SET stripe_payment_intent_id='pi_tax_1',
+                   stripe_charge_id='ch_tax_1',
+                   stripe_balance_transaction_id='txn_tax_1',
+                   stripe_application_fee_id='fee_tax_1',
+                   payment_status='succeeded',
+                   payment_at='2026-12-30T18:00:00.000Z',
+                   stripe_available_on='2026-12-31T00:00:00.000Z',
+                   customer_paid_cents=120000,
+                   processor_fee_cents=3510,
+                   processor_fee_source='FEE_DETAILS',
+                   application_fee_gross_confirmed_cents=integrity_fee_earned_cents,
+                   integrity_fee_collected_cents=integrity_fee_earned_cents,
+                   payout_accounted=1
+             WHERE id='TX-0001';
+          "
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT record_classification FROM transactions WHERE id='TX-0001';")" = "PROTECTED"
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT bg_fee_earned_cents = integrity_fee_earned_cents FROM transactions WHERE id='TX-0001';")" = "1"
+
+          sqlite3 /tmp/builtegrity-tax.db "
+            UPDATE transactions
+               SET payment_status='refunded',
+                   refunded_cents=120000,
+                   application_fee_refunded_cents=integrity_fee_earned_cents,
+                   integrity_fee_collected_cents=0
+             WHERE id='TX-0001';
+            INSERT INTO transaction_financial_adjustments
+              (id,transaction_id,merchant_id,processor,adjustment_type,direction,amount_cents,currency,processor_event_id,adjustment_at)
+            VALUES
+              ('ADJ-TAX-REFUND','TX-0001','MER-0001','STRIPE','REFUND','MERCHANT_OUTFLOW',120000,'USD','evt_tax_refund','2027-01-02T12:00:00.000Z');
+          "
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT record_classification FROM transactions WHERE id='TX-0001';")" = "PROTECTED"
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT bg_fee_earned_cents = application_fee_gross_confirmed_cents FROM transactions WHERE id='TX-0001';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT integrity_fee_collected_cents FROM transactions WHERE id='TX-0001';")" = "0"
+
+          if sqlite3 /tmp/builtegrity-tax.db "UPDATE transactions SET bg_fee_earned_cents=bg_fee_earned_cents+1 WHERE id='TX-0001';" 2>/tmp/protected-history-error.txt; then
+            echo "Expected protected gross fee history to be immutable"
+            exit 1
+          fi
+          grep -q 'confirmed protection history is immutable' /tmp/protected-history-error.txt
+
+      - name: Verify year-end gross is never netted by refunds
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT gross_payment_volume_cents FROM merchant_tax_year_charge_summary WHERE merchant_id='MER-0001' AND tax_year='2026' AND currency='USD';")" = "120000"
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT customer_refunds_cents FROM merchant_tax_year_adjustment_summary WHERE merchant_id='MER-0001' AND tax_year='2027' AND currency='USD';")" = "120000"
+
+      - name: Verify Stripe Available-On controls tax-year bucket
+        run: |
+          sqlite3 /tmp/builtegrity-tax.db "
+            INSERT INTO transactions (
+              id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,
+              terms_version,terms_snapshot,refund_policy_snapshot,cancellation_policy_snapshot,
+              consent_accepted,lifecycle_status,integrity_status,exception_status,processor,customer_paid_cents,
+              integrity_fee_earned_cents,fee_collection_method,integrity_fee_collected_cents,payment_access_token
+            ) VALUES (
+              'TX-TAX-BOUNDARY','PUR-0001','MER-0001','CUST-0001','FINAL','Year boundary payment',50000,'USD',
+              'TERMS-001','Terms','Refunds','Cancellation',1,'PAID','INCOMPLETE','NONE','STRIPE',50000,
+              25,'STRIPE_APPLICATION_FEE',0,'tax-boundary-token'
+            );
+            UPDATE transactions
+               SET stripe_payment_intent_id='pi_tax_boundary',
+                   stripe_charge_id='ch_tax_boundary',
+                   stripe_application_fee_id='fee_tax_boundary',
+                   payment_status='succeeded',
+                   payment_at='2026-12-31T23:59:00.000Z',
+                   stripe_available_on='2027-01-02T00:00:00.000Z',
+                   application_fee_gross_confirmed_cents=integrity_fee_earned_cents,
+                   integrity_fee_collected_cents=integrity_fee_earned_cents,
+                   payout_accounted=1
+             WHERE id='TX-TAX-BOUNDARY';
+          "
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT record_classification FROM transactions WHERE id='TX-TAX-BOUNDARY';")" = "PROTECTED"
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT COUNT(*) FROM merchant_tax_year_charge_summary WHERE merchant_id='MER-0001' AND tax_year='2026' AND gross_payment_volume_cents=120000;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT gross_payment_volume_cents FROM merchant_tax_year_charge_summary WHERE merchant_id='MER-0001' AND tax_year='2027' AND currency='USD';")" = "50000"
+
+      - name: Verify OBSERVED and IMPORTED can never earn Builtegrity revenue
+        run: |
+          sqlite3 /tmp/builtegrity-tax.db "
+            INSERT INTO transactions (
+              id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,
+              terms_version,terms_snapshot,refund_policy_snapshot,cancellation_policy_snapshot,
+              consent_accepted,lifecycle_status,integrity_status,exception_status,processor,customer_paid_cents,
+              integrity_fee_earned_cents,fee_collection_method,integrity_fee_collected_cents,payment_access_token,
+              record_classification
+            ) VALUES (
+              'TX-OBS-TAX','PUR-0001','MER-0001','CUST-0001','OTHER','Observed Stripe payment',10000,'USD',
+              'TERMS-001','Terms','Refunds','Cancellation',1,'PAID','INCOMPLETE','NONE','STRIPE',10000,
+              0,'STRIPE_APPLICATION_FEE',0,'observed-tax-token','OBSERVED'
+            );
+          "
+          if sqlite3 /tmp/builtegrity-tax.db "UPDATE transactions SET bg_fee_earned_cents=1 WHERE id='TX-OBS-TAX';" 2>/tmp/observed-revenue-error.txt; then
+            echo "Expected OBSERVED revenue invariant to fail closed"
+            exit 1
+          fi
+          grep -q 'Only PROTECTED transactions may recognize' /tmp/observed-revenue-error.txt
+
+      - name: Verify tax references and immutable year-end snapshots
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT gross_threshold_cents || ':' || transaction_threshold || ':' || threshold_logic FROM tax_rule_versions WHERE id='TAX-US-2026-1099K-TPSO';")" = "2000000:200:GREATER_THAN_BOTH"
+          test "$(sqlite3 /tmp/builtegrity-tax.db "SELECT gross_threshold_cents FROM tax_rule_versions WHERE id='TAX-US-2026-1099NEC-GENERAL';")" = "200000"
+
+          sqlite3 /tmp/builtegrity-tax.db "
+            INSERT INTO year_end_payment_summaries
+              (id,merchant_id,tax_year,currency,summary_version,status,tax_form_responsibility_snapshot,
+               gross_payment_volume_cents,snapshot_json,generated_at)
+            VALUES
+              ('YEP-CI-2026','MER-0001',2026,'USD',1,'RECONCILED','STRIPE_EXPECTED',120000,'{}',CURRENT_TIMESTAMP);
+          "
+          if sqlite3 /tmp/builtegrity-tax.db "UPDATE year_end_payment_summaries SET gross_payment_volume_cents=1 WHERE id='YEP-CI-2026';" 2>/tmp/year-end-immutable-error.txt; then
+            echo "Expected generated year-end snapshot to be immutable"
+            exit 1
+          fi
+          grep -q 'generated year-end payment summary snapshot is immutable' /tmp/year-end-immutable-error.txt
