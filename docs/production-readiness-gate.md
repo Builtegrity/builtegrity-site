@@ -102,6 +102,28 @@ Suggested definition:
 - [ ] Support is intentionally manual for the first 1–3 merchants so edge cases are observed.
 - [ ] At least several real test-mode transactions have been exercised before any live-mode transaction.
 
+## Gate H — owner_independence and disaster recovery — BLOCKING FOR ANY LIVE PAYMENT
+
+This gate is controlled by `docs/owner-independence-and-disaster-recovery.md` and `ops/owner-control-manifest.json`.
+
+- [ ] The owner can directly recover the domain registrar/root domain authority without ChatGPT.
+- [ ] The owner has GitHub repository/organization administration and an owner-controlled off-provider source copy.
+- [ ] The owner can directly recover the Cloudflare account and deploy/rollback without ChatGPT.
+- [ ] D1 export and restoration have been executed successfully at least once.
+- [ ] R2 durable artifact retrieval/copy has been tested and hash integrity can be verified.
+- [ ] The owner can directly recover the Stripe platform, distinguish test/live configuration, rotate credentials and pause new Builtegrity-routed payments.
+- [ ] The owner can directly recover the Clerk application and understands the identity-provider replacement/re-authentication path.
+- [ ] The owner can directly recover the Resend account, rotate API/webhook credentials and replace the outbound email adapter if needed.
+- [ ] The owner can directly recover the Google Workspace super-admin/business mailbox path.
+- [ ] The owner can directly recover company banking/accounting authority independently of AI.
+- [ ] A private Owner Emergency Vault exists outside GitHub, Drive/Sheets and ChatGPT, with MFA recovery material and critical-account recovery metadata.
+- [ ] No live credential exists only in chat, one contractor/employee's possession, one unrecoverable device, or source control.
+- [ ] The Owner Zero-AI Drill has been completed successfully.
+- [ ] Every system in `ops/owner-control-manifest.json` with `required_for_live: true` is `VERIFIED`.
+- [ ] `npm run owner:gate:live` exits successfully on the exact production commit.
+
+**Pass condition:** Builtegrity can be operated, paused, repaired, restored, migrated, or shut down by the owner/competent engineer without ChatGPT or any single irreplaceable person/provider.
+
 ## Gates after the first pilot
 
 These do not block test-mode development, but become mandatory before broader distribution:
@@ -121,4 +143,4 @@ These do not block test-mode development, but become mandatory before broader di
 
 A deployment being technically functional is **not** permission to process live money.
 
-`TX-LIVE-0001` is permitted only after all blocking gates above are marked complete and the system has demonstrated the same lifecycle in Stripe test mode first.
+`TX-LIVE-0001` is permitted only after all blocking gates above are marked complete, the owner-independence live gate passes, and the system has demonstrated the same lifecycle in Stripe test mode first.
