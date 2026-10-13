@@ -31,6 +31,8 @@ jobs:
           grep -q 'svix-signature' worker/src/resend-statement-webhooks.js
           grep -q 'email.delivered' worker/src/resend-statement-webhooks.js
           grep -q 'STATEMENT_EMAIL_FROM' wrangler.toml.example
+          grep -q 'Builtegrity Statements <hello@builtegrity.com>' wrangler.toml.example
+          grep -q 'Builtegrity Watchdog <hello@builtegrity.com>' wrangler.toml.example
           grep -q 'monthly_statement_email_events' migrations/0022_monthly_statement_delivery_events.sql
           grep -q 'statement_delivery_requires_provider_confirmation' migrations/0023_monthly_statement_delivery_confirmation.sql
           grep -q 'customers_default_statement_reference_after_insert' migrations/0024_statement_customer_reference_privacy.sql
