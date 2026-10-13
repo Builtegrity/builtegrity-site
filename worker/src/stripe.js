@@ -50,10 +50,11 @@ export async function stripeRequest(env, path, options = {}) {
 }
 
 export async function createTrackedCheckout(env, tx) {
-  // This is the final fail-closed gate immediately before a live processor object can be created.
-  // It is deliberately inside the Stripe adapter so a future caller cannot bypass compliance
-  // merely by invoking Checkout through a different HTTP route.
+  // Final fail-closed gates immediately before a live processor object can be created.
+  // Keeping them in the Stripe adapter prevents a future caller from bypassing compliance
+  // by invoking Checkout through a different HTTP route.
   await assertMerchantLegalReadyForLiveAction(env, tx.merchant_id, 'Stripe Checkout creation');
+  await assertCustomerStateReady(env, tx.customer_attested_state_code);
 
   if (!tx.processor_account_id || !String(tx.processor_account_id).startsWith('acct_')) {
     throw new Error(`Merchant ${tx.merchant_id} does not have a usable Stripe connected account`);
@@ -102,6 +103,31 @@ export async function createTrackedCheckout(env, tx) {
     accountId: tx.processor_account_id,
     form,
   });
+}
+
+async function assertCustomerStateReady(env, value) {
+  const state = String(value || '').trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(state)) throw complianceError('Customer U.S. state is not attested');
+  const pack = await env.DB.prepare(`
+    SELECT customer_transaction_status,privacy_review_status,breach_review_status,
+           electronic_transactions_review_status,consumer_protection_review_status,
+           counsel_reference,reviewed_at,next_review_due_at
+      FROM state_jurisdiction_support WHERE state_code=?
+  `).bind(state).first();
+  const current = pack && (!pack.next_review_due_at || Date.parse(pack.next_review_due_at) > Date.now());
+  const ready = pack && pack.customer_transaction_status === 'READY'
+    && pack.privacy_review_status === 'CLEARED'
+    && pack.breach_review_status === 'CLEARED'
+    && pack.electronic_transactions_review_status === 'CLEARED'
+    && pack.consumer_protection_review_status === 'CLEARED'
+    && pack.counsel_reference && pack.reviewed_at && current;
+  if (!ready) throw complianceError(`Builtegrity is not legally cleared for customer transactions in ${state}`);
+}
+
+function complianceError(message) {
+  const error = new Error(message);
+  error.status = 409;
+  return error;
 }
 
 export async function retrievePaymentIntent(env, accountId, paymentIntentId) {
