@@ -17,6 +17,18 @@
     "NONE",
     "NEEDS_ATTENTION"
   ],
+  "record_classifications": [
+    "PENDING_PROTECTED",
+    "PROTECTED",
+    "OBSERVED",
+    "IMPORTED",
+    "FEE_EXCEPTION"
+  ],
+  "merchant_facing_record_classes": [
+    "PROTECTED",
+    "OBSERVED",
+    "IMPORTED"
+  ],
   "integration_modes": [
     "STRIPE_CONNECT",
     "STRIPE_APP",
@@ -35,6 +47,7 @@
     "CHECKOUT_CREATED",
     "PAYMENT_SUCCEEDED",
     "PAYMENT_FAILED",
+    "APPLICATION_FEE_RECORDED",
     "BALANCE_RECORDED",
     "PAYOUT_IDENTIFIED",
     "PAYOUT_PAID",
@@ -55,6 +68,10 @@
     "EXPECTED_PAYOUT_NOT_FOUND",
     "OTHER"
   ],
+  "protected_definition": "A payment created through the Builtegrity protected flow that succeeded and for which the exact locked Builtegrity application fee was confirmed by the processor. Only PROTECTED transactions may recognize Builtegrity transaction revenue.",
+  "observed_definition": "A processor transaction Builtegrity detected or monitored but did not create/control and from which Builtegrity did not collect a transaction fee. OBSERVED records do not create Builtegrity transaction revenue.",
+  "imported_definition": "Historical or externally supplied transaction data brought into Builtegrity after the fact for archival/reference purposes. IMPORTED records do not create Builtegrity transaction revenue.",
+  "transaction_funding_rule": "Merchants and partners are never separately billed by Builtegrity. Protected-flow revenue must be collected inside the successful processor transaction. PENDING_PROTECTED is an internal pre-confirmation state; FEE_EXCEPTION means payment truth succeeded but the required fee truth did not match and the transaction must not be called PROTECTED.",
   "accounted_definition": "All required commercial context, consent evidence, processor payment records, economics, and the supported payout trail have been captured with no unresolved exception.",
   "complete_definition": "All expected lifecycle information through the supported processor payout state has been captured. COMPLETE is a current lifecycle state, not a guarantee that no later refund, dispute, adjustment, or payout failure can occur."
 }
