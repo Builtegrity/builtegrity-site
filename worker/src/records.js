@@ -1,8 +1,14 @@
 import { getTransaction } from './db.js';
 import { serveTransactionPdf } from './pdf.js';
 import { handleResendStatementWebhook } from './resend-statement-webhooks.js';
+import { handleMerchantComplianceRoute } from './merchant-compliance-routes.js';
 
 export async function handlePublicRecordRoute(request, env) {
+  // This gateway runs before the owner/admin API gate. Merchant compliance endpoints are
+  // not public: they authenticate an ordinary Clerk merchant session and tenant membership.
+  const merchantComplianceResponse = await handleMerchantComplianceRoute(request, env);
+  if (merchantComplianceResponse) return merchantComplianceResponse;
+
   const resendWebhookResponse = await handleResendStatementWebhook(request, env);
   if (resendWebhookResponse) return resendWebhookResponse;
 
