@@ -24,6 +24,58 @@ function txIdFromObject(object) {
   return object?.metadata?.builtegrity_tx_id || object?.client_reference_id || null;
 }
 
+function summarizeBalanceFees(balance) {
+  if (!balance || typeof balance !== 'object') {
+    return { processorFeeCents: null, breakdownJson: null, source: null };
+  }
+
+  const details = Array.isArray(balance.fee_details) ? balance.fee_details : [];
+  if (details.length) {
+    const normalized = details.map((item) => ({
+      type: item?.type || null,
+      amount: Number(item?.amount || 0),
+      currency: item?.currency || balance.currency || null,
+      description: item?.description || null,
+    }));
+    const processorFeeCents = normalized
+      .filter((item) => item.type !== 'application_fee')
+      .reduce((sum, item) => sum + item.amount, 0);
+    return {
+      processorFeeCents,
+      breakdownJson: JSON.stringify(normalized),
+      source: 'FEE_DETAILS',
+    };
+  }
+
+  return {
+    processorFeeCents: Number(balance.fee || 0),
+    breakdownJson: null,
+    source: 'BALANCE_TOTAL_UNVERIFIED',
+  };
+}
+
+async function insertFinancialAdjustment(env, values) {
+  if (!Number.isFinite(Number(values.amountCents)) || Number(values.amountCents) <= 0) return;
+  await env.DB.prepare(`
+    INSERT OR IGNORE INTO transaction_financial_adjustments
+      (id, transaction_id, merchant_id, processor, adjustment_type, direction,
+       amount_cents, currency, processor_event_id, processor_object_id, adjustment_at, details_json)
+    VALUES (?, ?, ?, 'STRIPE', ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    values.id,
+    values.transactionId,
+    values.merchantId,
+    values.adjustmentType,
+    values.direction,
+    Number(values.amountCents),
+    String(values.currency || 'USD').toUpperCase(),
+    values.processorEventId || null,
+    values.processorObjectId || null,
+    values.adjustmentAt,
+    JSON.stringify(values.details || {}),
+  ).run();
+}
+
 export async function processStripeWebhook(env, event) {
   const claim = await claimWebhook(env, event);
   if (!claim.claimed) return { duplicate: true };
@@ -45,6 +97,9 @@ export async function processStripeWebhook(env, event) {
         break;
       case 'application_fee.created':
         await handleApplicationFeeCreated(env, event);
+        break;
+      case 'application_fee.refunded':
+        await handleApplicationFeeRefunded(env, event);
         break;
       case 'charge.refunded':
         await handleChargeRefunded(env, event);
@@ -129,6 +184,13 @@ async function handlePaymentSucceeded(env, event) {
   const balanceId = typeof balance === 'string' ? balance : balance?.id;
   const applicationFee = charge.application_fee;
   const applicationFeeId = typeof applicationFee === 'string' ? applicationFee : applicationFee?.id;
+  const availableOn = typeof balance === 'object' ? stripeTime(balance.available_on) : null;
+  const feeSummary = summarizeBalanceFees(balance);
+  const grossApplicationFee = typeof applicationFee === 'object' ? Number(applicationFee.amount || 0) : 0;
+  const refundedApplicationFee = typeof applicationFee === 'object' ? Number(applicationFee.amount_refunded || 0) : 0;
+  const currentApplicationFeeCash = grossApplicationFee > 0
+    ? Math.max(0, grossApplicationFee - refundedApplicationFee)
+    : null;
 
   await env.DB.prepare(`
     UPDATE transactions
@@ -139,8 +201,24 @@ async function handlePaymentSucceeded(env, event) {
            payment_status = 'succeeded',
            payment_at = COALESCE(payment_at, ?),
            customer_paid_cents = ?,
+           stripe_available_on = COALESCE(?, stripe_available_on),
            processor_fee_cents = COALESCE(?, processor_fee_cents),
+           processor_fee_breakdown_json = COALESCE(?, processor_fee_breakdown_json),
+           processor_fee_source = COALESCE(?, processor_fee_source),
+           application_fee_gross_confirmed_cents = CASE
+             WHEN application_fee_gross_confirmed_cents = 0 AND ? > 0 THEN ?
+             ELSE application_fee_gross_confirmed_cents
+           END,
+           integrity_fee_collected_cents = CASE
+             WHEN ? IS NOT NULL THEN ?
+             ELSE integrity_fee_collected_cents
+           END,
+           application_fee_refunded_cents = CASE
+             WHEN ? > application_fee_refunded_cents THEN ?
+             ELSE application_fee_refunded_cents
+           END,
            expected_merchant_net_cents = COALESCE(?, expected_merchant_net_cents),
+           tax_data_reconciled_at = CASE WHEN ? IS NOT NULL THEN CURRENT_TIMESTAMP ELSE tax_data_reconciled_at END,
            last_reconciled_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
@@ -151,8 +229,18 @@ async function handlePaymentSucceeded(env, event) {
     applicationFeeId || null,
     stripeTime(paymentIntent.created),
     Number(charge.amount_captured || paymentIntent.amount_received || 0),
-    typeof balance === 'object' ? Number(balance.fee || 0) : null,
+    availableOn,
+    feeSummary.processorFeeCents,
+    feeSummary.breakdownJson,
+    feeSummary.source,
+    grossApplicationFee,
+    grossApplicationFee,
+    currentApplicationFeeCash,
+    currentApplicationFeeCash,
+    refundedApplicationFee,
+    refundedApplicationFee,
     typeof balance === 'object' ? Number(balance.net || 0) : null,
+    availableOn,
     txId,
   ).run();
 
@@ -161,13 +249,15 @@ async function handlePaymentSucceeded(env, event) {
     payment_intent_id: paymentIntent.id,
     charge_id: charge.id,
     amount_received: paymentIntent.amount_received,
+    stripe_available_on: availableOn,
   }, stripeTime(event.created));
 
   if (balanceId) {
     await advanceLifecycle(env, txId, 'PAYOUT_PENDING');
     await recordEvent(env, txId, 'BALANCE_RECORDED', 'STRIPE', `${event.id}:balance`, {
       balance_transaction_id: balanceId,
-      processor_fee_cents: typeof balance === 'object' ? balance.fee : null,
+      processor_fee_cents: feeSummary.processorFeeCents,
+      processor_fee_source: feeSummary.source,
       merchant_net_cents: typeof balance === 'object' ? balance.net : null,
       available_on: typeof balance === 'object' ? balance.available_on : null,
     }, stripeTime(event.created));
@@ -208,36 +298,136 @@ async function handleApplicationFeeCreated(env, event) {
   `).bind(chargeId).first();
   if (!tx) return;
 
+  const gross = Number(fee.amount || 0);
+  const refunded = Number(fee.amount_refunded || 0);
+  const net = Math.max(0, gross - refunded);
+
   await env.DB.prepare(`
     UPDATE transactions
        SET stripe_application_fee_id = ?,
+           application_fee_gross_confirmed_cents = CASE
+             WHEN application_fee_gross_confirmed_cents = 0 THEN ?
+             ELSE application_fee_gross_confirmed_cents
+           END,
            integrity_fee_collected_cents = ?,
+           application_fee_refunded_cents = MAX(application_fee_refunded_cents, ?),
            updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
-  `).bind(fee.id, Number(fee.amount || 0), tx.id).run();
+  `).bind(fee.id, gross, net, refunded, tx.id).run();
 
   await recordEvent(env, tx.id, 'APPLICATION_FEE_RECORDED', 'STRIPE', `${event.id}:fee`, {
     application_fee_id: fee.id,
-    amount: fee.amount,
+    gross_amount: gross,
+    amount_refunded: refunded,
+    current_net_amount: net,
+  }, stripeTime(event.created));
+}
+
+async function handleApplicationFeeRefunded(env, event) {
+  const fee = event.data.object;
+  const chargeId = typeof fee.charge === 'string' ? fee.charge : fee.charge?.id;
+  const tx = await env.DB.prepare(`
+    SELECT id, merchant_id, currency, application_fee_refunded_cents
+      FROM transactions
+     WHERE stripe_application_fee_id = ?
+        OR (? IS NOT NULL AND stripe_charge_id = ?)
+     LIMIT 1
+  `).bind(fee.id, chargeId || null, chargeId || null).first();
+  if (!tx) return;
+
+  const gross = Number(fee.amount || 0);
+  const cumulativeRefunded = Number(fee.amount_refunded || 0);
+  const priorRefunded = Number(tx.application_fee_refunded_cents || 0);
+  const refundDelta = Math.max(0, cumulativeRefunded - priorRefunded);
+  const net = Math.max(0, gross - cumulativeRefunded);
+
+  await env.DB.prepare(`
+    UPDATE transactions
+       SET stripe_application_fee_id = COALESCE(stripe_application_fee_id, ?),
+           application_fee_gross_confirmed_cents = CASE
+             WHEN application_fee_gross_confirmed_cents = 0 THEN ?
+             ELSE application_fee_gross_confirmed_cents
+           END,
+           integrity_fee_collected_cents = ?,
+           application_fee_refunded_cents = MAX(application_fee_refunded_cents, ?),
+           updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?
+  `).bind(fee.id, gross, net, cumulativeRefunded, tx.id).run();
+
+  if (refundDelta > 0) {
+    await insertFinancialAdjustment(env, {
+      id: `ADJ-${event.id}-APPFEE`,
+      transactionId: tx.id,
+      merchantId: tx.merchant_id,
+      adjustmentType: 'APPLICATION_FEE_REFUND',
+      direction: 'BUILTEGRITY_OUTFLOW',
+      amountCents: refundDelta,
+      currency: fee.currency || tx.currency,
+      processorEventId: event.id,
+      processorObjectId: fee.id,
+      adjustmentAt: stripeTime(event.created),
+      details: {
+        application_fee_id: fee.id,
+        cumulative_refunded_cents: cumulativeRefunded,
+        gross_application_fee_cents: gross,
+      },
+    });
+  }
+
+  await recordEvent(env, tx.id, 'APPLICATION_FEE_REFUNDED', 'STRIPE', `${event.id}:fee_refund`, {
+    application_fee_id: fee.id,
+    refund_delta: refundDelta,
+    cumulative_refunded: cumulativeRefunded,
+    current_net_amount: net,
   }, stripeTime(event.created));
 }
 
 async function handleChargeRefunded(env, event) {
   const charge = event.data.object;
   const tx = await env.DB.prepare(`
-    SELECT id FROM transactions WHERE stripe_charge_id = ? LIMIT 1
+    SELECT id, merchant_id, currency, refunded_cents
+      FROM transactions
+     WHERE stripe_charge_id = ?
+     LIMIT 1
   `).bind(charge.id).first();
   if (!tx) return;
 
+  const cumulativeRefunded = Number(charge.amount_refunded || 0);
+  const priorRefunded = Number(tx.refunded_cents || 0);
+  const refundDelta = Math.max(0, cumulativeRefunded - priorRefunded);
+
   await env.DB.prepare(`
     UPDATE transactions
-       SET payment_status = ?, updated_at = CURRENT_TIMESTAMP
+       SET payment_status = ?,
+           refunded_cents = MAX(refunded_cents, ?),
+           updated_at = CURRENT_TIMESTAMP
      WHERE id = ?
-  `).bind(charge.refunded ? 'refunded' : 'partially_refunded', tx.id).run();
+  `).bind(charge.refunded ? 'refunded' : 'partially_refunded', cumulativeRefunded, tx.id).run();
 
-  await recordEvent(env, tx.id, 'REFUND_RECORDED', 'STRIPE', `${event.id}:refund`, {
+  if (refundDelta > 0) {
+    await insertFinancialAdjustment(env, {
+      id: `ADJ-${event.id}-REFUND`,
+      transactionId: tx.id,
+      merchantId: tx.merchant_id,
+      adjustmentType: 'REFUND',
+      direction: 'MERCHANT_OUTFLOW',
+      amountCents: refundDelta,
+      currency: charge.currency || tx.currency,
+      processorEventId: event.id,
+      processorObjectId: charge.id,
+      adjustmentAt: stripeTime(event.created),
+      details: {
+        charge_id: charge.id,
+        cumulative_refunded_cents: cumulativeRefunded,
+        fully_refunded: Boolean(charge.refunded),
+      },
+    });
+  }
+
+  await recordEvent(env, tx.id, 'REFUND_SUCCEEDED', 'STRIPE', `${event.id}:refund`, {
     charge_id: charge.id,
-    amount_refunded: charge.amount_refunded,
+    refund_delta: refundDelta,
+    amount_refunded: cumulativeRefunded,
     fully_refunded: Boolean(charge.refunded),
   }, stripeTime(event.created));
   await recomputeIntegrity(env, tx.id);
