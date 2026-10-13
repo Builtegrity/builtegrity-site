@@ -28,6 +28,7 @@ jobs:
             sqlite3 /tmp/builtegrity-tax.db < "${migration}"
           done
           sqlite3 /tmp/builtegrity-tax.db < transaction-engine/seed-tx-0001.sql
+          sqlite3 /tmp/builtegrity-tax.db < transaction-engine/ci-legal-clearance.sql
 
       - name: Verify Standard Connect tax-responsibility gate
         run: |
