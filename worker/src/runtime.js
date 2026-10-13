@@ -35,6 +35,11 @@ import {
   recordFinancialPosition,
 } from './financial-safety.js';
 import { monitorFinancialSafety, syncFinancialSafetyAlerts } from './financial-safety-monitor.js';
+import {
+  getMonthlyStatementStatus,
+  loadMonthlyStatementPdf,
+  runMonthlyStatementPipeline,
+} from './monthly-statements.js';
 
 const FINANCIAL_DECISION_MAX_AGE_MINUTES = 30;
 
@@ -148,6 +153,33 @@ export default {
         return serveOperatorTransactionPdf(env, operatorPdfMatch[1], principal);
       }
 
+      if (path === '/api/statements' && request.method === 'GET') {
+        await requireOperator(request, env);
+        return json(await getMonthlyStatementStatus(env, { limit: url.searchParams.get('limit') }));
+      }
+
+      if (path === '/api/statements/reconcile' && request.method === 'POST') {
+        await requireOperator(request, env);
+        requireSameOriginBrowserRequest(request, url);
+        return json(await runMonthlyStatementPipeline(env));
+      }
+
+      const statementPdfMatch = path.match(/^\/api\/statements\/(STM-[A-Za-z0-9-]+)\/pdf$/);
+      if (statementPdfMatch && request.method === 'GET') {
+        await requireOperator(request, env);
+        const result = await loadMonthlyStatementPdf(env, statementPdfMatch[1]);
+        if (!result) return json({ error: 'Monthly statement not found or not generated' }, 404);
+        return new Response(result.bytes, {
+          status: 200,
+          headers: {
+            'content-type': 'application/pdf',
+            'content-disposition': `attachment; filename="${result.statement.id}.pdf"`,
+            'cache-control': 'private, no-store',
+            'x-content-type-options': 'nosniff',
+          },
+        });
+      }
+
       if (path === '/api/cases/metrics' && request.method === 'GET') {
         await requireOperator(request, env);
         return json(await getInternalOperationsMetrics(env));
@@ -217,9 +249,10 @@ export default {
         await requireOperator(request, env);
         requireSameOriginBrowserRequest(request, url);
         const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
+        const statements = await runMonthlyStatementPipeline(env);
         const watchdog = await runWatchdogs(env, { kind: 'MANUAL', trigger: 'operator' });
         const routing = await syncInternalCasesFromWatchdogs(env);
-        return json({ ...watchdog, financial_safety: financial, case_routing: routing });
+        return json({ ...watchdog, financial_safety: financial, monthly_statements: statements, case_routing: routing });
       }
 
       if (path.startsWith('/console')) {
@@ -256,11 +289,17 @@ export default {
   async scheduled(controller, env) {
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
+    const statements = await runMonthlyStatementPipeline(env);
     const result = await runWatchdogs(env, { kind, trigger: controller.cron || 'cron' });
     const routing = await syncInternalCasesFromWatchdogs(env);
-    console.log('Builtegrity watchdog run', { ...result, financial_safety: financial, case_routing: routing });
-    if (result.status === 'FAIL' || financial.state === 'RED') {
-      throw new Error(`Builtegrity safety monitor failed: watchdog_critical=${result.critical}, financial_state=${financial.state}`);
+    console.log('Builtegrity watchdog run', {
+      ...result,
+      financial_safety: financial,
+      monthly_statements: statements,
+      case_routing: routing,
+    });
+    if (result.status === 'FAIL' || financial.state === 'RED' || statements.generated.failed > 0 || statements.delivered.failed > 0) {
+      throw new Error(`Builtegrity safety monitor failed: watchdog_critical=${result.critical}, financial_state=${financial.state}, statement_generation_failures=${statements.generated.failed}, statement_delivery_failures=${statements.delivered.failed}`);
     }
   },
 };
