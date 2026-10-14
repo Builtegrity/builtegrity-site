@@ -32,11 +32,13 @@ ACCOUNTED is an integrity state. It answers: **is the transaction sufficiently r
 
 `PENDING_PROTECTED | PROTECTED | OBSERVED | IMPORTED | FEE_EXCEPTION`
 
-PROTECTED is a record/revenue classification. It answers: **did this payment use the controlled protected route and satisfy the processor-confirmed Builtegrity fee invariant?**
+PROTECTED is a record/revenue classification. It answers: **did this payment use the controlled protected route, possess the required customer-jurisdiction and pre-checkout legal-gate evidence, succeed through the processor, and satisfy the exact processor-confirmed Builtegrity fee invariant?**
 
 `ACCOUNTED` and `PROTECTED` are therefore not synonyms. A record can be operationally/integrity-accounted while belonging to a different source/revenue class.
 
 Merchant-facing source classes are `PROTECTED`, `OBSERVED`, and `IMPORTED`. `PENDING_PROTECTED` and `FEE_EXCEPTION` are internal operational states.
+
+Processor truth must always be preserved. If payment/application-fee evidence arrives but the required pre-checkout legal evidence is missing, Builtegrity records the Stripe facts but blocks PROTECTED promotion and routes the record to review rather than rejecting or discarding truthful processor evidence.
 
 ## Revenue invariant
 
@@ -46,9 +48,13 @@ Only `PROTECTED` transactions can create Builtegrity transaction-fee revenue.
 
 There is no separate monthly/setup billing path in V1. The fee is merchant-side Platform Fee economics collected through the protected processor flow.
 
-## Exact fee and carry
+## Exact fee, cash, and carry
 
-The transaction's fee entitlement is represented exactly in micros. Stripe collection occurs in whole smallest-currency units. Fractional residuals are merchant-scoped and can be carried forward. A later payment that settles prior carry is collecting prior entitlement; it is not earning a new extra fee for the later transaction.
+The current transaction's exact fee entitlement is represented in micros and becomes entitled only when that transaction becomes PROTECTED. Stripe application-fee collection occurs in whole smallest-currency units.
+
+A PROTECTED transaction's fractional residual can enter the merchant/currency carry ledger. Whole cents of available prior carry may be reserved before a later checkout. Reserved carry becomes SETTLED only if that later payment also becomes PROTECTED; if payment succeeds but the required Builtegrity fee is not confirmed and the transaction remains `FEE_EXCEPTION`, the reservation remains releasable.
+
+A later payment that settles prior carry is collecting prior entitlement; it is not earning a new extra fee for the later transaction. Exact transaction entitlement and whole-cent processor cash are therefore separate accounting facts.
 
 See `ops/system-contract.json` and `docs/pricing-engine.md`.
 
@@ -60,11 +66,13 @@ The production schema is **only** the ordered set of files in:
 
 Apply them in lexical order through Wrangler/D1 migration tooling. A standalone `transaction-engine/schema.sql` snapshot is intentionally forbidden because it inevitably becomes stale and creates a competing schema authority.
 
+Historical migrations through the frozen baseline must not be renamed, deleted, or edited. Corrections are additive migrations. `npm run db:lineage` enforces that rule and also rejects future duplicate/gapped migration numbers.
+
 `transaction-engine/seed-tx-0001.sql` is test/demo seed data only.
 
 ## Canonical cross-system contract
 
-`ops/system-contract.json` is the machine-readable cross-system contract for product role, state vocabularies, pricing candidate, fee/carry semantics, financial-safety thresholds, canonical sources, and commercial owner-lock status.
+`ops/system-contract.json` is the machine-readable cross-system contract for product role, state vocabularies, pricing candidate, legal/protection requirements, fee/carry semantics, financial-safety thresholds, canonical sources, and commercial owner-lock status.
 
 Run:
 
@@ -72,7 +80,7 @@ Run:
 - `npm run system:gate` for structural + owner-independence checks;
 - `npm run system:gate:live` before live-money release.
 
-The LIVE gate intentionally fails while a required commercial decision, legal approval, provider setup, or owner-control proof is still pending.
+The LIVE gate intentionally fails while a required commercial decision, legal approval, provider setup, source-control proof, or owner-control proof is still pending.
 
 ## Legal authority
 
