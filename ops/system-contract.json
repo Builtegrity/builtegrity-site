@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "contract_id": "BUILTEGRITY-SYSTEM-V1",
   "release_target": "TX-LIVE-0001",
-  "release_rule": "Live money requires system coherence, owner independence, production runtime readiness, commercial owner locks, and applicable legal/compliance approvals. A technically working deployment is not permission to process live money.",
+  "release_rule": "Live money requires system coherence, owner independence, production runtime readiness, commercial owner locks, applicable legal/compliance approvals, and verified single-runtime ownership of the live domain. A technically working deployment is not permission to process live money.",
   "product_role": {
     "processor": "STRIPE",
     "builtegrity_is_processor": false,
@@ -83,6 +83,21 @@
     "verification_status": "NOT_VERIFIED",
     "note": "The connected GitHub App can build and merge through PRs but cannot configure repository administration. main branch protection/ruleset and required CI must be enabled and independently verified before LIVE."
   },
+  "deployment_ownership": {
+    "canonical_live_domain": "builtegrity.com",
+    "canonical_live_runtime": "CLOUDFLARE_WORKER_STATIC_ASSETS",
+    "transaction_api_runtime": "CLOUDFLARE_WORKER",
+    "transaction_application_assets": "public/",
+    "github_pages_role": "TEMPORARY_PRELAUNCH_COMPATIBILITY_SHELL",
+    "github_pages_current_custom_domain": "builtegrity.com",
+    "github_pages_source": "REPOSITORY_ROOT_JEKYLL",
+    "github_pages_transaction_routes_allowed": false,
+    "github_pages_internal_repository_paths_allowed": false,
+    "github_pages_custom_domain_must_be_retired_before_live": true,
+    "single_runtime_domain_ownership_required_for_live": true,
+    "verification_status": "NOT_VERIFIED",
+    "note": "GitHub Pages currently owns the root custom domain as a temporary static pre-launch shell. It must not expose transaction-console/payment routes or publish internal repository directories. Before LIVE, builtegrity.com must be verified on the Cloudflare Worker/Static Assets runtime and GitHub Pages custom-domain ownership must be retired or moved away from the live domain."
+  },
   "migration_lineage": {
     "baseline_commit": "a07986c52abfc8e679ccb1dc9ae193a5a6f2854b",
     "frozen_through_version": 60,
@@ -99,10 +114,11 @@
     "database_schema": "migrations/*.sql in lexical order, protected by migration-lineage immutability",
     "transaction_vocabulary": "transaction-engine/definitions.json plus this contract",
     "runtime": "worker/src",
-    "public_application_assets": "public/",
+    "transaction_application_assets": "public/",
+    "temporary_pages_shell": "root index.html + styles.css + 404.html + static legal/privacy documents, bounded by _config.yml",
     "legal_response_program": "docs/legal-incident-autopilot.md and runtime legal controls",
     "owner_provider_readiness": "ops/owner-control-manifest.json",
-    "note": "Standalone schema snapshots and divergent public/legal document copies are forbidden because they create competing truths."
+    "note": "The GitHub Pages shell and Cloudflare application intentionally have different entry points. Only static legal documents may be mirrored. Standalone schema snapshots, divergent legal copies, and duplicate application deployments are forbidden."
   },
   "legal_authority": {
     "counsel_role": "Qualified outside lawyer or law firm retained by Builtegrity under an active engagement. No provider is currently selected merely because the role exists in code.",
