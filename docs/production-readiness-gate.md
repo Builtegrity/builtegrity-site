@@ -1,146 +1,232 @@
 # Builtegrity Production Readiness Gate
 
-No live customer payment may move through Builtegrity until every **blocking** item below is satisfied. Revenue is not the gate; merchant/customer risk is.
+No live customer payment may move through Builtegrity until every blocking gate below is satisfied. A technically working deployment is not permission to process live money.
 
-## Gate A — Stripe architecture and funds flow — BLOCKING
+The exact release target is `TX-LIVE-0001`.
 
-- [ ] Builtegrity platform is activated in Stripe test mode.
-- [ ] A real test merchant can connect its existing eligible Stripe account through the intended Connect route.
-- [ ] Merchant remains the seller / merchant responsible for its goods or services.
+Before any LIVE release, run:
+
+`npm run system:gate:live`
+
+That whole-system gate is additive to runtime/D1 readiness. It does not replace processor, legal, security, tax, financial, or deployment drills.
+
+## Gate A — System coherence and canonical truth — BLOCKING
+
+- [ ] `ops/system-contract.json` matches runtime/migrations/docs.
+- [ ] `npm run system:coherence` passes.
+- [ ] Ordered `migrations/*.sql` are the only canonical database schema; no competing standalone schema snapshot exists.
+- [ ] Transaction lifecycle, integrity, and record classification remain separate axes.
+- [ ] `ACCOUNTED` is an integrity/completeness state; `PROTECTED` is a record/revenue classification.
+- [ ] `PROTECTED`, `OBSERVED`, and `IMPORTED` are reported distinctly.
+- [ ] Root GitHub Pages compatibility documents exactly match their canonical `public/` copies where mirrors exist.
+- [ ] Pricing, refund economics, financial-safety limits, statements, tax summaries, books, and legal disclosures use the same semantic definitions.
+
+**Pass condition:** the same transaction produces the same classification/economic interpretation in runtime, D1, statements, tax workpapers, books, alerts, legal copy, and CI.
+
+## Gate B — Stripe architecture and funds flow — BLOCKING
+
+- [ ] Stripe platform is activated in test mode.
+- [ ] A real test merchant can connect an eligible existing Stripe account through the intended Connect route.
+- [ ] Merchant remains seller/merchant of record for its goods/services.
 - [ ] Builtegrity does not custody merchant proceeds.
-- [ ] Direct-charge Checkout succeeds on the connected account.
-- [ ] Test application fee is created and received by the platform.
-- [ ] Exact Connect fee-responsibility configuration has been confirmed for the launch account type.
-- [ ] Merchant with manual payouts is either blocked from full V1 reconciliation or clearly given a reduced product state.
-- [ ] Merchant already controlled by another read/write Connect platform is detected/handled rather than silently mis-onboarded.
+- [ ] Direct-charge Checkout succeeds on the merchant connected account.
+- [ ] Builtegrity application fee is created and processor-confirmed.
+- [ ] Exact Connect processing-fee/payment-loss responsibility is confirmed for the launch account type.
+- [ ] Automatic payouts are enforced for full V1 functionality.
+- [ ] Merchants already controlled by an incompatible Connect platform are detected/handled rather than silently mis-onboarded.
+- [ ] Whole-cent Stripe application-fee collection is reconciled with exact internal micros and merchant-scoped fractional carry.
 
-**Pass condition:** TX-0001 or a successor test transaction moves from consent through Stripe payment, Balance Transaction, application fee, automatic payout reconciliation, and Stripe payout-paid status without manual database edits.
+**Pass condition:** a test transaction moves consent -> payment -> application fee -> Balance Transaction -> automatic payout -> payout-paid reconciliation with no manual database edits.
 
-## Gate B — Transaction evidence integrity — BLOCKING
+## Gate C — Pricing and Platform Fee economics — BLOCKING
 
-- [ ] Every payment receives a permanent internal TX ID.
+- [ ] Implemented pricing version is the intended commercial version.
+- [ ] Pricing has an explicit owner lock in `ops/system-contract.json`; implementation alone is not approval.
+- [ ] Fee/refund economic default has an explicit owner lock.
+- [ ] Applicable fee/refund legal status is APPROVED rather than `PENDING_COUNSEL`.
+- [ ] Merchant-facing Fee Schedule exactly matches the server implementation.
+- [ ] No client/merchant/customer caller can override pricing version, fee, carry, or fee/refund-policy fields.
+- [ ] Exact fee entitlement, application-fee cash, current retained cash, residual accrual, and prior carry settlement are separately auditable.
+- [ ] Failed, OBSERVED, IMPORTED, and unresolved fee-exception transactions cannot create protected transaction-fee revenue.
+- [ ] Refund/dispute fee treatment is selected only from an approved, tested jurisdiction/processor handler and fails closed when unknown/expired.
+
+**Pass condition:** one canonical commercial policy can be traced from owner lock -> legal approval -> merchant disclosure/acceptance -> transaction snapshot -> processor collection -> ledger -> statement -> books.
+
+## Gate D — Transaction evidence integrity — BLOCKING
+
+- [ ] Every transaction receives a permanent internal TX ID.
 - [ ] Customer-facing URLs use random access tokens rather than guessable TX IDs.
-- [ ] Exact transaction terms are snapshotted before acceptance.
-- [ ] Terms snapshot is hashed.
-- [ ] Consent time and acceptance method are stored.
-- [ ] Browser redirect cannot mark a payment successful.
-- [ ] Stripe webhook signatures are verified from the raw request body.
-- [ ] Duplicate webhooks do not duplicate transaction history or economics.
-- [ ] Transaction events cannot be updated or deleted through normal application behavior.
-- [ ] Refunds, disputes, and payout failures add history rather than erasing prior history.
+- [ ] Exact terms are snapshotted and hashed before acceptance.
+- [ ] Consent time/method and legal-document versions are preserved.
+- [ ] Browser redirect cannot mark payment successful.
+- [ ] Stripe webhook signatures are verified from the raw body.
+- [ ] Duplicate/out-of-order webhooks are idempotent.
+- [ ] Transaction events cannot be silently updated/deleted.
+- [ ] PROTECTED history cannot be erased by later refund/dispute status.
+- [ ] Refunds, disputes, fee refunds, and payout failures append adjustments/events rather than rewrite original truth.
 
-**Pass condition:** the TX record can reconstruct what was presented, accepted, paid, charged in fees, included in payout, and what later exceptions occurred.
+**Pass condition:** the transaction can reconstruct what was offered, accepted, paid, charged, protected/observed/imported, included in payout, adjusted later, and why.
 
-## Gate C — Failure and recovery — BLOCKING
+## Gate E — Failure, recovery, and adversarial ordering — BLOCKING
 
-Test all of these intentionally:
+Intentionally test:
 
-- [ ] card/payment failure;
-- [ ] abandoned Checkout;
-- [ ] duplicate webhook;
-- [ ] out-of-order webhook;
-- [ ] delayed webhook;
-- [ ] partial refund;
-- [ ] full refund;
-- [ ] dispute opened;
-- [ ] dispute closed;
-- [ ] payout failure after a prior payout-paid event if Stripe reports one;
-- [ ] temporary Builtegrity outage while Stripe continues operating;
-- [ ] database restoration/recovery procedure.
+- [ ] payment failure and abandoned Checkout;
+- [ ] duplicate/out-of-order/delayed Stripe webhook;
+- [ ] application-fee event before/after payment event;
+- [ ] partial/full customer refund;
+- [ ] partial/full Platform Fee refund under each approved handler;
+- [ ] dispute opened/won/lost;
+- [ ] payout failure/reversal states supported by Stripe evidence;
+- [ ] carry reservation + abandonment release;
+- [ ] simultaneous carry reservation attempts;
+- [ ] temporary Builtegrity outage while Stripe continues;
+- [ ] D1 restore and R2 hash-verified artifact recovery.
 
-- [ ] Failed webhook receipts remain discoverable and retryable.
-- [ ] An unresolved failure produces `NEEDS_ATTENTION` rather than a false `ACCOUNTED` state.
+Unresolved failure must become an explicit exception/attention state rather than false completion/protection/accounting.
 
-**Pass condition:** a temporary application failure cannot make Builtegrity falsely claim that an incomplete transaction is accounted for.
+## Gate F — Access, privacy, and data isolation — BLOCKING
 
-## Gate D — Access and data isolation — BLOCKING
+- [ ] `DEV_MODE=false` in production.
+- [ ] Production Clerk/authentication is configured.
+- [ ] Tenant authorization prevents Merchant A from traversing Merchant B data.
+- [ ] Partner access exposes only authorized attached merchants and approved aggregation.
+- [ ] Customer records remain merchant-scoped.
+- [ ] Secrets exist only in approved secret stores, never source control.
+- [ ] Public payment routes expose minimum required information.
+- [ ] Public access tokens can expire/revoke when required.
+- [ ] Privileged admin actions are auditable.
+- [ ] Privacy request deadlines, retention/deletion, and legal holds operate together without allowing deletion under active hold.
 
-- [ ] Development authentication bypass is disabled (`DEV_MODE=false`).
-- [ ] Production console authentication is configured.
-- [ ] Merchant A cannot query Merchant B's customers, purchases, transactions, events, or exceptions.
-- [ ] Partner access only exposes authorized attached merchants.
-- [ ] Stripe/API secrets are stored only as deployment secrets, never committed to Git.
-- [ ] Public payment endpoints expose only the minimum information needed for that payment.
-- [ ] Public payment access tokens can expire/revoke when required.
-- [ ] Admin actions are auditable before outside operators receive access.
+## Gate G — Security and incident/legal bridge — BLOCKING
 
-**Pass condition:** an unauthenticated or wrong-tenant user cannot traverse the hierarchy into another merchant's records.
+- [ ] Security incident runbook is tested.
+- [ ] High/critical incidents automatically enter legal preservation/review when configured thresholds are met.
+- [ ] Incident evidence is durable and immutable/append-oriented.
+- [ ] No machine path decides statutory notification law from untrusted text.
+- [ ] Counsel can verify notification deadlines and containment requirements through the approved response path.
+- [ ] Security alerts and legal alerts cannot silently resolve each other without the required evidence/authority.
 
-## Gate E — Reliability and monitoring — BLOCKING BEFORE RELIANCE
+## Gate H — Standing counsel / legal-response program — BLOCKING
 
-- [ ] D1 production database exists and migrations apply cleanly from zero.
-- [ ] A backup/export procedure exists and has been tested at least once.
-- [ ] Webhook failures and open exceptions can trigger an operator alert.
-- [ ] There is a documented way to reconcile/replay missed Stripe activity after an outage.
-- [ ] Infrastructure free-tier usage is monitored before it approaches a limit that could drop webhooks.
-- [ ] A named support/contact path exists for pilot merchants.
+“Counsel” means an actual qualified outside attorney/law firm retained by Builtegrity under an active engagement. ChatGPT/Atlas/AI is not counsel and cannot become the legal authority by configuration.
 
-**Spending trigger:** pay for infrastructure/monitoring as soon as the free configuration creates a credible risk of lost webhooks, insufficient backups, insufficient retention, or downtime that could materially harm a merchant. Do not wait for an arbitrary revenue number.
+- [ ] Qualified payments/technology/corporate counsel is actually engaged.
+- [ ] Attorney-client/privilege scope for routed work is confirmed.
+- [ ] Legal receiving address/subdomain and signed Resend webhook are working.
+- [ ] Standing counsel automatic intake route is working.
+- [ ] Signed counsel callback or equivalent verified machine-return path is working.
+- [ ] Counsel acknowledgement SLA escalation is tested.
+- [ ] Registered-agent physical-service forwarding into the electronic route is tested.
+- [ ] Insurer/carrier notice route is configured only after policy notice terms are reviewed.
+- [ ] Legal evidence holds cannot release without counsel reference.
+- [ ] Legal incidents cannot resolve/dismiss without the required counsel clearance reference.
+- [ ] Settlement/admission/waiver/public-statement paths require the applicable counsel/corporate authority.
+- [ ] The complete legal incident drill in `docs/legal-incident-autopilot.md` passes.
+- [ ] `legal_response_program` is `VERIFIED` in owner-control readiness.
 
-## Gate F — Merchant promise and legal/commercial wrapper — BLOCKING FOR LIVE COMMERCIAL USE
+**Pass condition:** an ordinary legal notice can be received, preserved, routed, deadline-controlled, updated, and resolved without the owner manually relaying it, while genuinely nondelegable corporate decisions still reach the owner.
 
-- [ ] Merchant agreement accurately describes Builtegrity's role.
-- [ ] Privacy Notice accurately describes data collected, used, stored, and shared.
-- [ ] Fee amount/rule and collection method are disclosed before use.
-- [ ] Refund treatment of the Builtegrity fee is disclosed.
-- [ ] Data-retention and deletion policy is defined.
-- [ ] Disconnect/termination behavior is defined.
-- [ ] `ACCOUNTED` is defined narrowly and consistently.
-- [ ] Marketing does **not** imply fraud protection, chargeback protection, insurance, guaranteed legal enforceability, guaranteed payout, or independent bank-deposit verification.
-- [ ] Exact live Stripe architecture and agreement language have received appropriate legal/compliance review before the first commercial pilot if required by the final funds flow and jurisdiction.
+## Gate I — Legal/commercial documents — BLOCKING
 
-Suggested definition:
+- [ ] Platform Agreement approved by qualified counsel.
+- [ ] Privacy Notice approved.
+- [ ] Fee Schedule approved and matches locked pricing.
+- [ ] Fee/refund policy approved and matches locked economics/jurisdiction handlers.
+- [ ] DPA, Acceptable Use Policy, Electronic Records Consent, Security disclosure, and subprocessor registry are current/approved as applicable.
+- [ ] Retention/deletion and disconnect/termination treatment are defined.
+- [ ] Marketing does not imply insurance, fraud/chargeback protection, guaranteed legal enforceability, guaranteed payout, or independent bank-deposit verification.
+- [ ] Merchant acceptance evidence is versioned/immutable.
 
-> **ACCOUNTED:** The required transaction context, customer acceptance record, Stripe payment records, transaction economics, and applicable automatic-payout trail have been captured, and no unresolved exception is currently recorded.
+## Gate J — Financial safety — BLOCKING
 
-## Gate G — Pilot launch — BLOCKING BEFORE OPEN SIGNUP
+- [ ] Current pricing-floor evidence meets the 80% minimum planning margin.
+- [ ] Human-touch telemetry remains below the configured warning/critical thresholds or the machine has applied the appropriate brake.
+- [ ] Current vendor/processor cost models are not expired.
+- [ ] Current Stripe platform balance evidence exists.
+- [ ] LIVE company financial position comes from an approved BANK/ACCOUNTING/COMPOSITE source rather than manual/test-only evidence.
+- [ ] Required runway/reserve/liability checks pass.
+- [ ] No prohibited personal guarantee/debt exposure exists under current policy.
+- [ ] Financial safety evaluation is fresh and GREEN for the action being taken.
 
-- [ ] First pilot is a U.S. merchant with an existing eligible Stripe account.
-- [ ] Merchant primarily accepts online/card-not-present, one-time payments.
-- [ ] Merchant uses automatic Stripe payouts.
-- [ ] Merchant understands it must route the relevant payments through Builtegrity-created Checkout for full V1 functionality.
-- [ ] Support is intentionally manual for the first 1–3 merchants so edge cases are observed.
-- [ ] At least several real test-mode transactions have been exercised before any live-mode transaction.
+## Gate K — Accounting, tax, and reconciliation — BLOCKING
 
-## Gate H — owner_independence and disaster recovery — BLOCKING FOR ANY LIVE PAYMENT
+- [ ] Transaction economics ledger reconciles processor cash to canonical transaction evidence.
+- [ ] Fractional carry settlement is not double-counted as new entitlement.
+- [ ] Company books sync/reconciliation is tested.
+- [ ] Platform Fee refunds/credits are represented as adjustments, not historical rewrites.
+- [ ] Tax-responsibility/account-type assumptions for V1 Stripe merchants are current and verified.
+- [ ] Year-end summaries keep PROTECTED/OBSERVED/IMPORTED separate and remain informational reconciliation aids rather than tax filings/advice.
+- [ ] Applicable business tax/registration obligations and Builtegrity-service tax treatment are approved for launch jurisdiction.
 
-This gate is controlled by `docs/owner-independence-and-disaster-recovery.md` and `ops/owner-control-manifest.json`.
+## Gate L — Statements/reporting — BLOCKING BEFORE RELIANCE
 
-- [ ] The owner can directly recover the domain registrar/root domain authority without ChatGPT.
-- [ ] The owner has GitHub repository/organization administration and an owner-controlled off-provider source copy.
-- [ ] The owner can directly recover the Cloudflare account and deploy/rollback without ChatGPT.
-- [ ] D1 export and restoration have been executed successfully at least once.
-- [ ] R2 durable artifact retrieval/copy has been tested and hash integrity can be verified.
-- [ ] The owner can directly recover the Stripe platform, distinguish test/live configuration, rotate credentials and pause new Builtegrity-routed payments.
-- [ ] The owner can directly recover the Clerk application and understands the identity-provider replacement/re-authentication path.
-- [ ] The owner can directly recover the Resend account, rotate API/webhook credentials and replace the outbound email adapter if needed.
-- [ ] The owner can directly recover the Google Workspace super-admin/business mailbox path.
-- [ ] The owner can directly recover company banking/accounting authority independently of AI.
-- [ ] A private Owner Emergency Vault exists outside GitHub, Drive/Sheets and ChatGPT, with MFA recovery material and critical-account recovery metadata.
-- [ ] No live credential exists only in chat, one contractor/employee's possession, one unrecoverable device, or source control.
-- [ ] The Owner Zero-AI Drill has been completed successfully.
-- [ ] Every system in `ops/owner-control-manifest.json` with `required_for_live: true` is `VERIFIED`.
-- [ ] `npm run owner:gate:live` exits successfully on the exact production commit.
+- [ ] Statement V2 migration/runtime are deployed together.
+- [ ] Successful OBSERVED transactions do not enter protected count/volume.
+- [ ] Fee entitlement, gross application-fee cash, retained cash, and carry settled are distinct fields.
+- [ ] Merchant and partner statements use the same semantics.
+- [ ] Partner statements do not leak merchant customer detail.
+- [ ] Source snapshot and rendered PDF are hash-verified/immutable.
+- [ ] Resend acceptance is not treated as final recipient delivery without verified provider delivery evidence.
+- [ ] End-to-end statement delivery/retry drill passes.
 
-**Pass condition:** Builtegrity can be operated, paused, repaired, restored, migrated, or shut down by the owner/competent engineer without ChatGPT or any single irreplaceable person/provider.
+## Gate M — Reliability and monitoring — BLOCKING
 
-## Gates after the first pilot
+- [ ] Production D1 exists and all migrations apply cleanly from zero.
+- [ ] Backup/export/restore procedure has been executed.
+- [ ] Missed Stripe activity can be replayed/reconciled.
+- [ ] R2 artifact recovery/hash verification has been executed.
+- [ ] Persistent alerts cover processor, exceptions, financial safety, statements, tax/compliance, security, and legal response.
+- [ ] External monitoring detects when the Worker/cron/readiness path itself stops.
+- [ ] Infrastructure limits/costs are monitored before they can drop critical events.
 
-These do not block test-mode development, but become mandatory before broader distribution:
+## Gate N — Source control and release governance — BLOCKING
 
-- production role-based authentication instead of the temporary internal token;
-- automated merchant onboarding and eligibility checks;
-- formal incident-response procedure;
-- stronger monitoring and alerting;
-- retention/backups sized to real transaction volume;
-- partner contracts before partners receive economics or aggregate merchant access;
-- Stripe App adapter for compatible merchants already connected elsewhere;
-- Partner API before claiming platform-wide activation;
-- security review / penetration testing appropriate to scale and customer requirements;
-- insurance and certifications when customer, contractual, or risk exposure makes them economically necessary.
+- [ ] `main` branch protection or equivalent GitHub ruleset is enabled.
+- [ ] Required production CI status checks cannot be bypassed by an ordinary direct push.
+- [ ] Production changes flow through review/merge controls appropriate to the owner/team size.
+- [ ] Exact production commit is known and all required workflows are green.
+- [ ] Owner can recover GitHub administration without ChatGPT.
+- [ ] Owner-controlled off-provider source backup exists.
+- [ ] `ops/system-contract.json.source_control.verification_status` is `VERIFIED` only after the above is proven.
+
+The current repository may be structurally coherent while this external GitHub administration proof remains unverified. That is expected pre-launch and must block LIVE.
+
+## Gate O — Owner independence and disaster recovery — BLOCKING
+
+Use `docs/owner-independence-and-disaster-recovery.md` and `ops/owner-control-manifest.json`.
+
+- [ ] Domain registrar/root domain authority recoverable by owner.
+- [ ] Cloudflare account/runtime/D1/R2 recoverable and deploy/rollback proven.
+- [ ] Stripe platform recovery, credential rotation, and emergency payment-route pause proven.
+- [ ] Clerk recovery/replacement path proven.
+- [ ] Resend outbound/inbound recovery/rotation path proven.
+- [ ] Google Workspace super-admin/business mailbox recovery proven.
+- [ ] Banking/accounting authority recoverable independently of AI.
+- [ ] Owner Emergency Vault exists outside GitHub/Drive/ChatGPT and contains recovery material.
+- [ ] No live credential exists only in chat, one person's memory/device, or source control.
+- [ ] Owner Zero-AI Drill passes.
+- [ ] Every `required_for_live` owner-control system is `VERIFIED`.
+- [ ] `npm run owner:gate:live` passes.
+
+## Gate P — Pilot suitability — BLOCKING BEFORE FIRST LIVE PILOT
+
+- [ ] U.S. merchant with eligible existing Stripe account.
+- [ ] Primarily online/card-not-present, one-time payments.
+- [ ] Automatic Stripe payouts.
+- [ ] Merchant willing to route relevant payments through Builtegrity protected Checkout.
+- [ ] Merchant understands the role/limits of PROTECTED.
+- [ ] Several real test-mode transactions and failure drills are completed first.
+- [ ] Pilot scope/support burden is intentionally bounded and feeds automated case/runbook improvement rather than becoming permanent manual work.
 
 ## Release rule
 
-A deployment being technically functional is **not** permission to process live money.
+`TX-LIVE-0001` is permitted only when:
 
-`TX-LIVE-0001` is permitted only after all blocking gates above are marked complete, the owner-independence live gate passes, and the system has demonstrated the same lifecycle in Stripe test mode first.
+1. every applicable blocking gate above is complete;
+2. exact production migrations/runtime are deployed and verified;
+3. `npm run system:gate:live` passes on the exact production commit;
+4. the production runtime/D1 readiness controls independently allow LIVE; and
+5. the same end-to-end payment lifecycle has already succeeded in Stripe test mode.
+
+No single green subsystem can override a red/unknown blocking subsystem.
