@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.2",
+  "schema_version": "1.3",
   "contract_id": "BUILTEGRITY-SYSTEM-V1",
   "release_target": "TX-LIVE-0001",
   "release_rule": "Live money requires system coherence, owner independence, production runtime readiness, commercial owner locks, and applicable legal/compliance approvals. A technically working deployment is not permission to process live money.",
@@ -81,7 +81,21 @@
     "required_status_checks_required_for_live": true,
     "direct_unreviewed_main_bypass_allowed_for_live": false,
     "verification_status": "NOT_VERIFIED",
-    "note": "The connected GitHub App can build and merge through PRs but cannot configure repository administration. main branch protection/ruleset and required CI must be enabled and independently verified before LIVE."
+    "repository_metadata_status": "STALE_EXTERNAL_ADMIN",
+    "note": "The connected GitHub App can build and merge through PRs but cannot configure repository administration. main branch protection/ruleset and required CI must be enabled and independently verified before LIVE. The repository description is also stale external metadata and should be updated by an administrator, but that metadata cleanup alone is not a live-money safety gate."
+  },
+  "deployment_ownership": {
+    "production_domain": "builtegrity.com",
+    "authoritative_live_runtime": "CLOUDFLARE_WORKER_STATIC_ASSETS",
+    "authoritative_live_assets": "public/",
+    "github_pages_prelaunch_role": "TEMPORARY_TEST_COMPATIBILITY_HOST",
+    "github_pages_custom_domain_currently_expected": "builtegrity.com",
+    "github_pages_must_not_claim_production_domain_for_live": true,
+    "cloudflare_domain_route_must_be_verified_for_live": true,
+    "verification_status": "PRELAUNCH_GITHUB_PAGES_CONFLICT",
+    "required_for_live": true,
+    "cutover_rule": "Before LIVE, GitHub Pages must no longer claim builtegrity.com, the repository CNAME must not point at the production domain, and the owner must independently verify that builtegrity.com and required application subdomains/routes terminate at the intended Cloudflare Worker/Static Assets deployment. GitHub Pages may remain on a non-production compatibility hostname only if it cannot receive production application traffic.",
+    "note": "GitHub Pages currently deploys the pre-launch test shell to builtegrity.com. This is tolerated only before LIVE because the page is explicitly test-only. It is not the canonical production runtime."
   },
   "migration_lineage": {
     "baseline_commit": "a07986c52abfc8e679ccb1dc9ae193a5a6f2854b",
@@ -100,6 +114,7 @@
     "transaction_vocabulary": "transaction-engine/definitions.json plus this contract",
     "runtime": "worker/src",
     "public_application_assets": "public/",
+    "deployment_ownership": "this contract plus docs/deployment-ownership.md",
     "legal_response_program": "docs/legal-incident-autopilot.md and runtime legal controls",
     "owner_provider_readiness": "ops/owner-control-manifest.json",
     "note": "Standalone schema snapshots and divergent public/legal document copies are forbidden because they create competing truths."
