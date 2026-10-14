@@ -52,7 +52,7 @@ jobs:
             cat /tmp/live-gate.txt
             exit 1
           fi
-          grep -Eq 'PENDING_OWNER_LOCK|has not been explicitly owner-locked|not VERIFIED|not verified|pending counsel' /tmp/live-gate.txt
+          grep -Eq 'PENDING_OWNER_LOCK|has not been explicitly owner-locked|not VERIFIED|not verified|pending counsel|production-domain ownership' /tmp/live-gate.txt
 
       - name: Verify monthly V2 source separates protection from payment success
         run: |
@@ -69,11 +69,10 @@ jobs:
           grep -q 'fee_residual_generated_micros' migrations/0060_monthly_statement_semantic_alignment.sql
           grep -q 'Prior fractional carry settled' worker/src/monthly-statements.js
 
-      - name: Verify canonical public mirrors are byte-identical
+      - name: Verify intentional static mirrors are byte-identical
         run: |
           cmp terms/index.html public/terms/index.html
           cmp privacy/index.html public/privacy/index.html
-          cmp index.html public/index.html
           cmp styles.css public/styles.css
           for path in \
             legal/fees/index.html \
@@ -84,6 +83,13 @@ jobs:
             legal/subprocessors/index.html; do
             cmp "$path" "public/$path"
           done
+
+      - name: Verify Pages and Worker application entries are intentionally distinct
+        run: |
+          ! cmp -s index.html public/index.html
+          grep -qi 'not the transaction application' index.html
+          grep -qi '/console/' public/index.html
+          grep -qi '/pay/' public/index.html
 
       - name: Verify no competing schema authority returns
         run: |
