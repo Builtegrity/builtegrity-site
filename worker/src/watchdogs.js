@@ -1,23 +1,50 @@
 import { openException, recomputeIntegrity, resolveException } from './db.js';
 import { retrieveConnectedAccount } from './stripe.js';
 
+const RELEASE_STAGES = new Set(['TEST', 'PILOT', 'LIVE']);
+const AUTH_POLICY_CODES = [
+  'INVALID_WATCHDOG_STAGE',
+  'AUTH_PROVIDER_MUST_BE_CLERK',
+  'DEV_MODE_MUST_BE_FALSE',
+  'CLERK_AUTHORIZED_PARTIES_REQUIRED',
+  'APP_ORIGIN_NOT_AUTHORIZED',
+  'ADMIN_ORIGIN_NOT_AUTHORIZED',
+  'APP_BASE_URL_INVALID',
+  'ADMIN_BASE_URL_INVALID',
+  'CLERK_SIGN_IN_URL_INVALID',
+  'CLERK_ISSUER_INVALID',
+  'APP_BASE_URL_MUST_BE_HTTPS',
+  'ADMIN_BASE_URL_MUST_BE_HTTPS',
+  'CLERK_SIGN_IN_URL_MUST_BE_HTTPS',
+  'CLERK_ISSUER_MUST_BE_HTTPS',
+  'ADMIN_HOSTNAME_MISMATCH',
+];
+
 const STAGE_REQUIREMENTS = {
   PREVIEW: [],
   TEST: [
+    'AUTH_PROVIDER',
+    'DEV_MODE',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET',
     'STRIPE_CONNECT_CLIENT_ID',
     'CLERK_JWT_KEY',
     'CLERK_ISSUER',
     'CLERK_ADMIN_USER_IDS',
+    'CLERK_AUTHORIZED_PARTIES',
+    'CLERK_SIGN_IN_URL',
   ],
   PILOT: [
+    'AUTH_PROVIDER',
+    'DEV_MODE',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET',
     'STRIPE_CONNECT_CLIENT_ID',
     'CLERK_JWT_KEY',
     'CLERK_ISSUER',
     'CLERK_ADMIN_USER_IDS',
+    'CLERK_AUTHORIZED_PARTIES',
+    'CLERK_SIGN_IN_URL',
     'TURNSTILE_SITE_KEY',
     'TURNSTILE_SECRET_KEY',
     'RESEND_API_KEY',
@@ -25,12 +52,16 @@ const STAGE_REQUIREMENTS = {
     'ALERT_EMAIL_TO',
   ],
   LIVE: [
+    'AUTH_PROVIDER',
+    'DEV_MODE',
     'STRIPE_SECRET_KEY',
     'STRIPE_WEBHOOK_SECRET',
     'STRIPE_CONNECT_CLIENT_ID',
     'CLERK_JWT_KEY',
     'CLERK_ISSUER',
     'CLERK_ADMIN_USER_IDS',
+    'CLERK_AUTHORIZED_PARTIES',
+    'CLERK_SIGN_IN_URL',
     'TURNSTILE_SITE_KEY',
     'TURNSTILE_SECRET_KEY',
     'RESEND_API_KEY',
@@ -45,6 +76,7 @@ const STAGE_REQUIREMENTS = {
 export async function systemReadiness(env) {
   const stage = watchdogStage(env);
   const missingConfig = requiredConfig(env, stage);
+  const policyViolations = configurationPolicyViolations(env, stage);
   let database = false;
   let lastWatchdog = null;
 
@@ -63,12 +95,14 @@ export async function systemReadiness(env) {
     database = false;
   }
 
+  const configComplete = missingConfig.length === 0 && policyViolations.length === 0;
   return {
-    ok: database && missingConfig.length === 0 && lastWatchdog?.status !== 'FAIL',
+    ok: database && configComplete && lastWatchdog?.status !== 'FAIL',
     stage,
     database,
-    config_complete: missingConfig.length === 0,
+    config_complete: configComplete,
     missing_config_count: missingConfig.length,
+    config_policy_violation_count: policyViolations.length,
     last_watchdog: lastWatchdog || null,
   };
 }
@@ -192,6 +226,25 @@ async function checkConfiguration(env, counters) {
         subjectType: 'CONFIG',
         subjectId: name,
         message: `${name} is required for WATCHDOG_STAGE=${stage} but is not configured.`,
+      });
+    } else {
+      await resolveAlert(env, key);
+    }
+  }
+
+  const policyViolations = configurationPolicyViolations(env, stage);
+  const byCode = new Map(policyViolations.map((violation) => [violation.code, violation]));
+  for (const code of AUTH_POLICY_CODES) {
+    const key = `config-policy:${code}`;
+    const violation = byCode.get(code);
+    if (violation) {
+      await setAlert(env, {
+        key,
+        category: 'CONFIG',
+        severity: stage === 'LIVE' || stage === 'INVALID' ? 'CRITICAL' : 'ERROR',
+        subjectType: 'AUTH_POLICY',
+        subjectId: code,
+        message: violation.message,
       });
     } else {
       await resolveAlert(env, key);
@@ -583,11 +636,97 @@ function shouldNotify(alert) {
 
 function watchdogStage(env) {
   const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').trim().toUpperCase();
-  return stage in STAGE_REQUIREMENTS ? stage : 'PREVIEW';
+  return stage in STAGE_REQUIREMENTS ? stage : 'INVALID';
 }
 
 function requiredConfig(env, stage = watchdogStage(env)) {
   return (STAGE_REQUIREMENTS[stage] || []).filter((name) => !String(env[name] || '').trim());
+}
+
+export function configurationPolicyViolations(env, stage = watchdogStage(env)) {
+  const violations = [];
+  if (stage === 'INVALID') {
+    violations.push({
+      code: 'INVALID_WATCHDOG_STAGE',
+      message: 'WATCHDOG_STAGE is invalid. Unknown release stages fail closed and must not inherit PREVIEW behavior.',
+    });
+    return violations;
+  }
+  if (!RELEASE_STAGES.has(stage)) return violations;
+
+  const provider = String(env.AUTH_PROVIDER || '').trim().toUpperCase();
+  if (provider !== 'CLERK') {
+    violations.push({
+      code: 'AUTH_PROVIDER_MUST_BE_CLERK',
+      message: `${stage} requires Clerk as the operator authentication provider. Preview-only fallback/bypass providers are not permitted.`,
+    });
+  }
+
+  if (String(env.DEV_MODE || '').trim().toLowerCase() !== 'false') {
+    violations.push({
+      code: 'DEV_MODE_MUST_BE_FALSE',
+      message: `${stage} requires DEV_MODE=false explicitly. Development bypass behavior is forbidden outside PREVIEW.`,
+    });
+  }
+
+  const allowedParties = String(env.CLERK_AUTHORIZED_PARTIES || '')
+    .split(',')
+    .map((value) => value.trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  if (allowedParties.length === 0) {
+    violations.push({
+      code: 'CLERK_AUTHORIZED_PARTIES_REQUIRED',
+      message: `${stage} requires an explicit Clerk authorized-parties origin allowlist.`,
+    });
+  }
+
+  const app = checkedOrigin(env.APP_BASE_URL, 'APP_BASE_URL', stage, violations);
+  const admin = checkedOrigin(env.ADMIN_BASE_URL, 'ADMIN_BASE_URL', stage, violations);
+  checkedOrigin(env.CLERK_SIGN_IN_URL, 'CLERK_SIGN_IN_URL', stage, violations);
+  checkedOrigin(env.CLERK_ISSUER, 'CLERK_ISSUER', stage, violations);
+
+  if (app && allowedParties.length && !allowedParties.includes(app.origin)) {
+    violations.push({
+      code: 'APP_ORIGIN_NOT_AUTHORIZED',
+      message: 'CLERK_AUTHORIZED_PARTIES must include the configured APP_BASE_URL origin.',
+    });
+  }
+  if (admin && allowedParties.length && !allowedParties.includes(admin.origin)) {
+    violations.push({
+      code: 'ADMIN_ORIGIN_NOT_AUTHORIZED',
+      message: 'CLERK_AUTHORIZED_PARTIES must include the configured ADMIN_BASE_URL origin.',
+    });
+  }
+
+  if (stage === 'LIVE' && admin && String(env.ADMIN_HOSTNAME || '').trim().toLowerCase() !== admin.hostname.toLowerCase()) {
+    violations.push({
+      code: 'ADMIN_HOSTNAME_MISMATCH',
+      message: 'ADMIN_HOSTNAME must exactly match the hostname in ADMIN_BASE_URL for LIVE.',
+    });
+  }
+
+  return violations;
+}
+
+function checkedOrigin(value, field, stage, violations) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' && !(stage === 'TEST' && ['localhost', '127.0.0.1'].includes(parsed.hostname))) {
+      violations.push({
+        code: `${field}_MUST_BE_HTTPS`,
+        message: `${field} must use HTTPS for ${stage}.`,
+      });
+    }
+    return parsed;
+  } catch {
+    violations.push({
+      code: `${field}_INVALID`,
+      message: `${field} must be a valid absolute URL for ${stage}.`,
+    });
+    return null;
+  }
 }
 
 function hoursAgo(value) {
