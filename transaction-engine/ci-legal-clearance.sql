@@ -1,6 +1,21 @@
 -- TEST FIXTURE ONLY. Never execute against production.
 -- This makes MER-0001 legally/compliance-ready so CI suites can isolate
 -- transaction/tax/financial invariants that specifically require an ACTIVE merchant.
+-- It also creates a synthetic standing-counsel route because production now correctly
+-- refuses to claim legal readiness without a functioning response program.
+
+UPDATE legal_response_providers
+SET status='APPROVED',
+    engagement_status='ACTIVE',
+    intake_mode='EMAIL',
+    intake_email='ci-standing-counsel@example.invalid',
+    privilege_relationship_confirmed=1,
+    auto_dispatch_enabled=1,
+    jurisdiction_scope='US',
+    effective_at=CURRENT_TIMESTAMP,
+    expires_at=datetime('now','+1 year'),
+    notes='CI TEST FIXTURE ONLY'
+WHERE id='LEGAL-COUNSEL-PRIMARY';
 
 UPDATE platform_compliance_controls
 SET legal_entity_status='CONFIRMED',
@@ -26,6 +41,7 @@ SET legal_entity_status='CONFIRMED',
     platform_fee_refund_policy_reference='CI_TEST_FIXTURE',
     platform_fee_refund_policy_reviewed_at=CURRENT_TIMESTAMP,
     platform_fee_refund_policy_next_review_due_at=datetime('now','+1 year'),
+    legal_response_program_status='READY',
     legal_launch_state='READY',
     last_legal_review_at=CURRENT_TIMESTAMP,
     next_legal_review_due_at=datetime('now','+1 year')

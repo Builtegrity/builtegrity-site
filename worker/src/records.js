@@ -2,17 +2,28 @@ import { getTransaction } from './db.js';
 import { serveTransactionPdf } from './pdf.js';
 import { handleResendStatementWebhook } from './resend-statement-webhooks.js';
 import { handleMerchantComplianceRoute } from './merchant-compliance-routes.js';
+import { handleLegalInboxWebhook } from './legal-inbox.js';
+import { handleLegalProviderWebhook } from './legal-provider-webhooks.js';
 
 export async function handlePublicRecordRoute(request, env) {
-  // This gateway runs before the owner/admin API gate. Merchant compliance endpoints are
-  // not public: they authenticate an ordinary Clerk merchant session and tenant membership.
+  // This gateway runs before the owner/admin API gate. Legal/provider webhooks are public only in
+  // the network sense: each has its own cryptographic signature/secret boundary. Email/provider
+  // content remains untrusted evidence and can never inherit operator privileges.
+  const url = new URL(request.url);
+  if (url.pathname === '/api/webhooks/legal-inbox' && request.method === 'POST') {
+    return handleLegalInboxWebhook(request, env);
+  }
+  const legalProviderMatch = url.pathname.match(/^\/api\/webhooks\/legal-provider\/([A-Za-z0-9_-]+)$/);
+  if (legalProviderMatch && request.method === 'POST') {
+    return handleLegalProviderWebhook(request, env, legalProviderMatch[1]);
+  }
+
   const merchantComplianceResponse = await handleMerchantComplianceRoute(request, env);
   if (merchantComplianceResponse) return merchantComplianceResponse;
 
   const resendWebhookResponse = await handleResendStatementWebhook(request, env);
   if (resendWebhookResponse) return resendWebhookResponse;
 
-  const url = new URL(request.url);
   const match = url.pathname.match(/^\/api\/records\/([^/]+)(\/pdf)?$/);
   if (!match || request.method !== 'GET') return null;
 

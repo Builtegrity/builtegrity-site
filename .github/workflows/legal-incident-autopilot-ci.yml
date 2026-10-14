@@ -1,0 +1,165 @@
+name: Legal Incident Autopilot CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - legal-incident-autopilot-v1
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Check legal-autopilot JavaScript syntax
+        run: |
+          node --check worker/src/legal-inbox.js
+          node --check worker/src/legal-provider-webhooks.js
+          node --check worker/src/legal-incident-autopilot.js
+          node --check worker/src/legal-enforcement.js
+          node --check worker/src/case-router.js
+          node --check worker/src/records.js
+
+      - name: Build the complete D1 schema from zero
+        run: |
+          rm -f /tmp/builtegrity-legal-autopilot.db
+          for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+            echo "Applying $file"
+            sqlite3 /tmp/builtegrity-legal-autopilot.db < "$file"
+          done
+          sqlite3 /tmp/builtegrity-legal-autopilot.db "PRAGMA foreign_key_check;" > /tmp/fk.txt
+          test ! -s /tmp/fk.txt
+
+      - name: Verify legal response starts fail-closed
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT legal_response_program_status FROM platform_compliance_controls WHERE id='GLOBAL';")" = "UNCONFIGURED"
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT state FROM legal_response_readiness;")" = "BLOCKED"
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT auto_reply_to_sender||':'||auto_notify_insurer||':'||owner_operational_touch_target_ppm FROM legal_response_policy WHERE id='GLOBAL';")" = "0:0:0"
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT COUNT(*) FROM legal_response_providers WHERE status='APPROVED' OR auto_dispatch_enabled=1;")" = "0"
+
+      - name: Verify unconfigured counsel cannot silently become automatic
+        run: |
+          if sqlite3 /tmp/builtegrity-legal-autopilot.db "UPDATE legal_response_providers SET status='APPROVED',engagement_status='ACTIVE',auto_dispatch_enabled=1 WHERE id='LEGAL-COUNSEL-PRIMARY';" 2>/tmp/counsel-guard.txt; then
+            echo 'Expected unsafe counsel auto-dispatch activation to fail'
+            exit 1
+          fi
+          grep -q 'legal response provider cannot auto-dispatch' /tmp/counsel-guard.txt
+
+      - name: Verify incidents cannot self-clear or destroy holds
+        run: |
+          sqlite3 /tmp/builtegrity-legal-autopilot.db "
+            INSERT INTO legal_incidents(id,incident_type,severity,status,source_channel,source_external_id,received_at)
+            VALUES('LEGAL-CI-1','DEMAND_LETTER','HIGH','PRESERVED','SYSTEM','ci-1',CURRENT_TIMESTAMP);
+            INSERT INTO legal_preservation_holds(id,incident_id,scope_type,scope_id,reason)
+            VALUES('LHOLD-CI-1','LEGAL-CI-1','PLATFORM','GLOBAL','CI preservation test');
+          "
+          if sqlite3 /tmp/builtegrity-legal-autopilot.db "UPDATE legal_incidents SET status='RESOLVED',resolved_at=CURRENT_TIMESTAMP WHERE id='LEGAL-CI-1';" 2>/tmp/close-guard.txt; then
+            echo 'Expected legal incident close without counsel reference to fail'
+            exit 1
+          fi
+          grep -q 'counsel clearance' /tmp/close-guard.txt
+          if sqlite3 /tmp/builtegrity-legal-autopilot.db "UPDATE legal_preservation_holds SET status='RELEASED',released_at=CURRENT_TIMESTAMP WHERE id='LHOLD-CI-1';" 2>/tmp/hold-guard.txt; then
+            echo 'Expected hold release without counsel reference to fail'
+            exit 1
+          fi
+          grep -q 'counsel reference' /tmp/hold-guard.txt
+
+      - name: Verify settlement admission and waiver cannot be automated from untrusted input
+        run: |
+          for action in SETTLEMENT ADMISSION WAIVER; do
+            if sqlite3 /tmp/builtegrity-legal-autopilot.db "INSERT INTO legal_outbound_actions(id,incident_id,action_type,status) VALUES('LACT-'||'$action','LEGAL-CI-1','$action','AUTHORIZED');" 2>/tmp/action-guard.txt; then
+              echo "Expected $action without counsel/corporate authority to fail"
+              exit 1
+            fi
+            grep -q 'substantive legal action requires counsel authorization' /tmp/action-guard.txt
+          done
+
+      - name: Verify security incidents automatically enter legal preservation
+        run: |
+          sqlite3 /tmp/builtegrity-legal-autopilot.db "
+            INSERT INTO security_incidents(id,severity,status,discovered_at,description)
+            VALUES('SEC-LEGAL-CI','HIGH','OPEN',CURRENT_TIMESTAMP,'Synthetic high-severity incident');
+          "
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT incident_type||':'||status||':'||preservation_hold_active FROM legal_incidents WHERE id='LEGAL-SEC-SEC-LEGAL-CI';")" = "DATA_BREACH_NOTICE:PRESERVED:1"
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT COUNT(*) FROM legal_preservation_holds WHERE incident_id='LEGAL-SEC-SEC-LEGAL-CI' AND status='ACTIVE';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT severity FROM system_alerts WHERE alert_key='legal:security-incident:SEC-LEGAL-CI';")" = "WARN"
+
+      - name: Verify privacy deadline risk becomes observable before it can disappear
+        run: |
+          sqlite3 /tmp/builtegrity-legal-autopilot.db "
+            INSERT INTO privacy_requests(id,subject_type,request_type,jurisdiction_code,status,internal_target_at,legal_deadline_at)
+            VALUES('PRIV-CI','CUSTOMER','ACCESS','RI','IN_PROGRESS',datetime('now','+1 day'),datetime('now','+1 hour'));
+          "
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT risk_state FROM privacy_request_deadline_risk WHERE id='PRIV-CI';")" = "CRITICAL"
+          grep -q "seedPrivacyDeadlineIncidents" worker/src/legal-incident-autopilot.js
+          grep -q "LEGAL-PRIV-" worker/src/legal-incident-autopilot.js
+
+      - name: Verify inbound legal email is cryptographically bounded and untrusted
+        run: |
+          grep -q "resend.webhooks.verify" worker/src/legal-inbox.js
+          grep -q "svix-signature" worker/src/legal-inbox.js
+          grep -q "UNTRUSTED LEGAL EVIDENCE" worker/src/legal-inbox.js
+          grep -q "emails.receiving.get" worker/src/legal-inbox.js
+          grep -q "emails.receiving.attachments.list" worker/src/legal-inbox.js
+          grep -q "LEGAL_INBOX_WEBHOOK_SECRET" worker/src/legal-inbox.js
+          grep -q "severity: 'WARN'" worker/src/legal-inbox.js
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT auto_reply_to_sender FROM legal_response_policy WHERE id='GLOBAL';")" = "0"
+
+      - name: Verify deterministic classifier routes critical legal notice types without making legal conclusions
+        run: |
+          node --input-type=module <<'NODE'
+          import { classifyLegalNotice } from './worker/src/legal-inbox.js';
+          const subpoena = classifyLegalNotice('SUBPOENA for records');
+          if (subpoena.type !== 'SUBPOENA' || subpoena.severity !== 'CRITICAL') throw new Error(JSON.stringify(subpoena));
+          const unknown = classifyLegalNotice('Please review this unusual matter');
+          if (unknown.type !== 'UNCLASSIFIED') throw new Error(JSON.stringify(unknown));
+          NODE
+
+      - name: Verify counsel callbacks are signed short-lived and durable
+        run: |
+          grep -q "SIGNATURE_TOLERANCE_SECONDS = 300" worker/src/legal-provider-webhooks.js
+          grep -q "X-Builtegrity-Timestamp" worker/src/legal-provider-webhooks.js
+          grep -q "X-Builtegrity-Signature" worker/src/legal-provider-webhooks.js
+          grep -q "HMAC" worker/src/legal-provider-webhooks.js
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='legal_provider_callback_receipts_no_delete';")" = "1"
+
+      - name: Verify counsel and insurer deliveries are retry-safe
+        run: |
+          grep -q "Idempotency-Key.*legal-counsel-intake" worker/src/legal-incident-autopilot.js
+          grep -q "Idempotency-Key.*legal-insurer-notice" worker/src/legal-incident-autopilot.js
+          grep -q "counsel_ack_target_minutes" worker/src/legal-incident-autopilot.js
+          grep -q "legal:counsel-ack-overdue" worker/src/legal-incident-autopilot.js
+
+      - name: Verify legal autopilot is wired to the scheduled resolution cycle
+        run: |
+          grep -q "runLegalIncidentAutopilot" worker/src/case-router.js
+          grep -q "legal_incidents: legalIncidents" worker/src/case-router.js
+          grep -q "handleLegalInboxWebhook" worker/src/records.js
+          grep -q "handleLegalProviderWebhook" worker/src/records.js
+          grep -q "/api/webhooks/legal-inbox" worker/src/records.js
+          grep -q "legalProviderMatch" worker/src/records.js
+
+      - name: Verify PILOT and LIVE require a standing legal-response route
+        run: |
+          grep -q "legal_response_readiness" worker/src/legal-enforcement.js
+          grep -q "LEGAL_RESPONSE_PROGRAM_NOT_READY" worker/src/legal-enforcement.js
+          test "$(node -e "const m=require('./ops/owner-control-manifest.json'); const x=m.systems.find(s=>s.id==='legal_response_program'); process.stdout.write(String(Boolean(x&&x.required_for_live&&['P0'].includes(x.criticality))))")" = "true"
+          node scripts/check-owner-independence.mjs --mode=structure
+
+      - name: Verify no legal source evidence can be silently rewritten
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-legal-autopilot.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('legal_incident_source_evidence_immutable','legal_incident_events_no_update','legal_incident_events_no_delete','legal_intake_attachments_no_update','legal_intake_attachments_no_delete');")" = "5"
+
+      - name: Verify Resend SDK floor includes verified inbound webhook support
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const pkg = JSON.parse(fs.readFileSync('package.json','utf8'));
+          if (pkg.dependencies?.resend !== '^6.9.2') throw new Error(`Unexpected resend dependency: ${pkg.dependencies?.resend}`);
+          NODE
