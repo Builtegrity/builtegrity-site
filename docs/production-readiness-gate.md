@@ -8,20 +8,22 @@ Before any LIVE release, run:
 
 `npm run system:gate:live`
 
-That whole-system gate is additive to runtime/D1 readiness. It does not replace processor, legal, security, tax, financial, or deployment drills.
+That whole-system gate is additive to runtime/D1 readiness. It does not replace processor, legal, security, tax, financial, source-control, domain-ownership, or deployment drills.
 
 ## Gate A — System coherence and canonical truth — BLOCKING
 
 - [ ] `ops/system-contract.json` matches runtime/migrations/docs.
 - [ ] `npm run system:coherence` passes.
 - [ ] Ordered `migrations/*.sql` are the only canonical database schema; no competing standalone schema snapshot exists.
+- [ ] Historical migrations remain frozen and later corrections are additive.
 - [ ] Transaction lifecycle, integrity, and record classification remain separate axes.
 - [ ] `ACCOUNTED` is an integrity/completeness state; `PROTECTED` is a record/revenue classification.
 - [ ] `PROTECTED`, `OBSERVED`, and `IMPORTED` are reported distinctly.
-- [ ] Root GitHub Pages compatibility documents exactly match their canonical `public/` copies where mirrors exist.
+- [ ] Static legal/privacy documents exactly match their canonical mirrored `public/` copies where a mirror is intentional.
+- [ ] Root GitHub Pages `index.html` and Worker `public/index.html` remain intentionally different entry points.
 - [ ] Pricing, refund economics, financial-safety limits, statements, tax summaries, books, and legal disclosures use the same semantic definitions.
 
-**Pass condition:** the same transaction produces the same classification/economic interpretation in runtime, D1, statements, tax workpapers, books, alerts, legal copy, and CI.
+**Pass condition:** the same transaction produces the same classification/economic interpretation in runtime, D1, statements, tax workpapers, books, alerts, legal copy, and CI; deployment surfaces do not pretend two different runtimes are the same application.
 
 ## Gate B — Stripe architecture and funds flow — BLOCKING
 
@@ -36,7 +38,7 @@ That whole-system gate is additive to runtime/D1 readiness. It does not replace 
 - [ ] Merchants already controlled by an incompatible Connect platform are detected/handled rather than silently mis-onboarded.
 - [ ] Whole-cent Stripe application-fee collection is reconciled with exact internal micros and merchant-scoped fractional carry.
 
-**Pass condition:** a test transaction moves consent -> payment -> application fee -> Balance Transaction -> automatic payout -> payout-paid reconciliation with no manual database edits.
+**Pass condition:** a test transaction moves consent -> legal clearance -> payment -> application fee -> PROTECTED -> Balance Transaction -> automatic payout -> payout-paid reconciliation with no manual database edits.
 
 ## Gate C — Pricing and Platform Fee economics — BLOCKING
 
@@ -47,10 +49,12 @@ That whole-system gate is additive to runtime/D1 readiness. It does not replace 
 - [ ] Merchant-facing Fee Schedule exactly matches the server implementation.
 - [ ] No client/merchant/customer caller can override pricing version, fee, carry, or fee/refund-policy fields.
 - [ ] Exact fee entitlement, application-fee cash, current retained cash, residual accrual, and prior carry settlement are separately auditable.
-- [ ] Failed, OBSERVED, IMPORTED, and unresolved fee-exception transactions cannot create protected transaction-fee revenue.
+- [ ] Current-transaction fractional residual becomes entitled only after PROTECTED.
+- [ ] Reserved prior carry settles only when the later payment itself becomes PROTECTED.
+- [ ] Failed, OBSERVED, IMPORTED, pending, and unresolved fee-exception transactions cannot create protected transaction-fee entitlement/revenue.
 - [ ] Refund/dispute fee treatment is selected only from an approved, tested jurisdiction/processor handler and fails closed when unknown/expired.
 
-**Pass condition:** one canonical commercial policy can be traced from owner lock -> legal approval -> merchant disclosure/acceptance -> transaction snapshot -> processor collection -> ledger -> statement -> books.
+**Pass condition:** one canonical commercial policy can be traced from owner lock -> legal approval -> merchant disclosure/acceptance -> transaction snapshot -> processor collection -> entitlement/carry evidence -> ledger -> statement -> books.
 
 ## Gate D — Transaction evidence integrity — BLOCKING
 
@@ -58,14 +62,16 @@ That whole-system gate is additive to runtime/D1 readiness. It does not replace 
 - [ ] Customer-facing URLs use random access tokens rather than guessable TX IDs.
 - [ ] Exact terms are snapshotted and hashed before acceptance.
 - [ ] Consent time/method and legal-document versions are preserved.
+- [ ] Customer jurisdiction attestation and applicable pre-checkout legal clearance are preserved before protected Checkout.
 - [ ] Browser redirect cannot mark payment successful.
 - [ ] Stripe webhook signatures are verified from the raw body.
 - [ ] Duplicate/out-of-order webhooks are idempotent.
+- [ ] Processor truth is recorded even when a protection/legal prerequisite is missing; missing prerequisites block PROTECTED rather than discarding Stripe facts.
 - [ ] Transaction events cannot be silently updated/deleted.
 - [ ] PROTECTED history cannot be erased by later refund/dispute status.
-- [ ] Refunds, disputes, fee refunds, and payout failures append adjustments/events rather than rewrite original truth.
+- [ ] Refunds, disputes, fee refunds, payout failures, carry corrections, and other corrections append evidence rather than rewrite original truth.
 
-**Pass condition:** the transaction can reconstruct what was offered, accepted, paid, charged, protected/observed/imported, included in payout, adjusted later, and why.
+**Pass condition:** the transaction can reconstruct what was offered, accepted, legally cleared, paid, charged, protected/observed/imported, included in payout, adjusted later, and why.
 
 ## Gate E — Failure, recovery, and adversarial ordering — BLOCKING
 
@@ -74,16 +80,21 @@ Intentionally test:
 - [ ] payment failure and abandoned Checkout;
 - [ ] duplicate/out-of-order/delayed Stripe webhook;
 - [ ] application-fee event before/after payment event;
+- [ ] payment truth and application-fee truth arriving in the same update/event window;
+- [ ] complete processor truth with missing pre-checkout legal evidence remains non-PROTECTED in every event order;
+- [ ] current fractional residual does not accrue on payment success alone;
+- [ ] carry reservation + abandoned-checkout release;
+- [ ] carry-funded payment success with missing/mismatched BG fee remains FEE_EXCEPTION and keeps reserved carry releasable;
+- [ ] carry-funded PROTECTED payment settles reserved carry exactly once;
+- [ ] simultaneous carry reservation attempts;
 - [ ] partial/full customer refund;
 - [ ] partial/full Platform Fee refund under each approved handler;
 - [ ] dispute opened/won/lost;
 - [ ] payout failure/reversal states supported by Stripe evidence;
-- [ ] carry reservation + abandonment release;
-- [ ] simultaneous carry reservation attempts;
 - [ ] temporary Builtegrity outage while Stripe continues;
 - [ ] D1 restore and R2 hash-verified artifact recovery.
 
-Unresolved failure must become an explicit exception/attention state rather than false completion/protection/accounting.
+Unresolved failure must become an explicit exception/attention/review state rather than false completion/protection/accounting.
 
 ## Gate F — Access, privacy, and data isolation — BLOCKING
 
@@ -151,6 +162,7 @@ Unresolved failure must become an explicit exception/attention state rather than
 
 ## Gate K — Accounting, tax, and reconciliation — BLOCKING
 
+- [ ] Exact transaction-fee entitlement and processor cash receipt remain separate economic facts.
 - [ ] Transaction economics ledger reconciles processor cash to canonical transaction evidence.
 - [ ] Fractional carry settlement is not double-counted as new entitlement.
 - [ ] Company books sync/reconciliation is tested.
@@ -162,7 +174,7 @@ Unresolved failure must become an explicit exception/attention state rather than
 ## Gate L — Statements/reporting — BLOCKING BEFORE RELIANCE
 
 - [ ] Statement V2 migration/runtime are deployed together.
-- [ ] Successful OBSERVED transactions do not enter protected count/volume.
+- [ ] Successful OBSERVED/FEE_EXCEPTION transactions do not enter protected count/volume.
 - [ ] Fee entitlement, gross application-fee cash, retained cash, and carry settled are distinct fields.
 - [ ] Merchant and partner statements use the same semantics.
 - [ ] Partner statements do not leak merchant customer detail.
@@ -173,10 +185,11 @@ Unresolved failure must become an explicit exception/attention state rather than
 ## Gate M — Reliability and monitoring — BLOCKING
 
 - [ ] Production D1 exists and all migrations apply cleanly from zero.
+- [ ] Frozen migration lineage passes and production migration state matches the expected lineage.
 - [ ] Backup/export/restore procedure has been executed.
 - [ ] Missed Stripe activity can be replayed/reconciled.
 - [ ] R2 artifact recovery/hash verification has been executed.
-- [ ] Persistent alerts cover processor, exceptions, financial safety, statements, tax/compliance, security, and legal response.
+- [ ] Persistent alerts cover processor, exceptions, financial safety, statements, tax/compliance, security, legal response, and deployment/readiness state.
 - [ ] External monitoring detects when the Worker/cron/readiness path itself stops.
 - [ ] Infrastructure limits/costs are monitored before they can drop critical events.
 
@@ -190,9 +203,28 @@ Unresolved failure must become an explicit exception/attention state rather than
 - [ ] Owner-controlled off-provider source backup exists.
 - [ ] `ops/system-contract.json.source_control.verification_status` is `VERIFIED` only after the above is proven.
 
-The current repository may be structurally coherent while this external GitHub administration proof remains unverified. That is expected pre-launch and must block LIVE.
+The repository may be structurally coherent while this external GitHub administration proof remains unverified. That is expected pre-launch and must block LIVE.
 
-## Gate O — Owner independence and disaster recovery — BLOCKING
+## Gate O — Deployment and domain ownership — BLOCKING
+
+Use `docs/deployment-ownership.md`.
+
+Current pre-launch state may use GitHub Pages as a bounded static shell, but it is not the transaction runtime.
+
+- [ ] GitHub Pages artifact publishes only the bounded static pre-launch shell/legal documents and does not publish `worker/`, `public/`, `migrations/`, `transaction-engine/`, `scripts/`, `ops/`, `docs/`, `templates/`, `assets/`, package files, or other internal application/source directories.
+- [ ] Root Pages `index.html` exposes no `/console/`, `/pay/`, `/login/`, API, or webhook route that requires the Worker.
+- [ ] Cloudflare Worker + Static Assets is deployed from the exact approved production commit.
+- [ ] `public/` is the Worker Static Assets application root.
+- [ ] `builtegrity.com` is bound to and verified against the intended Cloudflare Worker/Static Assets deployment.
+- [ ] `/console/`, `/pay/`, `/login/`, health, API, and webhook routes resolve through the Worker as designed.
+- [ ] GitHub Pages no longer claims `builtegrity.com` as its custom domain before LIVE; Pages is disabled or moved to a non-production compatibility hostname.
+- [ ] DNS and TLS are correct and owner-recoverable.
+- [ ] Cutover and rollback are tested without two platforms simultaneously being considered authoritative.
+- [ ] `ops/system-contract.json.deployment_ownership.verification_status` is `VERIFIED` only after independent proof of single-runtime ownership.
+
+**Pass condition:** exactly one platform owns the production domain/application behavior, and that platform is the intended Cloudflare Worker/Static Assets runtime.
+
+## Gate P — Owner independence and disaster recovery — BLOCKING
 
 Use `docs/owner-independence-and-disaster-recovery.md` and `ops/owner-control-manifest.json`.
 
@@ -209,7 +241,7 @@ Use `docs/owner-independence-and-disaster-recovery.md` and `ops/owner-control-ma
 - [ ] Every `required_for_live` owner-control system is `VERIFIED`.
 - [ ] `npm run owner:gate:live` passes.
 
-## Gate P — Pilot suitability — BLOCKING BEFORE FIRST LIVE PILOT
+## Gate Q — Pilot suitability — BLOCKING BEFORE FIRST LIVE PILOT
 
 - [ ] U.S. merchant with eligible existing Stripe account.
 - [ ] Primarily online/card-not-present, one-time payments.
@@ -226,7 +258,8 @@ Use `docs/owner-independence-and-disaster-recovery.md` and `ops/owner-control-ma
 1. every applicable blocking gate above is complete;
 2. exact production migrations/runtime are deployed and verified;
 3. `npm run system:gate:live` passes on the exact production commit;
-4. the production runtime/D1 readiness controls independently allow LIVE; and
-5. the same end-to-end payment lifecycle has already succeeded in Stripe test mode.
+4. the production runtime/D1 readiness controls independently allow LIVE;
+5. `builtegrity.com` has verified single-runtime ownership on the Cloudflare Worker/Static Assets deployment and GitHub Pages no longer owns the production custom domain; and
+6. the same end-to-end payment lifecycle has already succeeded in Stripe test mode.
 
 No single green subsystem can override a red/unknown blocking subsystem.
