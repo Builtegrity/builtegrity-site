@@ -133,7 +133,7 @@ jobs:
 
       - name: Verify Stripe path stays direct charge and card only
         run: |
-          grep -q "accountId: tx.processor_account_id" worker/src/stripe.js
+          grep -q "accountId: effectiveTx.processor_account_id" worker/src/stripe.js
           grep -q "payment_method_types\[0\].*card" worker/src/stripe.js
           grep -q "billing_address_collection.*required" worker/src/stripe.js
           grep -q "payment_intent_data\[application_fee_amount\]" worker/src/stripe.js

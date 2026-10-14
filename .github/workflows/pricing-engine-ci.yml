@@ -4,7 +4,7 @@ on:
   pull_request:
   push:
     branches:
-      - atlas/pricing-v1
+      - autopilot-constitution-v1
       - main
   workflow_dispatch:
 
@@ -14,70 +14,98 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check pricing JavaScript syntax
+      - name: Check critical JavaScript syntax
         run: |
           node --check worker/src/pricing.js
-          node --check worker/src/index.js
           node --check worker/src/stripe.js
+          node --check worker/src/autopilot.js
+          node --check worker/src/case-router.js
+          node --check worker/src/webhooks.js
+          node --check worker/src/index.js
 
-      - name: Build full D1 schema and seed legacy TX-0001
+      - name: Build the entire D1 schema from zero
         run: |
           rm -f /tmp/builtegrity-pricing.db
           for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
             echo "Applying $file"
             sqlite3 /tmp/builtegrity-pricing.db < "$file"
           done
-          sqlite3 /tmp/builtegrity-pricing.db < transaction-engine/seed-tx-0001.sql
+          sqlite3 /tmp/builtegrity-pricing.db "PRAGMA foreign_key_check;" > /tmp/fk.txt
+          test ! -s /tmp/fk.txt
 
-      - name: Verify PRICE-V1 is universal and flat
+      - name: Verify BG_STANDARD_V1 is the only active USD price
         run: |
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM pricing_versions WHERE id='PRICE-2026-10-V1' AND status='ACTIVE' AND currency='USD' AND percentage_bps=15 AND minimum_cents=5 AND maximum_cents=1000 AND density_mode='FLAT';")" = "1"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM pricing_density_bands WHERE pricing_version_id='PRICE-2026-10-V1';")" = "0"
-          if sqlite3 /tmp/builtegrity-pricing.db "INSERT INTO pricing_versions (id,status,currency,percentage_bps,minimum_cents,maximum_cents,density_mode) VALUES ('PRICE-BAD-SECOND','ACTIVE','USD',15,5,1000,'FLAT');" 2>/tmp/second-price-error.txt; then
-            echo "Expected database to reject a second active USD pricing version"
-            exit 1
-          fi
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM pricing_versions WHERE id='BG_STANDARD_V1' AND status='ACTIVE' AND currency='USD' AND percentage_bps=10 AND pricing_model='AMOUNT_BANDS' AND uncapped=1;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM pricing_versions WHERE status='ACTIVE' AND currency='USD';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM pricing_amount_bands WHERE pricing_version_id='BG_STANDARD_V1';")" = "4"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT group_concat(min_amount_cents||':'||COALESCE(max_amount_cents,'OPEN')||':'||base_fee_cents,'|') FROM pricing_amount_bands WHERE pricing_version_id='BG_STANDARD_V1' ORDER BY min_amount_cents;")" = "1:100:1|101:500:2|501:1000:3|1001:OPEN:5"
+          grep -q "datetime(effective_from).*CURRENT_TIMESTAMP" worker/src/pricing.js
 
-      - name: Verify PRICE-V1 arithmetic
+      - name: Verify exact fee arithmetic and no per-transaction roundup
         run: |
           node --input-type=module <<'NODE'
-          import { calculateFeeCents } from './worker/src/pricing.js';
-          const rule = { percentage_bps: 15, minimum_cents: 5, maximum_cents: 1000 };
+          import { calculateAmountBandFee } from './worker/src/pricing.js';
+          const rule = { percentage_bps: 10, maximum_cents: Number.MAX_SAFE_INTEGER, uncapped: 1 };
           const cases = [
-            [300, 5],
-            [500, 5],
-            [1100, 5],
-            [2000, 5],
-            [3333, 5],
-            [4000, 6],
-            [5000, 8],
-            [10000, 15],
-            [50000, 75],
-            [100000, 150],
-            [500000, 750],
-            [1000000, 1000],
-            [2500000, 1000],
+            [1,       1,       10010,       1,       10],
+            [50,      1,       10500,       1,      500],
+            [99,      1,       10990,       1,      990],
+            [100,     1,       11000,       1,     1000],
+            [101,     2,       21010,       2,     1010],
+            [500,     2,       25000,       2,     5000],
+            [501,     3,       35010,       3,     5010],
+            [1000,    3,       40000,       4,        0],
+            [1001,    5,       60010,       6,       10],
+            [2000,    5,       70000,       7,        0],
+            [10000,   5,      150000,      15,        0],
+            [100000,  5,     1050000,     105,        0],
+            [100000000, 5, 1000050000, 100005,        0],
           ];
-          for (const [amount, expected] of cases) {
-            const actual = calculateFeeCents(amount, rule);
-            if (actual !== expected) throw new Error(`${amount} cents expected ${expected}, got ${actual}`);
+          for (const [amount, base, exact, whole, residual] of cases) {
+            const q = calculateAmountBandFee(amount, rule, { base_fee_cents: base });
+            if (q.fee_micros !== exact) throw new Error(`${amount}: exact ${q.fee_micros}, expected ${exact}`);
+            if (q.processor_fee_cents !== whole) throw new Error(`${amount}: whole ${q.processor_fee_cents}, expected ${whole}`);
+            if (q.residual_micros !== residual) throw new Error(`${amount}: residual ${q.residual_micros}, expected ${residual}`);
           }
           NODE
 
-      - name: Verify five-cent longevity guardrail
+      - name: Verify 99-cent torture-test economics
         run: |
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT floor_revenue_micros FROM pricing_floor_health;")" = "50000"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT target_human_reserve_micros FROM pricing_floor_health;")" = "7500"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT floor_reversal_reserve_micros FROM pricing_floor_health;")" = "1000"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT floor_planning_contribution_micros FROM pricing_floor_health;")" = "35330"
-          margin="$(sqlite3 /tmp/builtegrity-pricing.db "SELECT floor_planning_margin_ppm FROM pricing_floor_health;")"
-          test "$margin" -ge 700000
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT human_touch_target_ppm FROM pricing_economic_guardrails WHERE id='GUARD-PRICE-V1';")" = "500"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT human_touch_mature_ppm FROM pricing_economic_guardrails WHERE id='GUARD-PRICE-V1';")" = "100"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT human_touch_warn_ppm FROM pricing_economic_guardrails WHERE id='GUARD-PRICE-V1';")" = "1000"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT human_touch_critical_ppm FROM pricing_economic_guardrails WHERE id='GUARD-PRICE-V1';")" = "1500"
+          node --input-type=module <<'NODE'
+          import { calculateAmountBandFee } from './worker/src/pricing.js';
+          const q = calculateAmountBandFee(99, { percentage_bps: 10, maximum_cents: Number.MAX_SAFE_INTEGER, uncapped: 1 }, { base_fee_cents: 1 });
+          const transactions = 10_000_000n;
+          const revenueMicros = BigInt(q.fee_micros) * transactions;
+          const revenueDollars = Number(revenueMicros) / 1_000_000;
+          if (revenueDollars !== 109900) throw new Error(`10M x 99c expected $109,900, got $${revenueDollars}`);
+          const merchantMonthlyMicros = BigInt(q.fee_micros) * 1000n;
+          const merchantMonthlyDollars = Number(merchantMonthlyMicros) / 1_000_000;
+          if (merchantMonthlyDollars !== 10.99) throw new Error(`1000 x 99c expected $10.99, got $${merchantMonthlyDollars}`);
+          NODE
 
-      - name: Verify versioned transaction price locks before economics initialize
+      - name: Verify uncapped upside
+        run: |
+          node --input-type=module <<'NODE'
+          import { calculateAmountBandFee } from './worker/src/pricing.js';
+          const rule = { percentage_bps: 10, maximum_cents: Number.MAX_SAFE_INTEGER, uncapped: 1 };
+          const band = { base_fee_cents: 5 };
+          const cases = [
+            [100000, 105],
+            [1000000, 1005],
+            [100000000, 100005],
+            [100000000000, 100000005],
+          ];
+          for (const [amount, expectedWholeCents] of cases) {
+            const q = calculateAmountBandFee(amount, rule, band);
+            if (q.processor_fee_cents !== expectedWholeCents) throw new Error(`${amount}: expected ${expectedWholeCents}, got ${q.processor_fee_cents}`);
+          }
+          NODE
+
+      - name: Seed legacy transaction prerequisites
+        run: |
+          sqlite3 /tmp/builtegrity-pricing.db < transaction-engine/seed-tx-0001.sql
+
+      - name: Verify BG_STANDARD_V1 transaction snapshot is DB-validated and completed
         run: |
           sqlite3 /tmp/builtegrity-pricing.db "
             INSERT INTO transactions (
@@ -87,26 +115,95 @@ jobs:
               pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,
               pricing_density_band_id,pricing_calculated_cents,pricing_locked_at
             ) VALUES (
-              'TX-PRICE-TEST','PUR-0001','MER-0001','CUST-0001','PAYMENT','Eleven dollar pricing test',1100,'USD',
+              'TX-BGV1-99','PUR-0001','MER-0001','CUST-0001','PAYMENT','99 cent pricing torture test',99,'USD',
               'TERMS-001','Pricing test terms',NULL,NULL,
-              5,'STRIPE_APPLICATION_FEE','pricing-test-token',
-              'PRICE-2026-10-V1',15,5,1000,NULL,5,CURRENT_TIMESTAMP
+              1,'STRIPE_APPLICATION_FEE','pricing-bg-v1-token',
+              'BG_STANDARD_V1',10,0,9007199254740991,NULL,1,CURRENT_TIMESTAMP
             );"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT integrity_fee_earned_cents FROM transactions WHERE id='TX-PRICE-TEST';")" = "5"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT estimated_revenue_micros FROM transaction_economics_summary WHERE transaction_id='TX-PRICE-TEST';")" = "50000"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT amount_cents FROM transaction_components WHERE transaction_id='TX-PRICE-TEST' AND component_type_code='INTEGRITY_FEE' AND basis='EXPECTED' LIMIT 1;")" = "5"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_amount_band_id FROM transactions WHERE id='TX-BGV1-99';")" = "BGV1-BAND-001"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_base_cents FROM transactions WHERE id='TX-BGV1-99';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_fee_micros FROM transactions WHERE id='TX-BGV1-99';")" = "10990"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_fee_residual_micros FROM transactions WHERE id='TX-BGV1-99';")" = "990"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_uncapped FROM transactions WHERE id='TX-BGV1-99';")" = "1"
 
-      - name: Verify locked pricing cannot be rewritten
+      - name: Verify invalid BG_STANDARD_V1 pricing is rejected
         run: |
-          if sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET integrity_fee_earned_cents=6 WHERE id='TX-PRICE-TEST';" 2>/tmp/immutable-price-error.txt; then
-            echo "Expected locked fee mutation to fail"
+          if sqlite3 /tmp/builtegrity-pricing.db "
+            INSERT INTO transactions (
+              id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,
+              terms_version,terms_snapshot,integrity_fee_earned_cents,fee_collection_method,payment_access_token,
+              pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,
+              pricing_calculated_cents,pricing_locked_at
+            ) VALUES (
+              'TX-BGV1-BAD','PUR-0001','MER-0001','CUST-0001','PAYMENT','Bad price',99,'USD',
+              'TERMS-001','Bad pricing test',2,'STRIPE_APPLICATION_FEE','pricing-bad-token',
+              'BG_STANDARD_V1',10,0,9007199254740991,2,CURRENT_TIMESTAMP
+            );" 2>/tmp/bad-price.txt; then
+            echo 'Expected invalid Builtegrity fee to be rejected'
             exit 1
           fi
-          grep -q 'transaction pricing is immutable once locked' /tmp/immutable-price-error.txt
-          if sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET pricing_minimum_cents=6 WHERE id='TX-PRICE-TEST';" 2>/tmp/immutable-min-error.txt; then
-            echo "Expected locked pricing snapshot mutation to fail"
+          grep -q 'BG_STANDARD_V1' /tmp/bad-price.txt
+
+      - name: Verify fractional carry accrues only after successful payment
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COALESCE((SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD'),0);")" = "0"
+          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET payment_status='succeeded',payment_at='2026-10-14T00:00:00Z',customer_paid_cents=99,integrity_fee_collected_cents=1 WHERE id='TX-BGV1-99';"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "990"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM merchant_fee_carry_events WHERE transaction_id='TX-BGV1-99' AND event_type='ACCRUED';")" = "1"
+
+      - name: Verify merchant refund does not erase earned Builtegrity revenue
+        run: |
+          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET payment_status='refunded',refunded_cents=99 WHERE id='TX-BGV1-99';"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT integrity_fee_earned_micros FROM transactions WHERE id='TX-BGV1-99';")" = "10990"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "990"
+
+      - name: Verify floor economics remain above 80 percent
+        run: |
+          margin="$(sqlite3 /tmp/builtegrity-pricing.db "SELECT floor_planning_margin_ppm FROM pricing_floor_health WHERE pricing_version_id='BG_STANDARD_V1';")"
+          echo "BG_STANDARD_V1 floor planning margin ppm=$margin"
+          test "$margin" -ge 800000
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT minimum_floor_margin_ppm FROM financial_safety_policy WHERE id='GLOBAL';")" = "800000"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT human_touch_orange_ppm||':'||human_touch_red_ppm FROM financial_safety_policy WHERE id='GLOBAL';")" = "200:500"
+
+      - name: Verify workforce defaults are fail-closed
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM workforce_vendors WHERE status='APPROVED' AND auto_dispatch_enabled=1;")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM workforce_vendor_capabilities WHERE approved=1;")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM workforce_policy WHERE id='GLOBAL' AND max_single_work_order_cents=5000 AND monthly_budget_cents=50000 AND require_machine_verification=1;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('workforce_capability_approval_guard_insert','workforce_capability_approval_guard_update','workforce_vendor_no_dpa_regression','workforce_vendor_no_contract_regression');")" = "4"
+          if sqlite3 /tmp/builtegrity-pricing.db "UPDATE workforce_vendors SET status='APPROVED',auto_dispatch_enabled=1 WHERE id='WF-SUPPORTYOURAPP';" 2>/tmp/vendor-guard.txt; then
+            echo 'Expected vendor approval without contract/tax/intake/caps to fail'
             exit 1
           fi
+          grep -q 'automatic workforce vendor' /tmp/vendor-guard.txt
+
+      - name: Verify cost circuit breakers are encoded
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM optional_service_controls WHERE service_code='AI_ASSIST' AND enabled=0;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM optional_service_controls WHERE service_code='ENRICHMENT' AND enabled=0;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('variable_cost_refresh_service_budget','outsourced_labor_budget_stops_dispatch');")" = "2"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM variable_cost_ledger;")" = "0"
+
+      - name: Verify platform-fault credits are narrow and auditable
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='platform_fee_credit_authorizations';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='transactions_auto_authorize_platform_overcharge';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM resolution_playbooks WHERE code='FINANCIAL_SAFETY' AND outsourcing_allowed=0;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM resolution_steps WHERE playbook_code='FINANCIAL_SAFETY';")" = "4"
+
+      - name: Verify critical decisions are not outsourceable
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM non_outsourceable_work WHERE category IN ('SECURITY_DECISION','LEGAL_DECISION','PRICING_CHANGE','REVENUE_WRITEOFF','VENDOR_APPROVAL');")" = "5"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM resolution_playbooks WHERE code IN ('SECURITY_HOLD','LEGAL_HOLD') AND outsourcing_allowed=0;")" = "2"
+
+      - name: Verify no merchant refund path is coded to refund the application fee
+        run: |
+          if grep -R --exclude='*.yml' --exclude='*.md' -nE 'refund_application_fee|refundApplicationFee' worker transaction-engine; then
+            echo 'Application-fee refund coupling is prohibited outside the explicit platform-credit path'
+            exit 1
+          fi
+          grep -q "case 'application_fee.refunded'" worker/src/webhooks.js
+          grep -q "adjustmentType: 'APPLICATION_FEE_REFUND'" worker/src/webhooks.js
 
       - name: Verify caller cannot author Builtegrity pricing
         run: |
@@ -114,19 +211,11 @@ jobs:
           grep -q 'Builtegrity pricing is server-owned' worker/src/index.js
           grep -q 'priceTransaction(env, txInput.amount_cents' worker/src/index.js
           grep -q 'pricing.integrity_fee_earned_cents' worker/src/index.js
-          grep -q "form\['payment_intent_data\[application_fee_amount\]'\]" worker/src/stripe.js
+          grep -q "payment_intent_data\[application_fee_amount\]" worker/src/stripe.js
 
-      - name: Verify monthly effective-rate measurement survives refunds
+      - name: Verify resolution and workforce implementation is wired into watchdog routing
         run: |
-          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET payment_status='succeeded',payment_at='2026-10-12T12:00:00Z',customer_paid_cents=1100,integrity_fee_collected_cents=5 WHERE id='TX-PRICE-TEST';"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT successful_protected_transactions FROM merchant_pricing_monthly_summary WHERE merchant_id='MER-0001' AND month='2026-10';")" = "1"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT effective_fee_bps FROM merchant_pricing_monthly_summary WHERE merchant_id='MER-0001' AND month='2026-10';")" = "45.45"
-          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET payment_status='refunded' WHERE id='TX-PRICE-TEST';"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT successful_protected_transactions FROM merchant_pricing_monthly_summary WHERE merchant_id='MER-0001' AND month='2026-10';")" = "1"
-
-      - name: Verify density escalation is shadow-only in V1
-        run: |
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT density_mode FROM pricing_versions WHERE id='PRICE-2026-10-V1';")" = "FLAT"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT shadow_minimum_cents FROM pricing_density_shadow_transactions WHERE transaction_id='TX-PRICE-TEST';")" = "5"
-          grep -q 'refuses `BANDS` pricing unless it is given an explicit deterministic monthly ordinal' docs/pricing-engine.md
-          grep -q 'increasing the unit floor as a merchant becomes larger creates the wrong infrastructure incentive' docs/pricing-engine.md
+          grep -q "runResolutionAutopilot" worker/src/case-router.js
+          grep -q "runResolutionAutopilot" worker/src/autopilot.js
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM resolution_playbooks WHERE active=1;")" -ge "15"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM resolution_steps;")" -ge "30"
