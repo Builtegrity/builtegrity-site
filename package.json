@@ -11,11 +11,13 @@
     "db:seed:remote": "wrangler d1 execute BUILTEGRITY_DB --remote --file=transaction-engine/seed-tx-0001.sql",
     "db:lineage": "node scripts/check-migration-lineage.mjs",
     "security:secret-hygiene": "node scripts/check-public-secret-hygiene.mjs",
+    "docs:check": "node scripts/check-documentation-integrity.mjs",
+    "docs:fix": "node scripts/render-master-document.mjs --write",
     "owner:gate": "node scripts/check-owner-independence.mjs --mode=structure",
     "owner:gate:live": "node scripts/check-owner-independence.mjs --mode=live",
     "system:coherence": "node scripts/check-system-coherence.mjs --mode=structure && npm run db:lineage",
-    "system:gate": "npm run security:secret-hygiene && npm run system:coherence && npm run owner:gate",
-    "system:gate:live": "npm run security:secret-hygiene && node scripts/check-system-coherence.mjs --mode=live && npm run db:lineage && node scripts/check-owner-independence.mjs --mode=live"
+    "system:gate": "npm run security:secret-hygiene && npm run docs:check && npm run system:coherence && npm run owner:gate",
+    "system:gate:live": "npm run security:secret-hygiene && npm run docs:check && node scripts/check-system-coherence.mjs --mode=live && npm run db:lineage && node scripts/check-owner-independence.mjs --mode=live"
   },
   "dependencies": {
     "resend": "^6.9.2"
