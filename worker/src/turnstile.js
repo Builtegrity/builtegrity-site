@@ -1,4 +1,4 @@
-const RELEASE_STAGES = new Set(['TEST', 'PILOT', 'LIVE']);
+const ENFORCED_STAGES = new Set(['PILOT', 'LIVE']);
 const TURNSTILE_VERIFY_URL = 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
 const MAX_TOKEN_LENGTH = 2048;
 
@@ -9,7 +9,7 @@ export const TURNSTILE_ACTIONS = Object.freeze({
 
 export function publicTurnstileConfig(env) {
   const stage = releaseStage(env);
-  const required = RELEASE_STAGES.has(stage);
+  const required = ENFORCED_STAGES.has(stage);
   return {
     required,
     site_key: required ? String(env.TURNSTILE_SITE_KEY || '').trim() || null : null,
@@ -19,8 +19,7 @@ export function publicTurnstileConfig(env) {
 export async function verifyPublicMutationChallenge(request, env, token, expectedAction) {
   const stage = releaseStage(env);
   if (stage === 'INVALID') throw httpError(503, 'Public mutation protection is unavailable because the release stage is invalid.');
-  if (stage === 'PREVIEW') return { verified: false, skipped: true, stage };
-  if (!RELEASE_STAGES.has(stage)) throw httpError(503, 'Public mutation protection is unavailable for this release stage.');
+  if (!ENFORCED_STAGES.has(stage)) return { verified: false, skipped: true, stage };
 
   const secret = String(env.TURNSTILE_SECRET_KEY || '').trim();
   const siteKey = String(env.TURNSTILE_SITE_KEY || '').trim();
