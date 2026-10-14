@@ -76,10 +76,12 @@ BEGIN
   WHERE EXISTS (SELECT 1 FROM legal_incidents WHERE id='LEGAL-SEC-'||NEW.id)
     AND NOT EXISTS (SELECT 1 FROM legal_incident_events WHERE incident_id='LEGAL-SEC-'||NEW.id AND event_type='RECEIVED');
 
+  -- Security itself may have a separate high-severity alert. The legal bridge stays owner-quiet
+  -- while standing counsel is available; dispatch/ack/deadline failures escalate independently.
   INSERT INTO system_alerts(alert_key,category,severity,status,subject_type,subject_id,message)
-  VALUES ('legal:security-incident:'||NEW.id,'LEGAL','CRITICAL','OPEN','LEGAL_INCIDENT','LEGAL-SEC-'||NEW.id,
+  VALUES ('legal:security-incident:'||NEW.id,'LEGAL','WARN','OPEN','LEGAL_INCIDENT','LEGAL-SEC-'||NEW.id,
           'Security incident automatically routed for legal review. Notification deadlines remain unverified until counsel confirms them.')
-  ON CONFLICT(alert_key) DO UPDATE SET status='OPEN',last_seen_at=CURRENT_TIMESTAMP,occurrences=system_alerts.occurrences+1,resolved_at=NULL;
+  ON CONFLICT(alert_key) DO UPDATE SET status='OPEN',severity='WARN',last_seen_at=CURRENT_TIMESTAMP,occurrences=system_alerts.occurrences+1,resolved_at=NULL;
 END;
 
 CREATE TRIGGER IF NOT EXISTS security_incident_open_legal_case_update
