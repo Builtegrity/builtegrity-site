@@ -13,14 +13,15 @@ database_id = "REPLACE_AFTER_D1_CREATION"
 migrations_dir = "migrations"
 
 # Durable object storage for transaction PDFs, immutable statements, tax-support PDFs,
-# and hashed raw QuickBooks report snapshots used as company-books evidence.
+# hashed raw QuickBooks report snapshots, and preserved legal-notice evidence.
 [[r2_buckets]]
 binding = "TRANSACTION_RECORDS"
 bucket_name = "builtegrity-transaction-records"
 
 # The 15-minute loop runs safety checks, statements, tax-document delivery, company-books
-# freshness/reconciliation, and tax-workpaper readiness. Expensive accounting API syncs are
-# internally throttled and do not run every 15 minutes. Cloudflare cron is UTC.
+# freshness/reconciliation, tax-workpaper readiness, watchdog routing, and legal-incident response.
+# Expensive accounting API syncs are internally throttled and do not run every 15 minutes.
+# Cloudflare cron is UTC.
 [triggers]
 crons = ["*/15 * * * *", "17 13 * * *"]
 
@@ -53,6 +54,17 @@ ALERT_EMAIL_TO = "REPLACE_OWNER_EMAIL"
 # Monthly merchant/partner statement delivery. This must be a verified Resend sender.
 # hello@builtegrity.com is also the monitored customer-reply mailbox.
 STATEMENT_EMAIL_FROM = "Builtegrity Statements <hello@builtegrity.com>"
+
+# Legal incident intake. Use a dedicated receiving subdomain so Resend MX records do not
+# interfere with the primary Google Workspace/business-mail MX records for builtegrity.com.
+# Example receiving address after Resend receiving is enabled for legal.builtegrity.com:
+LEGAL_INBOX_ADDRESS = "notices@legal.builtegrity.com"
+LEGAL_COUNSEL_EMAIL_FROM = "Builtegrity Legal Intake <hello@builtegrity.com>"
+# RESEND_API_KEY and LEGAL_INBOX_WEBHOOK_SECRET are Worker secrets, never plaintext vars.
+# LEGAL_INBOX_WEBHOOK_SECRET is the signing secret of the dedicated Resend webhook that receives
+# email.received events at: https://builtegrity.com/api/webhooks/legal-inbox
+# Standing counsel / insurer webhook bearer secrets, if used, are also Worker secrets whose env-key
+# names are referenced by legal_response_providers.intake_secret_env_key.
 
 # Primary application identity layer. Clerk proves identity only.
 # D1 merchant_access / partner_access own tenancy, roles, and permissions.
