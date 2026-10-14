@@ -3,10 +3,15 @@ import { authenticateCloudflareAccess } from './cloudflare-access.js';
 
 const COOKIE_NAME = 'builtegrity_session';
 const DEFAULT_TTL_SECONDS = 60 * 60 * 12;
+const RELEASE_STAGES = new Set(['TEST', 'PILOT', 'LIVE']);
 
 export async function handleAuthRoute(request, env) {
   const url = new URL(request.url);
   const provider = authProvider(env);
+
+  if (!authenticationModeAllowed(env, provider)) {
+    return json({ error: 'Configured authentication mode is not permitted for this release stage.' }, 503);
+  }
 
   if (url.pathname === '/auth/session' && request.method === 'GET') {
     const principal = await authenticateOperator(request, env);
@@ -92,6 +97,7 @@ export async function handleAuthRoute(request, env) {
 
 export async function authenticateOperator(request, env) {
   const provider = authProvider(env);
+  if (!authenticationModeAllowed(env, provider)) return null;
 
   if (provider === 'CLERK') return authenticateClerkOperator(request, env);
   if (provider === 'CLOUDFLARE_ACCESS') return authenticateCloudflareAccess(request, env);
@@ -122,6 +128,13 @@ export async function requireOperator(request, env) {
 
 export function authProvider(env) {
   return String(env.AUTH_PROVIDER || 'CLERK').trim().toUpperCase();
+}
+
+export function authenticationModeAllowed(env, provider = authProvider(env)) {
+  const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').trim().toUpperCase();
+  if (stage === 'PREVIEW') return true;
+  if (!RELEASE_STAGES.has(stage)) return false;
+  return provider === 'CLERK' && String(env.DEV_MODE || '').trim().toLowerCase() === 'false';
 }
 
 function safeReturnTo(value) {
