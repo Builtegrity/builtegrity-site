@@ -79,8 +79,10 @@ CLERK_USER_URL = "https://REPLACE.accounts.dev/user"
 # Payment adapter.
 STRIPE_CONNECT_CLIENT_ID = "ca_REPLACE_ME"
 
-# Public abuse protection (site key is safe to expose to browser code when used).
+# Public abuse protection. The site key is browser-safe; the secret key remains a Worker secret.
+# Siteverify responses must report one of these hostnames before a public mutation is accepted.
 TURNSTILE_SITE_KEY = "REPLACE_TURNSTILE_SITE_KEY"
+TURNSTILE_ALLOWED_HOSTNAMES = "builtegrity.com"
 
 # Optional defense-in-depth only. Cloudflare Access is NOT the primary product identity layer.
 # AUTH_PROVIDER = "CLOUDFLARE_ACCESS"

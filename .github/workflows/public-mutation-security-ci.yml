@@ -1,0 +1,240 @@
+name: Public Mutation Security CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '53 */6 * * *'
+
+jobs:
+  validate-public-mutation-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check security boundary syntax
+        run: |
+          node --check worker/src/turnstile.js
+          node --check worker/src/public-security.js
+          node --check worker/src/release-controls.js
+          node --check worker/src/auth.js
+          node --check public/pay/app.js
+
+      - name: Prove Turnstile verifier fails closed
+        run: |
+          node --input-type=module <<'NODE'
+          import {
+            publicTurnstileConfig,
+            TURNSTILE_ACTIONS,
+            verifyPublicMutationChallenge,
+          } from './worker/src/turnstile.js';
+
+          const request = new Request('https://builtegrity.com/api/payments/token/consent', {
+            method: 'POST',
+            headers: { 'CF-Connecting-IP': '203.0.113.10' },
+          });
+          const live = {
+            WATCHDOG_STAGE: 'LIVE',
+            TURNSTILE_SITE_KEY: 'site_test',
+            TURNSTILE_SECRET_KEY: 'secret_test',
+            TURNSTILE_ALLOWED_HOSTNAMES: 'builtegrity.com',
+          };
+
+          async function expectStatus(fn, status, label) {
+            try {
+              await fn();
+            } catch (error) {
+              if (error?.status === status) return;
+              throw new Error(`${label}: expected status ${status}, received ${error?.status || 'none'} (${error?.message || error})`);
+            }
+            throw new Error(`${label}: expected rejection with status ${status}`);
+          }
+
+          const preview = await verifyPublicMutationChallenge(request, { WATCHDOG_STAGE: 'PREVIEW' }, null, TURNSTILE_ACTIONS.CONSENT);
+          if (!preview.skipped || preview.stage !== 'PREVIEW') throw new Error('PREVIEW must deliberately skip Turnstile');
+          const test = await verifyPublicMutationChallenge(request, { WATCHDOG_STAGE: 'TEST' }, null, TURNSTILE_ACTIONS.CONSENT);
+          if (!test.skipped || test.stage !== 'TEST') throw new Error('TEST must deliberately skip Turnstile');
+
+          await expectStatus(
+            () => verifyPublicMutationChallenge(request, { ...live, WATCHDOG_STAGE: 'LIV' }, 'token', TURNSTILE_ACTIONS.CONSENT),
+            503,
+            'invalid stage',
+          );
+          await expectStatus(
+            () => verifyPublicMutationChallenge(request, { ...live, TURNSTILE_SECRET_KEY: '' }, 'token', TURNSTILE_ACTIONS.CONSENT),
+            503,
+            'missing Turnstile secret',
+          );
+          await expectStatus(
+            () => verifyPublicMutationChallenge(request, { ...live, TURNSTILE_ALLOWED_HOSTNAMES: '' }, 'token', TURNSTILE_ACTIONS.CONSENT),
+            503,
+            'missing hostname allowlist',
+          );
+          await expectStatus(
+            () => verifyPublicMutationChallenge(request, live, '', TURNSTILE_ACTIONS.CONSENT),
+            403,
+            'missing token',
+          );
+
+          globalThis.fetch = async () => new Response(JSON.stringify({ success: false, 'error-codes': ['invalid-input-response'] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+          await expectStatus(
+            () => verifyPublicMutationChallenge(request, live, 'bad-token', TURNSTILE_ACTIONS.CONSENT),
+            403,
+            'failed Siteverify',
+          );
+
+          globalThis.fetch = async () => new Response(JSON.stringify({
+            success: true,
+            action: TURNSTILE_ACTIONS.CHECKOUT,
+            hostname: 'builtegrity.com',
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+          await expectStatus(
+            () => verifyPublicMutationChallenge(request, live, 'wrong-action', TURNSTILE_ACTIONS.CONSENT),
+            403,
+            'wrong action',
+          );
+
+          globalThis.fetch = async () => new Response(JSON.stringify({
+            success: true,
+            action: TURNSTILE_ACTIONS.CONSENT,
+            hostname: 'evil.example',
+          }), { status: 200, headers: { 'content-type': 'application/json' } });
+          await expectStatus(
+            () => verifyPublicMutationChallenge(request, live, 'wrong-host', TURNSTILE_ACTIONS.CONSENT),
+            403,
+            'wrong hostname',
+          );
+
+          let submittedBody = null;
+          globalThis.fetch = async (_url, options) => {
+            submittedBody = String(options.body || '');
+            return new Response(JSON.stringify({
+              success: true,
+              action: TURNSTILE_ACTIONS.CONSENT,
+              hostname: 'builtegrity.com',
+              challenge_ts: new Date().toISOString(),
+            }), { status: 200, headers: { 'content-type': 'application/json' } });
+          };
+          const success = await verifyPublicMutationChallenge(request, live, 'good-token', TURNSTILE_ACTIONS.CONSENT);
+          if (!success.verified || success.action !== TURNSTILE_ACTIONS.CONSENT || success.hostname !== 'builtegrity.com') {
+            throw new Error(`Valid Siteverify result was rejected: ${JSON.stringify(success)}`);
+          }
+          if (!submittedBody?.includes('secret=secret_test') || !submittedBody.includes('response=good-token') || !submittedBody.includes('remoteip=203.0.113.10')) {
+            throw new Error(`Siteverify request omitted required evidence: ${submittedBody}`);
+          }
+
+          const config = publicTurnstileConfig(live);
+          if (!config.required || config.site_key !== 'site_test') throw new Error('LIVE public config did not expose the expected site key');
+          if (JSON.stringify(config).includes('secret_test') || Object.prototype.hasOwnProperty.call(config, 'secret')) {
+            throw new Error('Public Turnstile config exposed secret material');
+          }
+          NODE
+
+      - name: Prove catastrophic and financial controls fail closed
+        run: |
+          node --input-type=module <<'NODE'
+          import { releaseControlForRequest, requireReleasePlatformControl } from './worker/src/release-controls.js';
+
+          function db({ controls = null, financial = null } = {}) {
+            return {
+              prepare(sql) {
+                return {
+                  first() {
+                    const text = String(sql);
+                    if (text.includes('FROM platform_controls')) return Promise.resolve(controls);
+                    if (text.includes('FROM financial_safety_state')) return Promise.resolve(financial);
+                    return Promise.resolve(null);
+                  },
+                };
+              },
+            };
+          }
+
+          async function expect503(fn, label) {
+            try {
+              await fn();
+            } catch (error) {
+              if (error?.status === 503) return;
+              throw new Error(`${label}: expected 503, received ${error?.status || 'none'} (${error?.message || error})`);
+            }
+            throw new Error(`${label}: expected fail-closed rejection`);
+          }
+
+          const goodControls = { enabled: 1, reason: null };
+          const goodFinancial = {
+            state: 'GREEN',
+            enforcement_active: 1,
+            allowed: 1,
+            reason_codes_json: '[]',
+            evaluated_at: new Date().toISOString(),
+          };
+
+          await expect503(
+            () => requireReleasePlatformControl({ WATCHDOG_STAGE: 'LIV', DB: db() }, 'payment_creation_enabled', 'New payment creation'),
+            'invalid stage',
+          );
+          await expect503(
+            () => requireReleasePlatformControl({ WATCHDOG_STAGE: 'LIVE', DB: db({ financial: goodFinancial }) }, 'payment_creation_enabled', 'New payment creation'),
+            'missing platform controls',
+          );
+          await expect503(
+            () => requireReleasePlatformControl({ WATCHDOG_STAGE: 'LIVE', DB: db({ controls: { enabled: 0, reason: 'manual pause' }, financial: goodFinancial }) }, 'payment_creation_enabled', 'New payment creation'),
+            'disabled platform controls',
+          );
+          await expect503(
+            () => requireReleasePlatformControl({ WATCHDOG_STAGE: 'LIVE', DB: db({ controls: goodControls }) }, 'payment_creation_enabled', 'New payment creation'),
+            'missing financial safety state',
+          );
+          await expect503(
+            () => requireReleasePlatformControl({ WATCHDOG_STAGE: 'LIVE', DB: db({ controls: goodControls, financial: { ...goodFinancial, enforcement_active: 0 } }) }, 'payment_creation_enabled', 'New payment creation'),
+            'financial safety not enforced',
+          );
+          await expect503(
+            () => requireReleasePlatformControl({ WATCHDOG_STAGE: 'LIVE', DB: db({ controls: goodControls, financial: { ...goodFinancial, evaluated_at: new Date(Date.now() - 31 * 60_000).toISOString() } }) }, 'payment_creation_enabled', 'New payment creation'),
+            'stale financial decision',
+          );
+          await expect503(
+            () => requireReleasePlatformControl({ WATCHDOG_STAGE: 'LIVE', DB: db({ controls: goodControls, financial: { ...goodFinancial, allowed: 0, reason_codes_json: '["MARGIN_FLOOR"]' } }) }, 'payment_creation_enabled', 'New payment creation'),
+            'financial action disabled',
+          );
+
+          const allowed = await requireReleasePlatformControl({
+            WATCHDOG_STAGE: 'LIVE',
+            DB: db({ controls: goodControls, financial: goodFinancial }),
+          }, 'payment_creation_enabled', 'New payment creation');
+          if (!allowed.strict || allowed.stage !== 'LIVE') throw new Error(`Canonical LIVE controls did not pass: ${JSON.stringify(allowed)}`);
+
+          const preview = await requireReleasePlatformControl({ WATCHDOG_STAGE: 'PREVIEW', DB: db() }, 'payment_creation_enabled', 'New payment creation');
+          if (preview.strict || preview.stage !== 'PREVIEW') throw new Error('PREVIEW should tolerate absent financial controls');
+          const test = await requireReleasePlatformControl({ WATCHDOG_STAGE: 'TEST', DB: db() }, 'payment_creation_enabled', 'New payment creation');
+          if (test.strict || test.stage !== 'TEST') throw new Error('TEST should tolerate absent financial controls');
+
+          const tx = releaseControlForRequest('/api/transactions', 'POST');
+          const onboarding = releaseControlForRequest('/api/merchants/MER-0001/stripe/connect-url', 'POST');
+          const payment = releaseControlForRequest('/api/payments/token/checkout', 'POST');
+          if (tx?.column !== 'transaction_creation_enabled') throw new Error('Transaction creation route is not mapped to catastrophic controls');
+          if (onboarding?.column !== 'merchant_onboarding_enabled') throw new Error('Merchant onboarding route is not mapped to catastrophic controls');
+          if (payment?.column !== 'payment_creation_enabled') throw new Error('Payment checkout route is not mapped to catastrophic controls');
+          NODE
+
+      - name: Prove public security integration is wired
+        run: |
+          grep -q "handlePublicSecurityRoute" worker/src/auth.js
+          grep -q "verifyPublicMutationChallenge" worker/src/public-security.js
+          grep -q "requireReleasePlatformControl" worker/src/public-security.js
+          grep -q "payment_consent" public/pay/app.js
+          grep -q "payment_checkout" public/pay/app.js
+          grep -q "turnstile_token" public/pay/app.js
+          grep -q "api.js?render=explicit" public/pay/index.html
+          grep -q "TURNSTILE_ALLOWED_HOSTNAMES" wrangler.toml.example
+          grep -q "TURNSTILE_SECRET_KEY" worker/src/turnstile.js
+          if grep -R -n -E 'TURNSTILE_SECRET_KEY\s*=\s*"(0x|[A-Za-z0-9_-]{20,})"' public wrangler.toml.example worker/src | grep -v "String(env.TURNSTILE_SECRET_KEY"; then
+            echo "Possible Turnstile secret material committed to a public surface" >&2
+            exit 1
+          fi

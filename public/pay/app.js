@@ -1,5 +1,8 @@
 const card = document.querySelector('#paymentCard');
 const token = new URLSearchParams(location.search).get('token');
+const turnstileMount = document.querySelector('#turnstileMount');
+let turnstileConfig = { required: false, site_key: null };
+let turnstileWidgetId = null;
 
 const US_STATES = [
   ['AL','Alabama'],['AK','Alaska'],['AZ','Arizona'],['AR','Arkansas'],['CA','California'],['CO','Colorado'],
@@ -46,7 +49,14 @@ async function load() {
   }
 
   try {
-    const payment = await api(`/api/payments/${encodeURIComponent(token)}`);
+    const [config, payment] = await Promise.all([
+      api('/api/payments/config'),
+      api(`/api/payments/${encodeURIComponent(token)}`),
+    ]);
+    turnstileConfig = config.turnstile || { required: false, site_key: null };
+    if (turnstileConfig.required && !turnstileConfig.site_key) {
+      throw new Error('Payment security verification is not configured. Please try again later.');
+    }
     render(payment);
   } catch (error) {
     card.innerHTML = `<h2>Payment unavailable</h2><p class="error">${escapeHtml(error.message)}</p>`;
@@ -122,17 +132,20 @@ function render(payment) {
 
   button.addEventListener('click', async () => {
     button.disabled = true;
-    setStatus(accepted ? 'Recording your jurisdiction confirmation…' : 'Recording your acceptance and jurisdiction confirmation…');
+    setStatus('Running security verification…');
     try {
+      const challengeToken = await getTurnstileToken('payment_consent');
+      setStatus(accepted ? 'Recording your jurisdiction confirmation…' : 'Recording your acceptance and jurisdiction confirmation…');
       await api(`/api/payments/${encodeURIComponent(token)}/consent`, {
         method: 'POST',
         body: JSON.stringify({
           accepted: true,
           customer_country_code: 'US',
           customer_state_code: stateSelect.value,
+          turnstile_token: challengeToken,
         }),
       });
-      setStatus('Confirmation recorded. Opening Stripe…');
+      setStatus('Confirmation recorded. Preparing secure Stripe checkout…');
       await startCheckout();
     } catch (error) {
       setStatus(error.message, true);
@@ -144,14 +157,68 @@ function render(payment) {
 async function startCheckout() {
   const button = document.querySelector('#payButton') || document.querySelector('#continueButton');
   if (button) button.disabled = true;
-  setStatus('Creating secure Stripe Checkout…');
+  setStatus('Running security verification…');
   try {
-    const checkout = await api(`/api/payments/${encodeURIComponent(token)}/checkout`, { method: 'POST' });
+    const challengeToken = await getTurnstileToken('payment_checkout');
+    setStatus('Creating secure Stripe Checkout…');
+    const checkout = await api(`/api/payments/${encodeURIComponent(token)}/checkout`, {
+      method: 'POST',
+      body: JSON.stringify({ turnstile_token: challengeToken }),
+    });
     location.assign(checkout.url);
   } catch (error) {
     setStatus(error.message, true);
     if (button) button.disabled = false;
   }
+}
+
+async function getTurnstileToken(action) {
+  if (!turnstileConfig.required) return null;
+  if (!turnstileConfig.site_key) throw new Error('Payment security verification is unavailable.');
+  if (!turnstileMount) throw new Error('Payment security verification could not initialize.');
+
+  const api = await waitForTurnstile();
+  if (turnstileWidgetId !== null) {
+    try { api.remove(turnstileWidgetId); } catch {}
+    turnstileWidgetId = null;
+  }
+  turnstileMount.innerHTML = '';
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => finish(new Error('Security verification timed out. Please try again.')), 120_000);
+    const finish = (error, responseToken) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve(responseToken);
+    };
+
+    try {
+      turnstileWidgetId = api.render(turnstileMount, {
+        sitekey: turnstileConfig.site_key,
+        action,
+        execution: 'execute',
+        appearance: 'interaction-only',
+        callback: (responseToken) => finish(null, responseToken),
+        'error-callback': () => finish(new Error('Security verification failed to load. Please try again.')),
+        'expired-callback': () => finish(new Error('Security verification expired. Please try again.')),
+        'timeout-callback': () => finish(new Error('Security verification timed out. Please try again.')),
+      });
+      api.execute(turnstileWidgetId);
+    } catch (error) {
+      finish(new Error(error?.message || 'Security verification could not start.'));
+    }
+  });
+}
+
+async function waitForTurnstile() {
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    if (window.turnstile?.render && window.turnstile?.execute) return window.turnstile;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error('Security verification could not load. Please refresh and try again.');
 }
 
 function setStatus(message, isError = false) {
