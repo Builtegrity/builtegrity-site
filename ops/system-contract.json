@@ -1,8 +1,8 @@
 {
-  "schema_version": "1.3",
+  "schema_version": "1.4",
   "contract_id": "BUILTEGRITY-SYSTEM-V1",
   "release_target": "TX-LIVE-0001",
-  "release_rule": "Live money requires system coherence, owner independence, production runtime readiness, commercial owner locks, and applicable legal/compliance approvals. A technically working deployment is not permission to process live money.",
+  "release_rule": "Live money requires system coherence, owner independence, production runtime readiness, commercial owner locks, applicable legal/compliance approvals, and verified single-runtime ownership of the production domain. A technically working deployment is not permission to process live money.",
   "product_role": {
     "processor": "STRIPE",
     "builtegrity_is_processor": false,
@@ -89,13 +89,17 @@
     "authoritative_live_runtime": "CLOUDFLARE_WORKER_STATIC_ASSETS",
     "authoritative_live_assets": "public/",
     "github_pages_prelaunch_role": "TEMPORARY_TEST_COMPATIBILITY_HOST",
+    "github_pages_artifact_role": "BOUNDED_STATIC_PRELAUNCH_SHELL",
     "github_pages_custom_domain_currently_expected": "builtegrity.com",
+    "github_pages_transaction_routes_allowed": false,
+    "github_pages_internal_repository_paths_allowed": false,
     "github_pages_must_not_claim_production_domain_for_live": true,
     "cloudflare_domain_route_must_be_verified_for_live": true,
+    "root_pages_entry_and_worker_entry_are_intentionally_distinct": true,
     "verification_status": "PRELAUNCH_GITHUB_PAGES_CONFLICT",
     "required_for_live": true,
     "cutover_rule": "Before LIVE, GitHub Pages must no longer claim builtegrity.com, the repository CNAME must not point at the production domain, and the owner must independently verify that builtegrity.com and required application subdomains/routes terminate at the intended Cloudflare Worker/Static Assets deployment. GitHub Pages may remain on a non-production compatibility hostname only if it cannot receive production application traffic.",
-    "note": "GitHub Pages currently deploys the pre-launch test shell to builtegrity.com. This is tolerated only before LIVE because the page is explicitly test-only. It is not the canonical production runtime."
+    "note": "GitHub Pages currently deploys a bounded static pre-launch shell to builtegrity.com. It must not publish the Worker transaction application, Worker-only routes, migrations, source code, fixtures, operations files, or a duplicate public/ application tree. This is tolerated only before LIVE and is not the canonical production runtime."
   },
   "migration_lineage": {
     "baseline_commit": "a07986c52abfc8e679ccb1dc9ae193a5a6f2854b",
@@ -114,10 +118,11 @@
     "transaction_vocabulary": "transaction-engine/definitions.json plus this contract",
     "runtime": "worker/src",
     "public_application_assets": "public/",
+    "temporary_pages_shell": "root index.html + styles.css + 404.html + static legal/privacy documents, bounded by _config.yml",
     "deployment_ownership": "this contract plus docs/deployment-ownership.md",
     "legal_response_program": "docs/legal-incident-autopilot.md and runtime legal controls",
     "owner_provider_readiness": "ops/owner-control-manifest.json",
-    "note": "Standalone schema snapshots and divergent public/legal document copies are forbidden because they create competing truths."
+    "note": "The GitHub Pages shell and Cloudflare application intentionally have different entry points. Only intentional static legal/privacy documents are mirrored. Standalone schema snapshots, divergent legal copies, and duplicate application deployments are forbidden."
   },
   "legal_authority": {
     "counsel_role": "Qualified outside lawyer or law firm retained by Builtegrity under an active engagement. No provider is currently selected merely because the role exists in code.",
