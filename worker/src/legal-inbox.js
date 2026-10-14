@@ -120,11 +120,14 @@ export async function handleLegalInboxWebhook(request, env) {
     });
     await applyPreservationHold(env, incidentId, 'EVIDENCE_OBJECT', evidenceKey, 'Original legal notice evidence must be preserved until counsel authorizes release.');
 
+    // A legal notice can be internally severe without waking the owner. Standing counsel is the
+    // normal destination. Owner escalation happens only when delegated legal handling itself fails,
+    // a verified deadline becomes dangerous, or counsel requests corporate authority.
     await upsertLegalAlert(env, {
       key: `legal:incident:${incidentId}`,
-      severity: classification.severity === 'CRITICAL' ? 'CRITICAL' : 'ERROR',
+      severity: 'WARN',
       incidentId,
-      message: `Legal notice received and preserved. Type=${classification.type}. Awaiting standing-counsel routing; no substantive response has been sent.`,
+      message: `Legal notice received and preserved. Type=${classification.type}; internal severity=${classification.severity}. Awaiting standing-counsel routing; no substantive response has been sent.`,
     });
 
     return json({ received: true, incident_id: incidentId, classification: classification.type });
