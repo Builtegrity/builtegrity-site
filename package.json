@@ -9,11 +9,12 @@
     "db:migrate:remote": "wrangler d1 migrations apply BUILTEGRITY_DB --remote",
     "db:seed:local": "wrangler d1 execute BUILTEGRITY_DB --local --file=transaction-engine/seed-tx-0001.sql",
     "db:seed:remote": "wrangler d1 execute BUILTEGRITY_DB --remote --file=transaction-engine/seed-tx-0001.sql",
+    "db:lineage": "node scripts/check-migration-lineage.mjs",
     "owner:gate": "node scripts/check-owner-independence.mjs --mode=structure",
     "owner:gate:live": "node scripts/check-owner-independence.mjs --mode=live",
-    "system:coherence": "node scripts/check-system-coherence.mjs --mode=structure",
+    "system:coherence": "node scripts/check-system-coherence.mjs --mode=structure && npm run db:lineage",
     "system:gate": "npm run system:coherence && npm run owner:gate",
-    "system:gate:live": "node scripts/check-system-coherence.mjs --mode=live && node scripts/check-owner-independence.mjs --mode=live"
+    "system:gate:live": "node scripts/check-system-coherence.mjs --mode=live && npm run db:lineage && node scripts/check-owner-independence.mjs --mode=live"
   },
   "dependencies": {
     "resend": "^6.9.2"
