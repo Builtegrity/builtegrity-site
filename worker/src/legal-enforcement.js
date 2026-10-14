@@ -14,6 +14,15 @@ export async function assertMerchantLegalReadyForLiveAction(env, merchantId, act
     );
   }
 
+  // Legal exposure cannot be treated as operationally safe merely because launch counsel once
+  // approved the product. PILOT/LIVE activity additionally requires a currently usable standing
+  // legal-response route so a new subpoena, complaint, breach or regulator notice has somewhere
+  // privileged and deadline-controlled to go immediately.
+  const legalResponse = await env.DB.prepare(`SELECT state,legal_response_program_status,open_incidents,urgent_incidents FROM legal_response_readiness LIMIT 1`).first();
+  if (!legalResponse || legalResponse.state !== 'READY') {
+    throw complianceError(`${actionLabel} is blocked because the legal incident response program is not READY`, ['LEGAL_RESPONSE_PROGRAM_NOT_READY']);
+  }
+
   const platform = await evaluateLegalReadiness(env);
   if (platform.state !== 'READY') {
     throw complianceError(`${actionLabel} is blocked because Builtegrity platform compliance is not READY`, platform.reasons);
@@ -77,13 +86,14 @@ export async function assertMerchantLegalReadyForLiveAction(env, merchantId, act
 export async function getLegalEnforcementStatus(env, merchantId = null) {
   const platform = await evaluateLegalReadiness(env);
   const evidenced = await env.DB.prepare(`SELECT state,blocker_count,blockers FROM platform_legal_readiness`).first().catch(()=>null);
-  if (!merchantId) return { platform, evidenced_platform: evidenced };
+  const legalResponse = await env.DB.prepare(`SELECT * FROM legal_response_readiness LIMIT 1`).first().catch(()=>null);
+  if (!merchantId) return { platform, evidenced_platform: evidenced, legal_response: legalResponse };
   try {
     const merchant=await assertMerchantLegalReadyForLiveAction(env,merchantId,'Compliance evaluation');
-    return { platform, evidenced_platform:evidenced, merchant:{ state:'READY', ...merchant } };
+    return { platform, evidenced_platform:evidenced, legal_response:legalResponse, merchant:{ state:'READY', ...merchant } };
   } catch(error) {
     if (error.status !== 503 && error.status !== 409) throw error;
-    return { platform, evidenced_platform:evidenced, merchant:{ state:'BLOCKED', reasons:error.compliance_reasons || [error.message] } };
+    return { platform, evidenced_platform:evidenced, legal_response:legalResponse, merchant:{ state:'BLOCKED', reasons:error.compliance_reasons || [error.message] } };
   }
 }
 
