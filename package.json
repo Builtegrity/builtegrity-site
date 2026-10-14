@@ -12,6 +12,9 @@
     "owner:gate": "node scripts/check-owner-independence.mjs --mode=structure",
     "owner:gate:live": "node scripts/check-owner-independence.mjs --mode=live"
   },
+  "dependencies": {
+    "resend": "^6.9.2"
+  },
   "devDependencies": {
     "wrangler": "^4.0.0"
   }
