@@ -1,0 +1,36 @@
+name: Documentation Integrity CI
+
+on:
+  push:
+    branches:
+      - main
+      - docs-master-control-v1
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '13 13 * * 3'
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check documentation control scripts
+        run: |
+          node --check scripts/render-master-document.mjs
+          node --check scripts/check-documentation-integrity.mjs
+      - name: Verify documentation integrity
+        run: npm run docs:check
+      - name: Prove deterministic master regeneration is clean
+        run: |
+          npm run docs:fix
+          if ! git diff --exit-code -- docs/MASTER.md; then
+            echo 'Generated master drifted from committed master. Regenerate and commit docs/MASTER.md.'
+            exit 1
+          fi
