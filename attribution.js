@@ -1,1 +1,0 @@
-// Legacy attribution logic retired.
