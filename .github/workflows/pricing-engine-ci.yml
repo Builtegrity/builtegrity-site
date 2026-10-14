@@ -39,6 +39,7 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM pricing_versions WHERE status='ACTIVE' AND currency='USD';")" = "1"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM pricing_amount_bands WHERE pricing_version_id='BG_STANDARD_V1';")" = "4"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT group_concat(min_amount_cents||':'||COALESCE(max_amount_cents,'OPEN')||':'||base_fee_cents,'|') FROM pricing_amount_bands WHERE pricing_version_id='BG_STANDARD_V1' ORDER BY min_amount_cents;")" = "1:100:1|101:500:2|501:1000:3|1001:OPEN:5"
+          grep -q "datetime(effective_from).*CURRENT_TIMESTAMP" worker/src/pricing.js
 
       - name: Verify exact fee arithmetic and no per-transaction roundup
         run: |
@@ -46,7 +47,6 @@ jobs:
           import { calculateAmountBandFee } from './worker/src/pricing.js';
           const rule = { percentage_bps: 10, maximum_cents: Number.MAX_SAFE_INTEGER, uncapped: 1 };
           const cases = [
-            // amount cents, base cents, exact fee micros, whole cents, residual micros
             [1,       1,       10010,       1,       10],
             [50,      1,       10500,       1,      500],
             [99,      1,       10990,       1,      990],
@@ -90,10 +90,10 @@ jobs:
           const rule = { percentage_bps: 10, maximum_cents: Number.MAX_SAFE_INTEGER, uncapped: 1 };
           const band = { base_fee_cents: 5 };
           const cases = [
-            [100000, 105],                // $1,000 -> $1.05
-            [1000000, 1005],              // $10,000 -> $10.05
-            [100000000, 100005],           // $1M -> $1,000.05
-            [100000000000, 100000005],     // $1B -> $1,000,000.05
+            [100000, 105],
+            [1000000, 1005],
+            [100000000, 100005],
+            [100000000000, 100000005],
           ];
           for (const [amount, expectedWholeCents] of cases) {
             const q = calculateAmountBandFee(amount, rule, band);
@@ -146,7 +146,7 @@ jobs:
 
       - name: Verify fractional carry accrues only after successful payment
         run: |
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COALESCE(available_micros,0) FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COALESCE((SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD'),0);")" = "0"
           sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET payment_status='succeeded',payment_at='2026-10-14T00:00:00Z',customer_paid_cents=99,integrity_fee_collected_cents=1 WHERE id='TX-BGV1-99';"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "990"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM merchant_fee_carry_events WHERE transaction_id='TX-BGV1-99' AND event_type='ACCRUED';")" = "1"
@@ -163,18 +163,33 @@ jobs:
           echo "BG_STANDARD_V1 floor planning margin ppm=$margin"
           test "$margin" -ge 800000
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT minimum_floor_margin_ppm FROM financial_safety_policy WHERE id='GLOBAL';")" = "800000"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT human_touch_red_ppm FROM financial_safety_policy WHERE id='GLOBAL';")" = "500"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT human_touch_orange_ppm||':'||human_touch_red_ppm FROM financial_safety_policy WHERE id='GLOBAL';")" = "200:500"
 
       - name: Verify workforce defaults are fail-closed
         run: |
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM workforce_vendors WHERE status='APPROVED' AND auto_dispatch_enabled=1;")" = "0"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM workforce_vendor_capabilities WHERE approved=1;")" = "0"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM workforce_policy WHERE id='GLOBAL' AND max_single_work_order_cents=5000 AND monthly_budget_cents=50000 AND require_machine_verification=1;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('workforce_capability_approval_guard_insert','workforce_capability_approval_guard_update','workforce_vendor_no_dpa_regression','workforce_vendor_no_contract_regression');")" = "4"
           if sqlite3 /tmp/builtegrity-pricing.db "UPDATE workforce_vendors SET status='APPROVED',auto_dispatch_enabled=1 WHERE id='WF-SUPPORTYOURAPP';" 2>/tmp/vendor-guard.txt; then
             echo 'Expected vendor approval without contract/tax/intake/caps to fail'
             exit 1
           fi
           grep -q 'automatic workforce vendor' /tmp/vendor-guard.txt
+
+      - name: Verify cost circuit breakers are encoded
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM optional_service_controls WHERE service_code='AI_ASSIST' AND enabled=0;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM optional_service_controls WHERE service_code='ENRICHMENT' AND enabled=0;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('variable_cost_refresh_service_budget','outsourced_labor_budget_stops_dispatch');")" = "2"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM variable_cost_ledger;")" = "0"
+
+      - name: Verify platform-fault credits are narrow and auditable
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='platform_fee_credit_authorizations';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='transactions_auto_authorize_platform_overcharge';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM resolution_playbooks WHERE code='FINANCIAL_SAFETY' AND outsourcing_allowed=0;")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM resolution_steps WHERE playbook_code='FINANCIAL_SAFETY';")" = "4"
 
       - name: Verify critical decisions are not outsourceable
         run: |
