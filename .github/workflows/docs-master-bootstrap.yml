@@ -1,0 +1,35 @@
+name: Documentation Master Bootstrap
+
+on:
+  push:
+    branches:
+      - docs-master-control-v1
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: docs-master-control-v1
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Regenerate master
+        run: node scripts/render-master-document.mjs --write
+      - name: Commit generated master if changed
+        run: |
+          if git diff --quiet -- docs/MASTER.md && git ls-files --error-unmatch docs/MASTER.md >/dev/null 2>&1; then
+            echo 'Master already current.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/MASTER.md
+          git commit -m 'Regenerate master operating record'
+          git push origin HEAD:docs-master-control-v1
