@@ -57,8 +57,8 @@ export async function getActivePricingVersion(env, currency = 'USD') {
   const pricing = await env.DB.prepare(`
     SELECT *
     FROM pricing_versions
-    WHERE status = 'ACTIVE' AND currency = ? AND effective_from <= CURRENT_TIMESTAMP
-    ORDER BY effective_from DESC, created_at DESC, id DESC
+    WHERE status = 'ACTIVE' AND currency = ? AND datetime(effective_from) <= CURRENT_TIMESTAMP
+    ORDER BY datetime(effective_from) DESC, datetime(created_at) DESC, id DESC
     LIMIT 1
   `).bind(normalizedCurrency).first();
 
