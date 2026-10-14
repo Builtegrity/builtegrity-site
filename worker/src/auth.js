@@ -1,6 +1,7 @@
 import { authenticateClerkOperator } from './clerk-auth.js';
 import { authenticateCloudflareAccess } from './cloudflare-access.js';
 import { handlePublicSecurityRoute } from './public-security.js';
+import { releaseControlForRequest, requireReleasePlatformControl } from './release-controls.js';
 
 const COOKIE_NAME = 'builtegrity_session';
 const DEFAULT_TTL_SECONDS = 60 * 60 * 12;
@@ -19,6 +20,16 @@ export async function handleAuthRoute(request, env) {
   // the transaction engine remains focused on transaction semantics.
   const publicSecurityResponse = await handlePublicSecurityRoute(request, env);
   if (publicSecurityResponse) return publicSecurityResponse;
+
+  // For authenticated creation/onboarding routes, enforce the same strict release controls
+  // before the runtime's route handler. Do not expose control-state details to unauthenticated callers.
+  const releaseControl = releaseControlForRequest(url.pathname, request.method);
+  if (releaseControl && !url.pathname.startsWith('/api/payments/')) {
+    const principal = await authenticateOperator(request, env);
+    if (principal) {
+      await requireReleasePlatformControl(env, releaseControl.column, releaseControl.label);
+    }
+  }
 
   if (url.pathname === '/auth/session' && request.method === 'GET') {
     const principal = await authenticateOperator(request, env);
