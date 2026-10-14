@@ -91,7 +91,7 @@ async function seedPrivacyDeadlineIncidents(env) {
         id,incident_type,severity,status,source_channel,source_external_id,subject,received_at,
         machine_classification,machine_confidence_ppm,response_deadline_at,deadline_source,
         deadline_verified_by_counsel,next_action_at,preservation_hold_active
-      ) VALUES (?,?,?,'PRESERVED','SYSTEM',?,?,?,?,?,?,?,'PRIVACY_REQUEST_DB_UNVERIFIED',0,CURRENT_TIMESTAMP,1)
+      ) VALUES (?,?,?,'PRESERVED','SYSTEM',?,?,?,?,?,?,'PRIVACY_REQUEST_DB_UNVERIFIED',0,CURRENT_TIMESTAMP,1)
     `).bind(
       incidentId,
       'PRIVACY_COMPLAINT',
@@ -171,7 +171,11 @@ async function ensureCounselDispatch(env, incident) {
       if (!env.RESEND_API_KEY || !env.LEGAL_COUNSEL_EMAIL_FROM) throw new Error('Legal counsel outbound email configuration is missing');
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
-        headers: { authorization: `Bearer ${env.RESEND_API_KEY}`, 'content-type': 'application/json' },
+        headers: {
+          authorization: `Bearer ${env.RESEND_API_KEY}`,
+          'content-type': 'application/json',
+          'Idempotency-Key': `legal-counsel-intake/${incident.id}`,
+        },
         body: JSON.stringify({
           from: env.LEGAL_COUNSEL_EMAIL_FROM,
           to: [provider.intake_email],
@@ -315,19 +319,33 @@ async function maybeNotifyInsurer(env, incident) {
     return false;
   }
 
-  const actionId=`LACT-${crypto.randomUUID()}`;
+  const existingAction = await env.DB.prepare(`
+    SELECT id,status FROM legal_outbound_actions
+    WHERE incident_id=? AND action_type='INSURER_NOTICE' AND status IN ('AUTHORIZED','SENT')
+    ORDER BY created_at DESC LIMIT 1
+  `).bind(incident.id).first();
+  if (existingAction?.status === 'SENT') return true;
+
+  const actionId=existingAction?.id || `LACT-${crypto.randomUUID()}`;
   const content=`Builtegrity claim/incident notice\n\nIncident: ${incident.id}\nType: ${incident.incident_type}\nReceived: ${incident.received_at}\nCounsel provider: ${incident.counsel_provider_id || 'pending'}\n\nThis is a neutral notice of a potential matter. It is not an admission of liability, waiver, settlement offer, or coverage characterization. Please reference the configured policy/matter identifier and contact approved counsel/Builtegrity through the established claims channel.`;
-  await env.DB.prepare(`
-    INSERT INTO legal_outbound_actions(id,incident_id,action_type,status,destination,counsel_authorization_reference)
-    VALUES (?,?, 'INSURER_NOTICE','AUTHORIZED',?,'POLICY_PREAUTHORIZED_NOTICE')
-  `).bind(actionId,incident.id,provider.intake_email||provider.intake_endpoint||provider.id).run();
+  if (!existingAction) {
+    await env.DB.prepare(`
+      INSERT INTO legal_outbound_actions(id,incident_id,action_type,status,destination,counsel_authorization_reference)
+      VALUES (?,?, 'INSURER_NOTICE','AUTHORIZED',?,'POLICY_PREAUTHORIZED_NOTICE')
+    `).bind(actionId,incident.id,provider.intake_email||provider.intake_endpoint||provider.id).run();
+  }
 
   try {
     let externalReference=null;
     if (provider.intake_mode==='EMAIL') {
       if (!env.RESEND_API_KEY || !env.LEGAL_COUNSEL_EMAIL_FROM || !provider.intake_email) throw new Error('Insurer email notice route is incomplete');
       const response=await fetch('https://api.resend.com/emails',{
-        method:'POST',headers:{authorization:`Bearer ${env.RESEND_API_KEY}`,'content-type':'application/json'},
+        method:'POST',
+        headers:{
+          authorization:`Bearer ${env.RESEND_API_KEY}`,
+          'content-type':'application/json',
+          'Idempotency-Key':`legal-insurer-notice/${incident.id}`,
+        },
         body:JSON.stringify({from:env.LEGAL_COUNSEL_EMAIL_FROM,to:[provider.intake_email],subject:`[Builtegrity ${incident.id}] Potential claim notice`,text:content}),
       });
       const result=await response.json().catch(()=>({}));
@@ -343,8 +361,9 @@ async function maybeNotifyInsurer(env, incident) {
     }
     await env.DB.prepare(`UPDATE legal_outbound_actions SET status='SENT',external_reference=?,sent_at=CURRENT_TIMESTAMP WHERE id=?`).bind(externalReference,actionId).run();
     await env.DB.prepare(`UPDATE legal_incidents SET insurer_notice_status='SENT',updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind(incident.id).run();
-    await appendIncidentEvent(env,incident.id,'INSURER_NOTICE_SENT','SYSTEM','LEGAL_AUTOPILOT',{provider_id:provider.id,external_reference:externalReference});
+    await appendIncidentEventOnce(env,incident.id,'INSURER_NOTICE_SENT','SYSTEM','LEGAL_AUTOPILOT',{provider_id:provider.id,external_reference:externalReference});
     await resolveLegalAlert(env,`legal:insurer-unavailable:${incident.id}`);
+    await resolveLegalAlert(env,`legal:insurer-notice-failed:${incident.id}`);
     return true;
   } catch(error) {
     await env.DB.prepare(`UPDATE legal_outbound_actions SET status='FAILED' WHERE id=?`).bind(actionId).run();
