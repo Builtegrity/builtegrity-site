@@ -1,3 +1,4 @@
+import { requireReleasePlatformControl } from './release-controls.js';
 import {
   publicTurnstileConfig,
   TURNSTILE_ACTIONS,
@@ -23,6 +24,7 @@ export async function handlePublicSecurityRoute(request, env) {
   if (checkoutMatch && request.method === 'POST') {
     const body = await request.clone().json().catch(() => ({}));
     await verifyPublicMutationChallenge(request, env, body.turnstile_token, TURNSTILE_ACTIONS.CHECKOUT);
+    await requireReleasePlatformControl(env, 'payment_creation_enabled', 'New payment creation');
     return null;
   }
 
