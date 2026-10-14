@@ -1,6 +1,7 @@
 import { resolveInternalCaseForAlert, syncInternalCaseForAlert } from './cases.js';
 import { runResolutionAutopilot } from './autopilot.js';
 import { processAuthorizedPlatformCredits } from './platform-credits.js';
+import { runLegalIncidentAutopilot } from './legal-incident-autopilot.js';
 
 const INTERNAL_RULES = [
   { match: (a) => a.alert_key === 'watchdog:runner-failure', caseType: 'CATASTROPHIC_INCIDENT' },
@@ -75,11 +76,16 @@ export async function syncInternalCasesFromWatchdogs(env) {
   // idempotent and arbitrary refunds remain impossible without a narrow authorization record.
   const platformCredits = await processAuthorizedPlatformCredits(env);
 
-  // The resolver runs only after the watchdog and case router have established the source of truth.
-  // It can notify the correct party, release abandoned fractional-fee reservations, and dispatch
-  // machine-verifiable work to pre-approved variable-labor vendors. It never bypasses the case engine.
+  // Legal incidents use a separate privileged control plane. It may preserve evidence, dispatch
+  // standing counsel, route pre-authorized insurer notices and monitor deadlines, but it may not
+  // practice law, make admissions, settle claims, waive rights or clear itself without counsel.
+  const legalIncidents = await runLegalIncidentAutopilot(env);
+
+  // The general resolver runs only after the watchdog and specialist legal/financial control planes
+  // have established their authoritative state. It can notify the correct party, release abandoned
+  // fractional-fee reservations, and dispatch machine-verifiable non-legal work to approved vendors.
   const autopilot = await runResolutionAutopilot(env);
-  return { internal, merchant, system, resolved, platform_credits: platformCredits, autopilot };
+  return { internal, merchant, system, resolved, platform_credits: platformCredits, legal_incidents: legalIncidents, autopilot };
 }
 
 export function classifyAlert(alert) {
@@ -95,6 +101,12 @@ export function classifyAlert(alert) {
   if (alert.alert_key.startsWith('webhook:stuck:')) return { owner: 'SYSTEM' };
   if (alert.alert_key.startsWith('tx:stale-payment-pending:')) return { owner: 'SYSTEM' };
   if (alert.alert_key === 'finance:solvency-warning') return { owner: 'SYSTEM' };
+
+  // Legal alerts remain in the specialist legal incident control plane. They may still surface as
+  // internal exceptions, but generic support/workforce automation never gets authority over them.
+  if (String(alert.category || '').toUpperCase() === 'LEGAL') {
+    return { owner: 'INTERNAL', case_type: 'UNKNOWN_EXCEPTION' };
+  }
 
   // Unknown ERROR/CRITICAL conditions are engineering defects by definition. Lower-severity unknowns stay automated.
   if (['ERROR', 'CRITICAL'].includes(String(alert.severity || '').toUpperCase())) {
