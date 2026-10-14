@@ -1,0 +1,76 @@
+name: Pages Boundary CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  validate-pages-artifact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build GitHub Pages artifact
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+
+      - name: Verify bounded public shell
+        run: |
+          test -f _site/index.html
+          test -f _site/styles.css
+          test -f _site/404.html
+          test -f _site/terms/index.html
+          test -f _site/privacy/index.html
+          test -f _site/legal/fees/index.html
+          test -f _site/CNAME
+
+          grep -qi 'not the transaction application' _site/index.html
+          grep -qi 'No live merchant funds' _site/index.html
+
+          if grep -Eqi 'href=["'"']/(console|pay|login)/' _site/index.html; then
+            echo 'Pages shell exposes a Worker-only application route'
+            exit 1
+          fi
+
+      - name: Verify internal and duplicate application paths are absent
+        run: |
+          for path in \
+            _site/worker \
+            _site/public \
+            _site/migrations \
+            _site/transaction-engine \
+            _site/scripts \
+            _site/ops \
+            _site/docs \
+            _site/templates \
+            _site/assets \
+            _site/README.md \
+            _site/package.json \
+            _site/package-lock.json \
+            _site/wrangler.toml.example; do
+            if [ -e "$path" ]; then
+              echo "Forbidden Pages artifact path exists: $path"
+              exit 1
+            fi
+          done
+
+      - name: Verify retired roofing artifacts are gone
+        run: |
+          for path in \
+            Icon.PNG Logo.PNG Logo-tight.PNG hero.PNG hero.jpg \
+            attribution.js navigation.js script.js \
+            contact request \
+            docs/brand-system.md docs/comparison-model.md \
+            templates/comparison-responses.md templates/email-shell.html; do
+            if [ -e "$path" ]; then
+              echo "Retired roofing artifact remains in repository: $path"
+              exit 1
+            fi
+          done
+
+      - name: Inventory Pages artifact
+        run: find _site -maxdepth 4 -type f | sort
