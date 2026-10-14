@@ -1,6 +1,6 @@
 -- TEST FIXTURE ONLY. Never execute against production.
--- This makes MER-0001 legally/compliance-ready so older CI suites can isolate
--- tax/financial invariants that specifically require an ACTIVE merchant.
+-- This makes MER-0001 legally/compliance-ready so CI suites can isolate
+-- transaction/tax/financial invariants that specifically require an ACTIVE merchant.
 
 UPDATE platform_compliance_controls
 SET legal_entity_status='CONFIRMED',
@@ -22,10 +22,22 @@ SET legal_entity_status='CONFIRMED',
     privacy_program_reference='CI_TEST_FIXTURE',
     information_security_program_status='APPROVED',
     information_security_program_reference='CI_TEST_FIXTURE',
+    platform_fee_refund_policy_status='APPROVED',
+    platform_fee_refund_policy_reference='CI_TEST_FIXTURE',
+    platform_fee_refund_policy_reviewed_at=CURRENT_TIMESTAMP,
+    platform_fee_refund_policy_next_review_due_at=datetime('now','+1 year'),
     legal_launch_state='READY',
     last_legal_review_at=CURRENT_TIMESTAMP,
     next_legal_review_due_at=datetime('now','+1 year')
 WHERE id='GLOBAL';
+
+UPDATE fee_refund_policy_versions
+SET status='APPROVED',
+    effective_at=COALESCE(effective_at,CURRENT_TIMESTAMP),
+    counsel_reviewed_at=COALESCE(counsel_reviewed_at,CURRENT_TIMESTAMP),
+    counsel_reference=COALESCE(counsel_reference,'CI_TEST_FIXTURE'),
+    next_review_due_at=COALESCE(next_review_due_at,datetime('now','+1 year'))
+WHERE id='FEE-REFUND-POLICY-V1';
 
 UPDATE compliance_obligations
 SET status=CASE WHEN obligation_type='CONDITIONAL' AND status='NOT_APPLICABLE' THEN 'NOT_APPLICABLE' ELSE 'SATISFIED' END,
@@ -45,7 +57,8 @@ UPDATE legal_document_versions
 SET status='APPROVED',
     effective_at=COALESCE(effective_at,CURRENT_TIMESTAMP),
     counsel_reviewed_at=COALESCE(counsel_reviewed_at,CURRENT_TIMESTAMP),
-    counsel_reference=COALESCE(counsel_reference,'CI_TEST_FIXTURE');
+    counsel_reference=COALESCE(counsel_reference,'CI_TEST_FIXTURE')
+WHERE status<>'RETIRED';
 
 UPDATE state_jurisdiction_support
 SET merchant_onboarding_status='READY',
@@ -58,6 +71,11 @@ SET merchant_onboarding_status='READY',
     income_tax_review_status='CLEARED',
     electronic_transactions_review_status='CLEARED',
     consumer_protection_review_status='CLEARED',
+    platform_fee_refund_review_status='READY',
+    platform_fee_refund_handler_code='RETAIN_IF_EARNED',
+    platform_fee_refund_reference='CI_TEST_FIXTURE',
+    platform_fee_refund_reviewed_at=CURRENT_TIMESTAMP,
+    platform_fee_refund_next_review_due_at=datetime('now','+1 year'),
     counsel_reference='CI_TEST_FIXTURE',
     tax_reference='CI_TEST_FIXTURE',
     reviewed_at=CURRENT_TIMESTAMP,
@@ -87,7 +105,17 @@ FROM legal_document_versions
 WHERE status='APPROVED'
   AND document_type IN ('PLATFORM_AGREEMENT','DATA_PROCESSING_ADDENDUM','ACCEPTABLE_USE_POLICY','FEE_SCHEDULE','ELECTRONIC_RECORDS_CONSENT');
 
--- Synthetic transaction evidence used only by CI suites that exercise PROTECTED transitions.
+INSERT OR IGNORE INTO merchant_fee_policy_acceptances
+  (id,merchant_id,external_user_id,fee_schedule_version,fee_refund_policy_version,
+   acknowledgment_version,acknowledgment_text,acknowledgment_sha256,evidence_json)
+SELECT 'MFPA-CI-MER-0001','MER-0001','ci_legal_fixture',d.version,p.version,
+       'BG-FEE-REFUND-ACK-V1','CI fixture acknowledgment','CI_TEST_FIXTURE_SHA','{"ci_fixture":true}'
+FROM legal_document_versions d, fee_refund_policy_versions p
+WHERE d.document_type='FEE_SCHEDULE' AND d.status='APPROVED'
+  AND p.id='FEE-REFUND-POLICY-V1' AND p.status='APPROVED'
+ORDER BY datetime(d.effective_at) DESC
+LIMIT 1;
+
 UPDATE transactions
 SET customer_attested_country_code='US',
     customer_attested_state_code='RI',
@@ -96,5 +124,4 @@ SET customer_attested_country_code='US',
     legal_compliance_state=CASE WHEN legal_compliance_state='PENDING' THEN 'CLEARED' ELSE legal_compliance_state END
 WHERE id='TX-0001';
 
--- Readiness assertions belong in the calling CI workflow rather than using SQLite RAISE()
--- outside a trigger. Production migrations never execute this fixture.
+-- Readiness assertions belong in the calling CI workflow. Production migrations never execute this fixture.

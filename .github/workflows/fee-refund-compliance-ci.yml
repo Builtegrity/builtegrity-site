@@ -1,0 +1,139 @@
+name: Fee Refund Compliance CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - fee-refund-compliance-hardening
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check fee/refund JavaScript syntax
+        run: |
+          node --check worker/src/fee-refund-compliance.js
+          node --check worker/src/merchant-compliance-routes.js
+          node --check worker/src/stripe.js
+
+      - name: Build complete D1 schema
+        run: |
+          rm -f /tmp/builtegrity-fee-refund.db
+          for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+            echo "Applying $file"
+            sqlite3 /tmp/builtegrity-fee-refund.db < "$file"
+          done
+          sqlite3 /tmp/builtegrity-fee-refund.db < transaction-engine/seed-tx-0001.sql
+          sqlite3 /tmp/builtegrity-fee-refund.db "PRAGMA foreign_key_check;" > /tmp/fk.txt
+          test ! -s /tmp/fk.txt
+
+      - name: Verify production defaults fail closed pending counsel
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-fee-refund.db "SELECT platform_fee_refund_policy_status FROM platform_compliance_controls WHERE id='GLOBAL';")" = "PENDING_COUNSEL"
+          test "$(sqlite3 /tmp/builtegrity-fee-refund.db "SELECT status FROM fee_refund_policy_versions WHERE id='FEE-REFUND-POLICY-V1';")" = "COUNSEL_REVIEW"
+          test "$(sqlite3 /tmp/builtegrity-fee-refund.db "SELECT COUNT(*) FROM state_jurisdiction_support WHERE platform_fee_refund_review_status='READY';")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-fee-refund.db "SELECT COUNT(*) FROM compliance_obligations WHERE id IN ('COMP-FEE-REFUND-POLICY','COMP-FEE-DISCLOSURE','COMP-FEE-MARKETING-CLAIMS','COMP-RI-FEE-DTPA','COMP-STRIPE-FEE-REFUND-TERMS') AND status='COUNSEL_REVIEW';")" = "5"
+
+      - name: Verify a state cannot claim READY without evidence and tested automation
+        run: |
+          if sqlite3 /tmp/builtegrity-fee-refund.db "UPDATE state_jurisdiction_support SET platform_fee_refund_review_status='READY',platform_fee_refund_handler_code='RETAIN_IF_EARNED' WHERE state_code='RI';" 2>/tmp/fee-state.txt; then
+            echo 'State refund rule unexpectedly became READY without counsel evidence'
+            exit 1
+          fi
+          grep -q 'counsel evidence and a TESTED handler' /tmp/fee-state.txt
+          sqlite3 /tmp/builtegrity-fee-refund.db "UPDATE fee_refund_handler_catalog SET implementation_status='NEEDS_IMPLEMENTATION' WHERE code='RETAIN_IF_EARNED';"
+          if sqlite3 /tmp/builtegrity-fee-refund.db "UPDATE state_jurisdiction_support SET platform_fee_refund_review_status='READY',platform_fee_refund_handler_code='RETAIN_IF_EARNED',platform_fee_refund_reference='TEST',platform_fee_refund_reviewed_at=CURRENT_TIMESTAMP WHERE state_code='RI';" 2>/tmp/fee-handler.txt; then
+            echo 'State refund rule unexpectedly enabled an untested handler'
+            exit 1
+          fi
+          grep -q 'TESTED handler' /tmp/fee-handler.txt
+          sqlite3 /tmp/builtegrity-fee-refund.db "UPDATE fee_refund_handler_catalog SET implementation_status='TESTED' WHERE code='RETAIN_IF_EARNED';"
+
+      - name: Verify refund target arithmetic
+        run: |
+          node --input-type=module <<'NODE'
+          import { calculateRequiredPlatformFeeRefundCents } from './worker/src/fee-refund-compliance.js';
+          const base = { gross_application_fee_cents:15, underlying_amount_cents:10000 };
+          const cases = [
+            [{...base,handler_code:'RETAIN_IF_EARNED',cumulative_underlying_refunded_cents:10000},0],
+            [{...base,handler_code:'FULL_APP_FEE_ON_FULL_REFUND',cumulative_underlying_refunded_cents:5000},0],
+            [{...base,handler_code:'FULL_APP_FEE_ON_FULL_REFUND',cumulative_underlying_refunded_cents:10000},15],
+            [{...base,handler_code:'FULL_APP_FEE_ON_ANY_REFUND',cumulative_underlying_refunded_cents:1},15],
+            [{...base,handler_code:'PRO_RATA_APP_FEE',cumulative_underlying_refunded_cents:5000},8],
+            [{...base,handler_code:'FULL_APP_FEE_ON_FULL_REFUND_OR_LOST_DISPUTE',cumulative_underlying_refunded_cents:0,dispute_lost:true},15],
+          ];
+          for (const [input,expected] of cases) {
+            const actual=calculateRequiredPlatformFeeRefundCents(input);
+            if(actual!==expected) throw new Error(`${input.handler_code}: expected ${expected}, got ${actual}`);
+          }
+          NODE
+
+      - name: Apply synthetic legal clearance
+        run: |
+          sqlite3 /tmp/builtegrity-fee-refund.db < transaction-engine/ci-legal-clearance.sql
+          test "$(sqlite3 /tmp/builtegrity-fee-refund.db "SELECT platform_fee_refund_policy_status FROM platform_compliance_controls WHERE id='GLOBAL';")" = "APPROVED"
+          test "$(sqlite3 /tmp/builtegrity-fee-refund.db "SELECT status FROM fee_refund_policy_versions WHERE id='FEE-REFUND-POLICY-V1';")" = "APPROVED"
+          test "$(sqlite3 /tmp/builtegrity-fee-refund.db "SELECT platform_fee_refund_review_status||':'||platform_fee_refund_handler_code FROM state_jurisdiction_support WHERE state_code='RI';")" = "READY:RETAIN_IF_EARNED"
+          test "$(sqlite3 /tmp/builtegrity-fee-refund.db "SELECT COUNT(*) FROM merchant_fee_policy_acceptances WHERE merchant_id='MER-0001' AND acknowledgment_version='BG-FEE-REFUND-ACK-V1';")" = "1"
+
+      - name: Verify explicit acknowledgment cannot be omitted
+        run: |
+          grep -q "fee_refund_policy_acknowledged !== true" worker/src/fee-refund-compliance.js
+          grep -q "recordMerchantFeePolicyAcceptance" worker/src/merchant-compliance-routes.js
+          grep -q "ACTIVE merchant requires explicit current Platform Fee/refund policy acceptance" migrations/0056_fee_refund_automatic_enforcement.sql
+
+      - name: Verify required refund creates exact legal credit automatically
+        run: |
+          sqlite3 /tmp/builtegrity-fee-refund.db "
+            UPDATE transactions
+               SET fee_refund_policy_version_id='FEE-REFUND-POLICY-V1',
+                   merchant_fee_policy_acceptance_id='MFPA-CI-MER-0001',
+                   fee_refund_handler_code='FULL_APP_FEE_ON_ANY_REFUND',
+                   fee_refund_rule_source='CI:FORCED_STRICTER_RULE',
+                   fee_refund_merchant_state_code='RI',fee_refund_customer_state_code='RI',
+                   application_fee_gross_confirmed_cents=15,application_fee_refunded_cents=0,
+                   integrity_fee_collected_cents=15
+             WHERE id='TX-0001';
+            UPDATE transactions SET refunded_cents=1 WHERE id='TX-0001';
+          "
+          test "$(sqlite3 /tmp/builtegrity-fee-refund.db "SELECT COUNT(*) FROM platform_fee_credit_authorizations WHERE transaction_id='TX-0001' AND reason_code='LEGAL_REQUIRED_CREDIT' AND amount_cents=15 AND authorization_source='LEGAL' AND status='AUTHORIZED';")" = "1"
+
+      - name: Verify Platform Fee earning evidence is immutable
+        run: |
+          sqlite3 /tmp/builtegrity-fee-refund.db "UPDATE transactions SET platform_fee_earned_at=CURRENT_TIMESTAMP,platform_fee_earned_event_code='PROTECTED_CONFIRMED' WHERE id='TX-0001';"
+          if sqlite3 /tmp/builtegrity-fee-refund.db "UPDATE transactions SET platform_fee_earned_at=NULL WHERE id='TX-0001';" 2>/tmp/earned.txt; then
+            echo 'Earned-fee history unexpectedly rewrote'
+            exit 1
+          fi
+          grep -q 'platform fee earned evidence is immutable' /tmp/earned.txt
+
+      - name: Verify checkout cannot bypass a locked fee/refund rule
+        run: |
+          grep -q "lockTransactionFeeRefundRule" worker/src/stripe.js
+          grep -q "assertTransactionFeeRefundRuleLocked" worker/src/stripe.js
+          grep -q "builtegrity_fee_refund_policy" worker/src/stripe.js
+          grep -q "builtegrity_fee_refund_handler" worker/src/stripe.js
+
+      - name: Verify merchant-facing copy cannot promise ultimate payment retention
+        run: |
+          if grep -RniE "you only pay when you successfully get paid|non-refundable in all cases|never refundable" public; then
+            echo 'Prohibited or overbroad fee/refund claim found in public copy'
+            exit 1
+          fi
+          grep -q "Builtegrity charges only on successfully processed PROTECTED payments" public/legal/fees/index.html
+          grep -q "applicable law" public/legal/fees/index.html
+          grep -q "binding processor requirements" public/terms/index.html
+
+      - name: Verify customer payment surface does not add a Builtegrity surcharge line item
+        run: |
+          ! grep -RniE "Builtegrity fee|Platform Fee|application fee" public/pay
+
+      - name: Verify Stripe refund primitive remains separately auditable
+        run: |
+          grep -q "LEGAL_REQUIRED_CREDIT" worker/src/fee-refund-compliance.js
+          grep -q "LEGAL_REQUIRED_CREDIT" migrations/0056_fee_refund_automatic_enforcement.sql
+          grep -q "application_fees.*refunds" worker/src/platform-credits.js
