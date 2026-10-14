@@ -13,6 +13,9 @@ const exists = (p) => fs.existsSync(path.join(root,p));
 const contract = readJson('ops/system-contract.json');
 const definitions = readJson('transaction-engine/definitions.json');
 const rootReadme = read('README.md');
+const rootIndex = read('index.html');
+const workerIndex = read('public/index.html');
+const pagesConfig = read('_config.yml');
 const pricingMigration = read('migrations/0045_bg_standard_v1_pricing.sql');
 const protectionMigration = read('migrations/0050_protection_invariant_with_carry_and_refunds.sql');
 const entitlementMigration = read('migrations/0061_protected_only_carry_entitlement.sql');
@@ -120,7 +123,9 @@ assert(statementRuntime.includes('application_fee_gross_cents'), 'monthly statem
 assert(statementRuntime.includes('carry_settled_cents'), 'monthly statements must expose prior carry settlement separately');
 assert(statementRuntime.includes('STATEMENT_VERSION = 2'), 'semantic statement change must remain versioned as V2');
 
-for (const relative of ['terms/index.html','privacy/index.html','index.html','styles.css']) {
+// Static legal/privacy documents intentionally mirror across Pages and Worker assets.
+// Application entry points intentionally do not.
+for (const relative of ['terms/index.html','privacy/index.html','styles.css']) {
   assert(exists(relative) && exists(`public/${relative}`), `canonical/public mirror missing for ${relative}`);
   assert(read(relative) === read(`public/${relative}`), `root compatibility copy diverges from public/${relative}`);
 }
@@ -144,11 +149,28 @@ assert(deployment?.required_for_live === true, 'deployment ownership must remain
 assert(deployment?.production_domain === 'builtegrity.com', 'canonical production domain drifted');
 assert(deployment?.authoritative_live_runtime === 'CLOUDFLARE_WORKER_STATIC_ASSETS', 'Cloudflare Worker/Static Assets must remain the authoritative LIVE runtime');
 assert(deployment?.authoritative_live_assets === 'public/', 'public/ must remain the authoritative LIVE asset directory');
+assert(deployment?.github_pages_artifact_role === 'BOUNDED_STATIC_PRELAUNCH_SHELL', 'Pages artifact must remain a bounded prelaunch shell');
+assert(deployment?.github_pages_transaction_routes_allowed === false, 'GitHub Pages must not serve transaction routes');
+assert(deployment?.github_pages_internal_repository_paths_allowed === false, 'GitHub Pages must not publish internal repository paths');
+assert(deployment?.root_pages_entry_and_worker_entry_are_intentionally_distinct === true, 'root Pages shell and Worker application entry must remain intentionally distinct');
 assert(deployment?.github_pages_must_not_claim_production_domain_for_live === true, 'GitHub Pages production-domain conflict must remain a LIVE blocker');
 assert(deployment?.cloudflare_domain_route_must_be_verified_for_live === true, 'Cloudflare production route verification must remain a LIVE requirement');
 assert(/GitHub Pages is not the production transaction runtime/i.test(deploymentDoc), 'deployment ownership runbook must explicitly reject GitHub Pages as the production runtime');
+assert(/bounded static pre-launch shell/i.test(deploymentDoc), 'deployment ownership runbook must define the bounded Pages artifact');
 assert(/Remove `builtegrity\.com` as the GitHub Pages custom domain/i.test(deploymentDoc), 'deployment ownership runbook must include Pages custom-domain removal');
 assert(/APP_BASE_URL = "https:\/\/builtegrity\.com"/.test(wranglerExample), 'Worker example must target the canonical production domain');
+
+for (const internalPath of ['README.md','package.json','package-lock.json','wrangler.toml.example','worker','public','migrations','transaction-engine','scripts','ops','docs','templates','assets']) {
+  assert(new RegExp(`(^|\\n)\\s*-\\s*${escapeRegex(internalPath)}\\s*($|\\n)`).test(pagesConfig), `GitHub Pages config must exclude ${internalPath}`);
+}
+assert(!/href=["']\/console\//i.test(rootIndex), 'temporary GitHub Pages homepage must not advertise the Worker console');
+assert(!/href=["']\/pay\//i.test(rootIndex), 'temporary GitHub Pages homepage must not advertise the Worker payment route');
+assert(!/href=["']\/login\//i.test(rootIndex), 'temporary GitHub Pages homepage must not advertise the Worker login route');
+assert(/not the transaction application/i.test(rootIndex), 'temporary Pages homepage must disclose that it is not the transaction application');
+assert(/href=["']\/console\//i.test(workerIndex), 'Cloudflare application homepage should retain its transaction-console route');
+assert(/href=["']\/pay\//i.test(workerIndex), 'Cloudflare application homepage should retain its customer payment route');
+assert(rootIndex !== workerIndex, 'Pages shell and Worker application homepage must remain intentionally distinct');
+
 if (rootCname === deployment.production_domain) {
   assert(deployment.verification_status === 'PRELAUNCH_GITHUB_PAGES_CONFLICT', 'repository CNAME claims the production domain but deployment ownership is not marked as a pre-launch Pages conflict');
 }
@@ -172,6 +194,7 @@ if (mode === 'live') {
 
 console.log(`Builtegrity system coherence ${mode} gate: PASS`);
 
+function escapeRegex(value){return String(value).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
 function assertJsonArrayEqual(actual,expected,label){assert(JSON.stringify(actual)===JSON.stringify(expected),`${label} differs between definitions.json and system contract`);}
 function assert(condition,message){if(!condition)fail(message);}
 function fail(message){console.error(`SYSTEM COHERENCE FAILURE: ${message}`);process.exit(1);}
