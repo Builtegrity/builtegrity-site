@@ -6,6 +6,7 @@ on:
     branches:
       - autopilot-constitution-v1
       - main
+      - system-coherence-hardening-v2
   workflow_dispatch:
 
 jobs:
@@ -47,25 +48,14 @@ jobs:
           import { calculateAmountBandFee } from './worker/src/pricing.js';
           const rule = { percentage_bps: 10, maximum_cents: Number.MAX_SAFE_INTEGER, uncapped: 1 };
           const cases = [
-            [1,       1,       10010,       1,       10],
-            [50,      1,       10500,       1,      500],
-            [99,      1,       10990,       1,      990],
-            [100,     1,       11000,       1,     1000],
-            [101,     2,       21010,       2,     1010],
-            [500,     2,       25000,       2,     5000],
-            [501,     3,       35010,       3,     5010],
-            [1000,    3,       40000,       4,        0],
-            [1001,    5,       60010,       6,       10],
-            [2000,    5,       70000,       7,        0],
-            [10000,   5,      150000,      15,        0],
-            [100000,  5,     1050000,     105,        0],
-            [100000000, 5, 1000050000, 100005,        0],
+            [1,1,10010,1,10],[50,1,10500,1,500],[99,1,10990,1,990],[100,1,11000,1,1000],
+            [101,2,21010,2,1010],[500,2,25000,2,5000],[501,3,35010,3,5010],[1000,3,40000,4,0],
+            [1001,5,60010,6,10],[2000,5,70000,7,0],[10000,5,150000,15,0],
+            [100000,5,1050000,105,0],[100000000,5,1000050000,100005,0],
           ];
-          for (const [amount, base, exact, whole, residual] of cases) {
-            const q = calculateAmountBandFee(amount, rule, { base_fee_cents: base });
-            if (q.fee_micros !== exact) throw new Error(`${amount}: exact ${q.fee_micros}, expected ${exact}`);
-            if (q.processor_fee_cents !== whole) throw new Error(`${amount}: whole ${q.processor_fee_cents}, expected ${whole}`);
-            if (q.residual_micros !== residual) throw new Error(`${amount}: residual ${q.residual_micros}, expected ${residual}`);
+          for (const [amount,base,exact,whole,residual] of cases) {
+            const q=calculateAmountBandFee(amount,rule,{base_fee_cents:base});
+            if(q.fee_micros!==exact||q.processor_fee_cents!==whole||q.residual_micros!==residual) throw new Error(`${amount}: ${JSON.stringify(q)}`);
           }
           NODE
 
@@ -73,89 +63,91 @@ jobs:
         run: |
           node --input-type=module <<'NODE'
           import { calculateAmountBandFee } from './worker/src/pricing.js';
-          const q = calculateAmountBandFee(99, { percentage_bps: 10, maximum_cents: Number.MAX_SAFE_INTEGER, uncapped: 1 }, { base_fee_cents: 1 });
-          const transactions = 10_000_000n;
-          const revenueMicros = BigInt(q.fee_micros) * transactions;
-          const revenueDollars = Number(revenueMicros) / 1_000_000;
-          if (revenueDollars !== 109900) throw new Error(`10M x 99c expected $109,900, got $${revenueDollars}`);
-          const merchantMonthlyMicros = BigInt(q.fee_micros) * 1000n;
-          const merchantMonthlyDollars = Number(merchantMonthlyMicros) / 1_000_000;
-          if (merchantMonthlyDollars !== 10.99) throw new Error(`1000 x 99c expected $10.99, got $${merchantMonthlyDollars}`);
+          const q=calculateAmountBandFee(99,{percentage_bps:10,maximum_cents:Number.MAX_SAFE_INTEGER,uncapped:1},{base_fee_cents:1});
+          if(Number(BigInt(q.fee_micros)*10_000_000n)/1_000_000!==109900) throw new Error('10M x 99c economics drifted');
+          if(Number(BigInt(q.fee_micros)*1000n)/1_000_000!==10.99) throw new Error('merchant 1000 x 99c economics drifted');
           NODE
 
       - name: Verify uncapped upside
         run: |
           node --input-type=module <<'NODE'
           import { calculateAmountBandFee } from './worker/src/pricing.js';
-          const rule = { percentage_bps: 10, maximum_cents: Number.MAX_SAFE_INTEGER, uncapped: 1 };
-          const band = { base_fee_cents: 5 };
-          const cases = [
-            [100000, 105],
-            [1000000, 1005],
-            [100000000, 100005],
-            [100000000000, 100000005],
-          ];
-          for (const [amount, expectedWholeCents] of cases) {
-            const q = calculateAmountBandFee(amount, rule, band);
-            if (q.processor_fee_cents !== expectedWholeCents) throw new Error(`${amount}: expected ${expectedWholeCents}, got ${q.processor_fee_cents}`);
+          const rule={percentage_bps:10,maximum_cents:Number.MAX_SAFE_INTEGER,uncapped:1},band={base_fee_cents:5};
+          for(const [amount,expected] of [[100000,105],[1000000,1005],[100000000,100005],[100000000000,100000005]]) {
+            const q=calculateAmountBandFee(amount,rule,band); if(q.processor_fee_cents!==expected) throw new Error(`${amount}: ${q.processor_fee_cents}`);
           }
           NODE
 
       - name: Seed legacy transaction prerequisites
-        run: |
-          sqlite3 /tmp/builtegrity-pricing.db < transaction-engine/seed-tx-0001.sql
+        run: sqlite3 /tmp/builtegrity-pricing.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify BG_STANDARD_V1 transaction snapshot is DB-validated and completed
         run: |
-          sqlite3 /tmp/builtegrity-pricing.db "
-            INSERT INTO transactions (
-              id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,
-              terms_version,terms_snapshot,refund_policy_snapshot,cancellation_policy_snapshot,
-              integrity_fee_earned_cents,fee_collection_method,payment_access_token,
-              pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,
-              pricing_density_band_id,pricing_calculated_cents,pricing_locked_at
-            ) VALUES (
-              'TX-BGV1-99','PUR-0001','MER-0001','CUST-0001','PAYMENT','99 cent pricing torture test',99,'USD',
-              'TERMS-001','Pricing test terms',NULL,NULL,
-              1,'STRIPE_APPLICATION_FEE','pricing-bg-v1-token',
-              'BG_STANDARD_V1',10,0,9007199254740991,NULL,1,CURRENT_TIMESTAMP
-            );"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_amount_band_id FROM transactions WHERE id='TX-BGV1-99';")" = "BGV1-BAND-001"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_base_cents FROM transactions WHERE id='TX-BGV1-99';")" = "1"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_fee_micros FROM transactions WHERE id='TX-BGV1-99';")" = "10990"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_fee_residual_micros FROM transactions WHERE id='TX-BGV1-99';")" = "990"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_uncapped FROM transactions WHERE id='TX-BGV1-99';")" = "1"
+          sqlite3 /tmp/builtegrity-pricing.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_version,terms_snapshot,refund_policy_snapshot,cancellation_policy_snapshot,integrity_fee_earned_cents,fee_collection_method,payment_access_token,pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,pricing_density_band_id,pricing_calculated_cents,pricing_locked_at) VALUES ('TX-BGV1-99','PUR-0001','MER-0001','CUST-0001','PAYMENT','99 cent pricing torture test',99,'USD','TERMS-001','Pricing test terms',NULL,NULL,1,'STRIPE_APPLICATION_FEE','pricing-bg-v1-token','BG_STANDARD_V1',10,0,9007199254740991,NULL,1,CURRENT_TIMESTAMP);"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT pricing_amount_band_id||':'||pricing_base_cents||':'||pricing_fee_micros||':'||pricing_fee_residual_micros||':'||pricing_uncapped FROM transactions WHERE id='TX-BGV1-99';")" = "BGV1-BAND-001:1:10990:990:1"
 
       - name: Verify invalid BG_STANDARD_V1 pricing is rejected
         run: |
-          if sqlite3 /tmp/builtegrity-pricing.db "
-            INSERT INTO transactions (
-              id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,
-              terms_version,terms_snapshot,integrity_fee_earned_cents,fee_collection_method,payment_access_token,
-              pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,
-              pricing_calculated_cents,pricing_locked_at
-            ) VALUES (
-              'TX-BGV1-BAD','PUR-0001','MER-0001','CUST-0001','PAYMENT','Bad price',99,'USD',
-              'TERMS-001','Bad pricing test',2,'STRIPE_APPLICATION_FEE','pricing-bad-token',
-              'BG_STANDARD_V1',10,0,9007199254740991,2,CURRENT_TIMESTAMP
-            );" 2>/tmp/bad-price.txt; then
-            echo 'Expected invalid Builtegrity fee to be rejected'
-            exit 1
-          fi
+          if sqlite3 /tmp/builtegrity-pricing.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_version,terms_snapshot,integrity_fee_earned_cents,fee_collection_method,payment_access_token,pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,pricing_calculated_cents,pricing_locked_at) VALUES ('TX-BGV1-BAD','PUR-0001','MER-0001','CUST-0001','PAYMENT','Bad price',99,'USD','TERMS-001','Bad pricing test',2,'STRIPE_APPLICATION_FEE','pricing-bad-token','BG_STANDARD_V1',10,0,9007199254740991,2,CURRENT_TIMESTAMP);" 2>/tmp/bad-price.txt; then echo 'Expected invalid price rejection'; exit 1; fi
           grep -q 'BG_STANDARD_V1' /tmp/bad-price.txt
 
-      - name: Verify fractional carry accrues only after successful payment
+      - name: Verify payment success alone cannot earn residual carry
         run: |
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COALESCE((SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD'),0);")" = "0"
-          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET payment_status='succeeded',payment_at='2026-10-14T00:00:00Z',customer_paid_cents=99,integrity_fee_collected_cents=1 WHERE id='TX-BGV1-99';"
+          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET payment_status='succeeded',payment_at='2026-10-14T00:00:00Z',customer_paid_cents=99 WHERE id='TX-BGV1-99';"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT record_classification FROM transactions WHERE id='TX-BGV1-99';")" = "FEE_EXCEPTION"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COALESCE((SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD'),0);")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM merchant_fee_carry_events WHERE transaction_id='TX-BGV1-99' AND event_type='ACCRUED';")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM transaction_fee_entitlements WHERE transaction_id='TX-BGV1-99';")" = "0"
+
+      - name: Verify processor-confirmed fee promotes PROTECTED and accrues exactly once
+        run: |
+          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET stripe_application_fee_id='fee_bg99',application_fee_gross_confirmed_cents=1,integrity_fee_collected_cents=1 WHERE id='TX-BGV1-99';"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT record_classification FROM transactions WHERE id='TX-BGV1-99';")" = "PROTECTED"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "990"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM merchant_fee_carry_events WHERE transaction_id='TX-BGV1-99' AND event_type='ACCRUED';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT entitlement_micros||':'||residual_micros||':'||carry_collected_cents FROM transaction_fee_entitlements WHERE transaction_id='TX-BGV1-99';")" = "10990:990:0"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM transaction_carry_finalization_requests WHERE transaction_id='TX-BGV1-99';")" = "1"
+          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET application_fee_gross_confirmed_cents=1,integrity_fee_collected_cents=1 WHERE id='TX-BGV1-99';"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "990"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM merchant_fee_carry_events WHERE transaction_id='TX-BGV1-99' AND event_type='ACCRUED';")" = "1"
 
-      - name: Verify merchant refund does not erase earned Builtegrity revenue
+      - name: Build one whole cent of valid carry
+        run: |
+          sqlite3 /tmp/builtegrity-pricing.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_version,terms_snapshot,integrity_fee_earned_cents,fee_collection_method,payment_access_token,pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,pricing_calculated_cents,pricing_locked_at) VALUES ('TX-BGV1-901','PUR-0001','MER-0001','CUST-0001','PAYMENT','carry builder',901,'USD','TERMS-001','carry builder terms',3,'STRIPE_APPLICATION_FEE','pricing-901-token','BG_STANDARD_V1',10,0,9007199254740991,3,CURRENT_TIMESTAMP); UPDATE transactions SET payment_status='succeeded',payment_at='2026-10-14T00:01:00Z',customer_paid_cents=901,stripe_application_fee_id='fee_bg901',application_fee_gross_confirmed_cents=3,integrity_fee_collected_cents=3 WHERE id='TX-BGV1-901';"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT record_classification||':'||pricing_fee_residual_micros FROM transactions WHERE id='TX-BGV1-901';")" = "PROTECTED:9010"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "10000"
+
+      - name: Verify reserved carry is not settled by payment success without BG fee
+        run: |
+          sqlite3 /tmp/builtegrity-pricing.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_version,terms_snapshot,integrity_fee_earned_cents,fee_collection_method,payment_access_token,pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,pricing_calculated_cents,pricing_locked_at) VALUES ('TX-BGV1-CARRY-FAIL','PUR-0001','MER-0001','CUST-0001','PAYMENT','carry failure path',2000,'USD','TERMS-001','carry fail terms',7,'STRIPE_APPLICATION_FEE','pricing-carry-fail-token','BG_STANDARD_V1',10,0,9007199254740991,7,CURRENT_TIMESTAMP); UPDATE transactions SET pricing_carry_reserved_cents=1 WHERE id='TX-BGV1-CARRY-FAIL'; UPDATE transactions SET payment_status='succeeded',payment_at='2026-10-14T00:02:00Z',customer_paid_cents=2000 WHERE id='TX-BGV1-CARRY-FAIL';"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT record_classification||':'||pricing_carry_reserved_cents||':'||pricing_carry_settled_cents FROM transactions WHERE id='TX-BGV1-CARRY-FAIL';")" = "FEE_EXCEPTION:1:0"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "0"
+          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET pricing_carry_reserved_cents=0,pricing_carry_released_at=CURRENT_TIMESTAMP WHERE id='TX-BGV1-CARRY-FAIL';"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "10000"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM merchant_fee_carry_events WHERE transaction_id='TX-BGV1-CARRY-FAIL' AND event_type='RELEASED';")" = "1"
+
+      - name: Verify prior carry settles only when later payment becomes PROTECTED
+        run: |
+          sqlite3 /tmp/builtegrity-pricing.db "INSERT INTO transactions (id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,terms_version,terms_snapshot,integrity_fee_earned_cents,fee_collection_method,payment_access_token,pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,pricing_calculated_cents,pricing_locked_at) VALUES ('TX-BGV1-CARRY-OK','PUR-0001','MER-0001','CUST-0001','PAYMENT','carry success path',2000,'USD','TERMS-001','carry success terms',7,'STRIPE_APPLICATION_FEE','pricing-carry-ok-token','BG_STANDARD_V1',10,0,9007199254740991,7,CURRENT_TIMESTAMP); UPDATE transactions SET pricing_carry_reserved_cents=1 WHERE id='TX-BGV1-CARRY-OK'; UPDATE transactions SET payment_status='succeeded',payment_at='2026-10-14T00:03:00Z',customer_paid_cents=2000 WHERE id='TX-BGV1-CARRY-OK';"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT record_classification||':'||pricing_carry_settled_cents FROM transactions WHERE id='TX-BGV1-CARRY-OK';")" = "FEE_EXCEPTION:0"
+          sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET stripe_application_fee_id='fee_bgcarryok',application_fee_gross_confirmed_cents=8,integrity_fee_collected_cents=8 WHERE id='TX-BGV1-CARRY-OK';"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT record_classification||':'||pricing_carry_settled_cents FROM transactions WHERE id='TX-BGV1-CARRY-OK';")" = "PROTECTED:1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT entitlement_micros||':'||carry_collected_cents FROM transaction_fee_entitlements WHERE transaction_id='TX-BGV1-CARRY-OK';")" = "70000:1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM merchant_fee_carry_events WHERE transaction_id='TX-BGV1-CARRY-OK' AND event_type='SETTLED';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT amount_micros FROM transaction_economics_ledger WHERE transaction_id='TX-BGV1-CARRY-OK' AND basis='ACTUAL' AND entry_kind='REVENUE' AND category='INTEGRITY_FEE' ORDER BY created_at DESC LIMIT 1;")" = "80000"
+
+      - name: Verify protected pricing summary is classification-driven
+        run: |
+          summary="$(sqlite3 /tmp/builtegrity-pricing.db "SELECT successful_protected_transactions||':'||earned_fee_micros||':'||application_fee_cash_cents||':'||carry_settled_cents FROM merchant_pricing_monthly_summary WHERE merchant_id='MER-0001' AND month='2026-10';")"
+          test "$summary" = "3:120000:12:1"
+
+      - name: Verify merchant refund does not erase earned Builtegrity entitlement
         run: |
           sqlite3 /tmp/builtegrity-pricing.db "UPDATE transactions SET payment_status='refunded',refunded_cents=99 WHERE id='TX-BGV1-99';"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT integrity_fee_earned_micros FROM transactions WHERE id='TX-BGV1-99';")" = "10990"
-          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT available_micros FROM merchant_fee_carry WHERE merchant_id='MER-0001' AND currency='USD';")" = "990"
+          test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT entitlement_micros FROM transaction_fee_entitlements WHERE transaction_id='TX-BGV1-99';")" = "10990"
 
       - name: Verify floor economics remain above 80 percent
         run: |
@@ -171,10 +163,7 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM workforce_vendor_capabilities WHERE approved=1;")" = "0"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM workforce_policy WHERE id='GLOBAL' AND max_single_work_order_cents=5000 AND monthly_budget_cents=50000 AND require_machine_verification=1;")" = "1"
           test "$(sqlite3 /tmp/builtegrity-pricing.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('workforce_capability_approval_guard_insert','workforce_capability_approval_guard_update','workforce_vendor_no_dpa_regression','workforce_vendor_no_contract_regression');")" = "4"
-          if sqlite3 /tmp/builtegrity-pricing.db "UPDATE workforce_vendors SET status='APPROVED',auto_dispatch_enabled=1 WHERE id='WF-SUPPORTYOURAPP';" 2>/tmp/vendor-guard.txt; then
-            echo 'Expected vendor approval without contract/tax/intake/caps to fail'
-            exit 1
-          fi
+          if sqlite3 /tmp/builtegrity-pricing.db "UPDATE workforce_vendors SET status='APPROVED',auto_dispatch_enabled=1 WHERE id='WF-SUPPORTYOURAPP';" 2>/tmp/vendor-guard.txt; then echo 'Expected vendor guard failure'; exit 1; fi
           grep -q 'automatic workforce vendor' /tmp/vendor-guard.txt
 
       - name: Verify cost circuit breakers are encoded
@@ -198,10 +187,7 @@ jobs:
 
       - name: Verify no merchant refund path is coded to refund the application fee
         run: |
-          if grep -R --exclude='*.yml' --exclude='*.md' -nE 'refund_application_fee|refundApplicationFee' worker transaction-engine; then
-            echo 'Application-fee refund coupling is prohibited outside the explicit platform-credit path'
-            exit 1
-          fi
+          if grep -R --exclude='*.yml' --exclude='*.md' -nE 'refund_application_fee|refundApplicationFee' worker transaction-engine; then echo 'Application-fee refund coupling is prohibited outside explicit credit path'; exit 1; fi
           grep -q "case 'application_fee.refunded'" worker/src/webhooks.js
           grep -q "adjustmentType: 'APPLICATION_FEE_REFUND'" worker/src/webhooks.js
 
