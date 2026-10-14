@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Payment · Builtegrity</title>
   <link rel="stylesheet" href="/styles.css">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" defer></script>
 </head>
 <body>
   <main class="shell narrow">
@@ -12,6 +13,7 @@
     <section id="paymentCard" class="panel">
       <p class="muted">Loading payment details…</p>
     </section>
+    <div id="turnstileMount" aria-live="polite"></div>
     <section class="panel" aria-labelledby="payment-role-heading">
       <h2 id="payment-role-heading">Who does what</h2>
       <p>The merchant shown above is the seller of the goods or services and is responsible for fulfillment, transaction terms, refunds and cancellation policies. Stripe processes the card payment on the merchant's connected Stripe account. Builtegrity records and monitors the transaction; Builtegrity is not the seller, bank, insurer, or guarantor of a payment or dispute result.</p>
