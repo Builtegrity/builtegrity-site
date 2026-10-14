@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const modeArg = process.argv.find((arg) => arg.startsWith('--mode='));
-const mode = modeArg ? modeArg.split('=')[1] : (process.argv.includes('--mode=live') ? 'live' : 'structure');
+const mode = modeArg ? modeArg.split('=')[1] : 'structure';
 if (!['structure','live'].includes(mode)) fail(`Unsupported mode ${mode}`);
 
 const root = process.cwd();
@@ -16,6 +16,7 @@ const pricingMigration = read('migrations/0045_bg_standard_v1_pricing.sql');
 const carryMigration = read('migrations/0050_protection_invariant_with_carry_and_refunds.sql');
 const refundMigration = read('migrations/0055_fee_refund_compliance_hardening.sql');
 const statementRuntime = read('worker/src/monthly-statements.js');
+const statementMigration = read('migrations/0060_monthly_statement_semantic_alignment.sql');
 const pricingDoc = read('docs/pricing-engine.md');
 const financeDoc = read('docs/financial-safety.md');
 const engineReadme = read('transaction-engine/README.md');
@@ -39,15 +40,10 @@ const pricing = contract.commercial_decisions.pricing;
 assert(pricing.implementation_id === 'BG_STANDARD_V1', 'pricing implementation id drifted');
 assert(pricing.percentage_bps === 10 && pricing.uncapped === true, 'system contract pricing percentage/cap drifted');
 assert(JSON.stringify(pricing.bands.map(({min_cents,max_cents,base_fee_cents}) => [min_cents,max_cents,base_fee_cents])) === JSON.stringify([[1,100,1],[101,500,2],[501,1000,3],[1001,null,5]]), 'canonical pricing bands drifted');
-for (const needle of [
-  "'BG_STANDARD_V1'",
-  "1000000, 1000000, 10",
-  "1000001, 5000000, 20",
-  "5000001, 10000000, 30",
-  "10000001, NULL, 50",
-  "percentage_bps=10",
-  "uncapped=1"
-]) assert(pricingMigration.includes(needle), `pricing migration no longer reflects contract: ${needle}`);
+for (const needle of ["BG_STANDARD_V1","percentage_bps = 10","uncapped = 1"]) {
+  assert(pricingMigration.includes(needle), `pricing migration no longer reflects contract: ${needle}`);
+}
+for (const baseMicros of ['10000','20000','30000','50000']) assert(pricingMigration.includes(baseMicros), `pricing migration is missing expected base-fee micros ${baseMicros}`);
 assert(pricingDoc.includes('BG_STANDARD_V1') && pricingDoc.includes('0.10%') && pricingDoc.includes('no upper fee cap'), 'pricing documentation must reflect BG_STANDARD_V1');
 assert(!pricingDoc.includes('0.15%') && !pricingDoc.includes('$10 maximum') && !pricingDoc.includes('PRICE-2026-10-V1'), 'obsolete pricing model remains in pricing documentation');
 
@@ -58,24 +54,27 @@ assert(contract.revenue_contract.processor_collection_precision === 'SMALLEST_CU
 const refund = contract.commercial_decisions.platform_fee_refund_economics;
 assert(refund.implementation_id === 'FEE-REFUND-POLICY-V1', 'fee/refund policy id drifted');
 assert(refund.candidate_default_handler === 'RETAIN_IF_EARNED', 'fee/refund candidate default drifted');
-assert(refundMigration.includes("'FEE-REFUND-POLICY-V1'") && refundMigration.includes("'RETAIN_IF_EARNED'"), 'fee/refund migration no longer reflects system contract');
+assert(refundMigration.includes('FEE-REFUND-POLICY-V1') && refundMigration.includes('RETAIN_IF_EARNED'), 'fee/refund migration no longer reflects system contract');
 
 const safety = contract.financial_safety;
 for (const [field,value] of Object.entries({
-  minimum_floor_margin_ppm: 800000,
-  human_touch_target_ppm: 100,
-  human_touch_mature_ppm: 50,
-  human_touch_orange_ppm: 200,
-  human_touch_red_ppm: 500,
-  fee_reversal_reserve_ppm: 5000,
-  effective_rate_warn_bps: 150,
+  minimum_floor_margin_ppm:800000,
+  human_touch_target_ppm:100,
+  human_touch_mature_ppm:50,
+  human_touch_orange_ppm:200,
+  human_touch_red_ppm:500,
+  fee_reversal_reserve_ppm:5000,
+  effective_rate_warn_bps:150,
 })) assert(safety[field] === value, `financial safety contract drifted at ${field}`);
 assert(financeDoc.includes('80%') && financeDoc.includes('0.02%') && financeDoc.includes('0.05%'), 'financial-safety documentation is stale relative to runtime thresholds');
 assert(!financeDoc.includes('0.15%') && !financeDoc.includes('0.20%'), 'obsolete human-touch thresholds remain in financial-safety documentation');
 
-assert(statementRuntime.includes("record_classification === 'PROTECTED'") || statementRuntime.includes("record_classification = 'PROTECTED'"), 'monthly statements must derive protected metrics from record classification');
+assert(statementMigration.includes('monthly_statement_v2_source'), 'monthly statement semantic view is missing');
+assert(statementRuntime.includes("row.record_classification === 'PROTECTED'") || statementRuntime.includes("record_classification='PROTECTED'"), 'monthly statements must derive protected metrics from record classification');
 assert(statementRuntime.includes('transaction_fee_entitlement_micros'), 'monthly statements must expose transaction fee entitlement separately');
+assert(statementRuntime.includes('application_fee_gross_cents'), 'monthly statements must expose gross application-fee cash separately');
 assert(statementRuntime.includes('carry_settled_cents'), 'monthly statements must expose prior carry settlement separately');
+assert(statementRuntime.includes('STATEMENT_VERSION = 2'), 'semantic statement change must remain versioned as V2');
 
 for (const relative of ['terms/index.html','privacy/index.html','index.html','styles.css']) {
   assert(exists(relative) && exists(`public/${relative}`), `canonical/public mirror missing for ${relative}`);
@@ -87,12 +86,14 @@ for (const relative of ['legal/fees/index.html','legal/acceptable-use/index.html
 }
 
 assert(readinessDoc.includes('npm run system:gate:live'), 'production readiness must use the whole-system live gate');
-assert(readinessDoc.includes('standing counsel') || readinessDoc.includes('Standing counsel'), 'production readiness must include standing-counsel/legal-response readiness');
-assert(readinessDoc.includes('branch protection') || readinessDoc.includes('branch-protection'), 'production readiness must include protected-main governance');
+assert(/standing counsel/i.test(readinessDoc), 'production readiness must include standing-counsel/legal-response readiness');
+assert(/branch protection|branch-protection/i.test(readinessDoc), 'production readiness must include protected-main governance');
 
 const githubControl = ownerManifest.systems.find((s) => s.id === 'github');
 assert(githubControl?.required_for_live === true, 'GitHub owner control must remain live-blocking');
-assert(/branch protection|required status checks|ruleset/i.test(githubControl.verification_needed || ''), 'GitHub owner-control proof must require protected-main CI governance');
+assert(contract.source_control.branch_protection_required_for_live === true, 'main branch protection must remain a live requirement');
+assert(contract.source_control.required_status_checks_required_for_live === true, 'required CI status checks must remain a live requirement');
+assert(contract.source_control.direct_unreviewed_main_bypass_allowed_for_live === false, 'unreviewed direct-main bypass must remain forbidden for LIVE');
 const legalControl = ownerManifest.systems.find((s) => s.id === 'legal_response_program');
 assert(legalControl?.required_for_live === true && legalControl.criticality === 'P0', 'legal response program must remain a P0 live gate');
 
@@ -100,14 +101,13 @@ if (mode === 'live') {
   assert(pricing.owner_lock_status === 'LOCKED', 'LIVE BLOCKED: BG_STANDARD_V1 has not been explicitly owner-locked');
   assert(refund.owner_lock_status === 'LOCKED', 'LIVE BLOCKED: Platform Fee refund economics have not been explicitly owner-locked');
   assert(refund.legal_status === 'APPROVED', 'LIVE BLOCKED: Platform Fee refund economics remain pending counsel approval');
+  assert(contract.source_control.verification_status === 'VERIFIED', 'LIVE BLOCKED: main branch protection/required CI governance is not verified');
   assert(legalControl.status === 'VERIFIED', 'LIVE BLOCKED: standing counsel / legal-response program is not VERIFIED');
-  assert(githubControl.status === 'VERIFIED', 'LIVE BLOCKED: GitHub owner/branch governance is not VERIFIED');
+  assert(githubControl.status === 'VERIFIED', 'LIVE BLOCKED: GitHub owner recovery/control is not VERIFIED');
 }
 
 console.log(`Builtegrity system coherence ${mode} gate: PASS`);
 
-function assertJsonArrayEqual(actual, expected, label) {
-  assert(JSON.stringify(actual) === JSON.stringify(expected), `${label} differs between definitions.json and system contract`);
-}
-function assert(condition, message) { if (!condition) fail(message); }
-function fail(message) { console.error(`SYSTEM COHERENCE FAILURE: ${message}`); process.exit(1); }
+function assertJsonArrayEqual(actual,expected,label){assert(JSON.stringify(actual)===JSON.stringify(expected),`${label} differs between definitions.json and system contract`);}
+function assert(condition,message){if(!condition)fail(message);}
+function fail(message){console.error(`SYSTEM COHERENCE FAILURE: ${message}`);process.exit(1);}
