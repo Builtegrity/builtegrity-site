@@ -25,7 +25,10 @@ const pricingDoc = read('docs/pricing-engine.md');
 const financeDoc = read('docs/financial-safety.md');
 const engineReadme = read('transaction-engine/README.md');
 const readinessDoc = read('docs/production-readiness-gate.md');
+const deploymentDoc = read('docs/deployment-ownership.md');
+const wranglerExample = read('wrangler.toml.example');
 const ownerManifest = readJson('ops/owner-control-manifest.json');
+const rootCname = exists('CNAME') ? read('CNAME').trim().toLowerCase() : '';
 
 assert(contract.contract_id === 'BUILTEGRITY-SYSTEM-V1', 'canonical system contract id drifted');
 assert(contract.canonical_sources.database_schema.includes('migrations'), 'ordered migrations must remain the canonical schema');
@@ -135,6 +138,24 @@ assert(githubControl?.required_for_live === true, 'GitHub owner control must rem
 assert(contract.source_control.branch_protection_required_for_live === true, 'main branch protection must remain a live requirement');
 assert(contract.source_control.required_status_checks_required_for_live === true, 'required CI status checks must remain a live requirement');
 assert(contract.source_control.direct_unreviewed_main_bypass_allowed_for_live === false, 'unreviewed direct-main bypass must remain forbidden for LIVE');
+
+const deployment = contract.deployment_ownership;
+assert(deployment?.required_for_live === true, 'deployment ownership must remain live-blocking');
+assert(deployment?.production_domain === 'builtegrity.com', 'canonical production domain drifted');
+assert(deployment?.authoritative_live_runtime === 'CLOUDFLARE_WORKER_STATIC_ASSETS', 'Cloudflare Worker/Static Assets must remain the authoritative LIVE runtime');
+assert(deployment?.authoritative_live_assets === 'public/', 'public/ must remain the authoritative LIVE asset directory');
+assert(deployment?.github_pages_must_not_claim_production_domain_for_live === true, 'GitHub Pages production-domain conflict must remain a LIVE blocker');
+assert(deployment?.cloudflare_domain_route_must_be_verified_for_live === true, 'Cloudflare production route verification must remain a LIVE requirement');
+assert(/GitHub Pages is not the production transaction runtime/i.test(deploymentDoc), 'deployment ownership runbook must explicitly reject GitHub Pages as the production runtime');
+assert(/Remove `builtegrity\.com` as the GitHub Pages custom domain/i.test(deploymentDoc), 'deployment ownership runbook must include Pages custom-domain removal');
+assert(/APP_BASE_URL = "https:\/\/builtegrity\.com"/.test(wranglerExample), 'Worker example must target the canonical production domain');
+if (rootCname === deployment.production_domain) {
+  assert(deployment.verification_status === 'PRELAUNCH_GITHUB_PAGES_CONFLICT', 'repository CNAME claims the production domain but deployment ownership is not marked as a pre-launch Pages conflict');
+}
+if (deployment.verification_status === 'VERIFIED') {
+  assert(rootCname !== deployment.production_domain, 'deployment ownership cannot be VERIFIED while repository CNAME still claims the production domain for GitHub Pages');
+}
+
 const legalControl = ownerManifest.systems.find((s) => s.id === 'legal_response_program');
 assert(legalControl?.required_for_live === true && legalControl.criticality === 'P0', 'legal response program must remain a P0 live gate');
 
@@ -143,6 +164,8 @@ if (mode === 'live') {
   assert(refund.owner_lock_status === 'LOCKED', 'LIVE BLOCKED: Platform Fee refund economics have not been explicitly owner-locked');
   assert(refund.legal_status === 'APPROVED', 'LIVE BLOCKED: Platform Fee refund economics remain pending counsel approval');
   assert(contract.source_control.verification_status === 'VERIFIED', 'LIVE BLOCKED: main branch protection/required CI governance is not verified');
+  assert(deployment.verification_status === 'VERIFIED', 'LIVE BLOCKED: production-domain ownership has not been cut over and independently verified');
+  assert(rootCname !== deployment.production_domain, 'LIVE BLOCKED: GitHub Pages repository CNAME still claims the production domain');
   assert(legalControl.status === 'VERIFIED', 'LIVE BLOCKED: standing counsel / legal-response program is not VERIFIED');
   assert(githubControl.status === 'VERIFIED', 'LIVE BLOCKED: GitHub owner recovery/control is not VERIFIED');
 }
