@@ -13,7 +13,7 @@ const exists = (p) => fs.existsSync(path.join(root,p));
 const contract = readJson('ops/system-contract.json');
 const definitions = readJson('transaction-engine/definitions.json');
 const pricingMigration = read('migrations/0045_bg_standard_v1_pricing.sql');
-const carryMigration = read('migrations/0050_protection_invariant_with_carry_and_refunds.sql');
+const protectionMigration = read('migrations/0050_protection_invariant_with_carry_and_refunds.sql');
 const refundMigration = read('migrations/0055_fee_refund_compliance_hardening.sql');
 const statementRuntime = read('worker/src/monthly-statements.js');
 const statementMigration = read('migrations/0060_monthly_statement_semantic_alignment.sql');
@@ -55,7 +55,8 @@ for (const row of [
 assert(pricingDoc.includes('BG_STANDARD_V1') && pricingDoc.includes('0.10%') && pricingDoc.includes('no upper fee cap'), 'pricing documentation must reflect BG_STANDARD_V1');
 assert(!pricingDoc.includes('0.15%') && !pricingDoc.includes('$10 maximum') && !pricingDoc.includes('PRICE-2026-10-V1'), 'obsolete pricing model remains in pricing documentation');
 
-assert(carryMigration.includes('merchant_fee_carry') && carryMigration.includes('pricing_fee_residual_micros'), 'fractional carry implementation missing');
+assert(pricingMigration.includes('merchant_fee_carry') && pricingMigration.includes('pricing_fee_residual_micros'), 'pricing migration must define merchant-scoped fractional carry and residual precision');
+assert(protectionMigration.includes('pricing_carry_reserved_cents') && protectionMigration.includes('application_fee_gross_confirmed_cents') && protectionMigration.includes("record_classification='PROTECTED'"), 'protection migration must include reserved carry in the processor-confirmed PROTECTED invariant');
 assert(contract.revenue_contract.transaction_fee_attribution_precision === 'MICROS', 'transaction fee attribution precision must remain micros');
 assert(contract.revenue_contract.processor_collection_precision === 'SMALLEST_CURRENCY_UNIT', 'processor collection precision must remain smallest currency unit');
 assert(/application-fee refunds are append-only financial adjustments/i.test(definitions.refund_accounting_rule), 'transaction definitions must preserve adjustment-not-rewrite refund accounting');
