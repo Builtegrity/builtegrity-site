@@ -1,6 +1,7 @@
 const SUPPORTED_DENSITY_MODES = new Set(['FLAT', 'BANDS']);
 const SUPPORTED_PRICING_MODELS = new Set(['LEGACY_FLOOR', 'AMOUNT_BANDS']);
 const MICROS_PER_CENT = 10000;
+const CHECKOUT_CARRY_LOCK_MS = 25 * 60 * 60 * 1000;
 
 export function calculateFeeCents(amountCents, rule) {
   const amount = Number(amountCents);
@@ -188,12 +189,22 @@ export async function reserveAvailableFeeCarry(env, transactionId) {
 
 export async function releaseFeeCarryReservation(env, transactionId, reason = 'abandoned checkout') {
   const tx = await env.DB.prepare(`
-    SELECT id, payment_at, pricing_carry_reserved_cents, pricing_carry_settled_cents
+    SELECT id, payment_at, pricing_carry_reserved_cents, pricing_carry_settled_cents,
+           stripe_checkout_session_id, stripe_checkout_session_attached_at
     FROM transactions WHERE id = ?
   `).bind(transactionId).first();
   if (!tx || tx.payment_at || Number(tx.pricing_carry_settled_cents || 0) > 0 || Number(tx.pricing_carry_reserved_cents || 0) <= 0) {
     return { released: false };
   }
+
+  if (tx.stripe_checkout_session_id) {
+    const attachedAt = Date.parse(String(tx.stripe_checkout_session_attached_at || ''));
+    const stillMayBePayable = !Number.isFinite(attachedAt) || Date.now() < attachedAt + CHECKOUT_CARRY_LOCK_MS;
+    if (stillMayBePayable) {
+      return { released: false, reason: 'checkout_session_may_still_be_payable' };
+    }
+  }
+
   await env.DB.prepare(`
     UPDATE transactions
        SET pricing_carry_reserved_cents = 0,
