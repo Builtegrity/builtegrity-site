@@ -1,5 +1,6 @@
 import { resolveInternalCaseForAlert, syncInternalCaseForAlert } from './cases.js';
 import { runResolutionAutopilot } from './autopilot.js';
+import { processAuthorizedPlatformCredits } from './platform-credits.js';
 
 const INTERNAL_RULES = [
   { match: (a) => a.alert_key === 'watchdog:runner-failure', caseType: 'CATASTROPHIC_INCIDENT' },
@@ -13,6 +14,7 @@ const INTERNAL_RULES = [
   { match: (a) => a.alert_key === 'finance:solvency-brake', caseType: 'FINANCIAL_SOLVENCY_RISK' },
   { match: (a) => a.alert_key === 'dependency:clerk-jwks', caseType: 'PLATFORM_PROVIDER_ACTION_REQUIRED' },
   { match: (a) => a.alert_key === 'dependency:public-health-route', caseType: 'PLATFORM_PROVIDER_ACTION_REQUIRED' },
+  { match: (a) => a.alert_key.startsWith('dependency:resend-'), caseType: 'PLATFORM_PROVIDER_ACTION_REQUIRED' },
   { match: (a) => a.alert_key.startsWith('resolution:'), caseType: 'UNKNOWN_EXCEPTION' },
   { match: (a) => a.alert_key.startsWith('workforce:'), caseType: 'UNKNOWN_EXCEPTION' },
 ];
@@ -68,11 +70,16 @@ export async function syncInternalCasesFromWatchdogs(env) {
     }
   }
 
+  // Machine-authorized platform-fault credits are processed before the resolver so any failure
+  // immediately becomes a financial-safety alert in the same watchdog cycle. Stripe requests are
+  // idempotent and arbitrary refunds remain impossible without a narrow authorization record.
+  const platformCredits = await processAuthorizedPlatformCredits(env);
+
   // The resolver runs only after the watchdog and case router have established the source of truth.
   // It can notify the correct party, release abandoned fractional-fee reservations, and dispatch
   // machine-verifiable work to pre-approved variable-labor vendors. It never bypasses the case engine.
   const autopilot = await runResolutionAutopilot(env);
-  return { internal, merchant, system, resolved, autopilot };
+  return { internal, merchant, system, resolved, platform_credits: platformCredits, autopilot };
 }
 
 export function classifyAlert(alert) {
