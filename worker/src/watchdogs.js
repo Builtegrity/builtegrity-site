@@ -42,6 +42,11 @@ const STAGE_REQUIREMENTS = {
   ],
 };
 
+const TRANSACTION_ANOMALY_BATCH = 2000;
+const RESOLUTION_BATCH = 5000;
+const MERCHANT_ANOMALY_BATCH = 2000;
+const STRIPE_PROBE_BATCH = 100;
+
 export async function systemReadiness(env) {
   const stage = watchdogStage(env);
   const missingConfig = requiredConfig(env, stage);
@@ -202,30 +207,36 @@ async function checkConfiguration(env, counters) {
 async function checkWebhookReceipts(env, counters) {
   counters.checks += 1;
   const result = await env.DB.prepare(`
-    SELECT event_id, event_type, status, attempts, updated_at, last_error
-    FROM stripe_webhook_receipts
-    WHERE status = 'FAILED'
-       OR (status = 'PROCESSING' AND datetime(updated_at) < datetime('now', '-15 minutes'))
-    ORDER BY updated_at ASC
-    LIMIT 200
+    SELECT r.event_id, r.event_type, r.status, r.attempts, r.updated_at, r.last_error
+    FROM stripe_webhook_receipts r
+    WHERE (
+      r.status='FAILED'
+      OR (r.status='PROCESSING' AND datetime(r.updated_at)<datetime('now','-15 minutes'))
+    )
+    AND NOT EXISTS (
+      SELECT 1 FROM system_alerts a
+      WHERE a.status='OPEN' AND a.alert_key=CASE
+        WHEN r.status='FAILED' THEN 'webhook:failed:'||r.event_id
+        ELSE 'webhook:stuck:'||r.event_id END
+    )
+    ORDER BY datetime(r.updated_at) ASC
+    LIMIT 500
   `).all();
 
   for (const receipt of result.results || []) {
-    const failedKey = `webhook:failed:${receipt.event_id}`;
-    const stuckKey = `webhook:stuck:${receipt.event_id}`;
     if (receipt.status === 'FAILED') {
       await setAlert(env, {
-        key: failedKey,
+        key: `webhook:failed:${receipt.event_id}`,
         category: 'WEBHOOK',
         severity: 'CRITICAL',
         subjectType: 'STRIPE_EVENT',
         subjectId: receipt.event_id,
         message: `Stripe webhook ${receipt.event_type} failed after ${receipt.attempts} attempt(s): ${receipt.last_error || 'no error text recorded'}`,
       });
-      await resolveAlert(env, stuckKey);
+      await resolveAlert(env, `webhook:stuck:${receipt.event_id}`);
     } else {
       await setAlert(env, {
-        key: stuckKey,
+        key: `webhook:stuck:${receipt.event_id}`,
         category: 'WEBHOOK',
         severity: 'ERROR',
         subjectType: 'STRIPE_EVENT',
@@ -235,187 +246,120 @@ async function checkWebhookReceipts(env, counters) {
     }
   }
 
-  const open = await env.DB.prepare(`
-    SELECT alert_key, subject_id
-    FROM system_alerts
-    WHERE status = 'OPEN' AND category = 'WEBHOOK'
+  const recovered = await env.DB.prepare(`
+    SELECT a.alert_key
+    FROM system_alerts a
+    JOIN stripe_webhook_receipts r ON r.event_id=a.subject_id
+    WHERE a.status='OPEN' AND a.category='WEBHOOK' AND (
+      (a.alert_key LIKE 'webhook:failed:%' AND r.status='PROCESSED')
+      OR (a.alert_key LIKE 'webhook:stuck:%' AND r.status<>'PROCESSING')
+    )
+    ORDER BY a.last_seen_at ASC
+    LIMIT 2000
   `).all();
-  for (const alert of open.results || []) {
-    const receipt = await env.DB.prepare(`SELECT status FROM stripe_webhook_receipts WHERE event_id = ?`).bind(alert.subject_id).first();
-    if (receipt?.status === 'PROCESSED') await resolveAlert(env, alert.alert_key);
-  }
+  for (const alert of recovered.results || []) await resolveAlert(env, alert.alert_key);
 }
 
 async function checkTransactionState(env, counters) {
   counters.checks += 1;
+
   const result = await env.DB.prepare(`
-    SELECT t.*, m.automatic_payouts_required
-    FROM transactions t
-    JOIN merchants m ON m.id = t.merchant_id
-    ORDER BY t.created_at DESC
-    LIMIT 500
-  `).all();
+    SELECT v.*
+    FROM watchdog_transaction_anomalies v
+    WHERE NOT EXISTS (
+      SELECT 1 FROM system_alerts a
+      WHERE a.alert_key=v.alert_key AND a.status='OPEN'
+    )
+    ORDER BY CASE v.severity WHEN 'CRITICAL' THEN 1 WHEN 'ERROR' THEN 2 WHEN 'WARN' THEN 3 ELSE 4 END,
+             datetime(v.due_at) ASC,
+             v.subject_id ASC
+    LIMIT ?
+  `).bind(TRANSACTION_ANOMALY_BATCH).all();
 
-  for (const tx of result.results || []) {
-    let current = tx;
-
-    if (current.integrity_status === 'ACCOUNTED' || current.lifecycle_status === 'COMPLETE') {
-      const before = `${current.integrity_status}:${current.exception_status}`;
-      await recomputeIntegrity(env, current.id);
-      current = await env.DB.prepare(`SELECT * FROM transactions WHERE id = ?`).bind(current.id).first();
-      const after = `${current.integrity_status}:${current.exception_status}`;
-      if (before !== after) counters.repairs += 1;
-    }
-
-    const stalePaymentKey = `tx:stale-payment-pending:${current.id}`;
-    const stalePaymentPending = current.lifecycle_status === 'PAYMENT_PENDING' &&
-      String(current.payment_status || '').toLowerCase() !== 'succeeded' &&
-      hoursAgo(current.updated_at || current.created_at) >= 24;
-    if (stalePaymentPending) {
-      await setAlert(env, {
-        key: stalePaymentKey,
-        category: 'TRANSACTION',
-        severity: 'WARN',
-        subjectType: 'TRANSACTION',
-        subjectId: current.id,
-        message: `${current.id} has remained PAYMENT_PENDING for more than 24 hours.`,
-      });
-    } else {
-      await resolveAlert(env, stalePaymentKey);
-    }
-
-    const completeKey = `tx:complete-not-accounted:${current.id}`;
-    if (current.lifecycle_status === 'COMPLETE' && current.exception_status === 'NONE' && current.integrity_status !== 'ACCOUNTED') {
-      await setAlert(env, {
-        key: completeKey,
-        category: 'TRANSACTION',
-        severity: 'CRITICAL',
-        subjectType: 'TRANSACTION',
-        subjectId: current.id,
-        message: `${current.id} is COMPLETE with no open exception but is not ACCOUNTED.`,
-      });
-    } else {
-      await resolveAlert(env, completeKey);
-    }
-
-    const missingProcessorKey = `tx:missing-processor-records:${current.id}`;
-    const paidLongEnough = current.payment_at && hoursAgo(current.payment_at) >= 1;
-    const missingProcessorRecords = String(current.payment_status || '').toLowerCase() === 'succeeded' &&
-      paidLongEnough &&
-      (!current.stripe_payment_intent_id || !current.stripe_charge_id || !current.stripe_balance_transaction_id);
-    if (missingProcessorRecords) {
-      await setAlert(env, {
-        key: missingProcessorKey,
-        category: 'TRANSACTION',
-        severity: 'CRITICAL',
-        subjectType: 'TRANSACTION',
-        subjectId: current.id,
-        message: `${current.id} is marked paid but required Stripe processor records are still incomplete after one hour.`,
-      });
-    } else {
-      await resolveAlert(env, missingProcessorKey);
-    }
-
-    const feeKey = `tx:fee-shortfall:${current.id}`;
-    const feeShortfall = String(current.payment_status || '').toLowerCase() === 'succeeded' &&
-      paidLongEnough &&
-      current.fee_collection_method === 'STRIPE_APPLICATION_FEE' &&
-      Number(current.integrity_fee_earned_cents || 0) > Number(current.integrity_fee_collected_cents || 0);
-    if (feeShortfall) {
-      const existed = await hasOpenException(env, current.id, 'UNEXPECTED_FEE');
-      await openException(env, current.id, 'UNEXPECTED_FEE', 'Expected Builtegrity application fee has not been fully recorded after payment success.');
-      if (!existed) counters.repairs += 1;
-      await setAlert(env, {
-        key: feeKey,
-        category: 'ECONOMICS',
-        severity: 'ERROR',
-        subjectType: 'TRANSACTION',
-        subjectId: current.id,
-        message: `${current.id} has an integrity-fee shortfall after successful payment.`,
-      });
-    } else {
-      const existed = await hasOpenException(env, current.id, 'UNEXPECTED_FEE');
-      const feeSatisfied = current.fee_collection_method !== 'STRIPE_APPLICATION_FEE' ||
-        Number(current.integrity_fee_collected_cents || 0) >= Number(current.integrity_fee_earned_cents || 0);
-      if (existed && feeSatisfied) {
-        await resolveException(env, current.id, 'UNEXPECTED_FEE', 'Watchdog confirmed the expected integrity fee is now fully recorded.');
-        counters.repairs += 1;
+  for (const anomaly of result.results || []) {
+    if (anomaly.anomaly_code === 'COMPLETE_NOT_ACCOUNTED') {
+      const before = await env.DB.prepare(`SELECT integrity_status,exception_status FROM transactions WHERE id=?`).bind(anomaly.subject_id).first();
+      await recomputeIntegrity(env, anomaly.subject_id);
+      const stillBroken = await env.DB.prepare(`
+        SELECT 1 AS present FROM watchdog_transaction_anomalies
+        WHERE alert_key=? LIMIT 1
+      `).bind(anomaly.alert_key).first();
+      if (!stillBroken) {
+        const after = await env.DB.prepare(`SELECT integrity_status,exception_status FROM transactions WHERE id=?`).bind(anomaly.subject_id).first();
+        if (`${before?.integrity_status}:${before?.exception_status}` !== `${after?.integrity_status}:${after?.exception_status}`) counters.repairs += 1;
+        await resolveAlert(env, anomaly.alert_key);
+        continue;
       }
-      await resolveAlert(env, feeKey);
     }
 
-    const payoutFailedKey = `tx:payout-failed:${current.id}`;
-    if (String(current.processor_payout_status || '').toLowerCase() === 'failed') {
-      const existed = await hasOpenException(env, current.id, 'PAYOUT_FAILED');
-      await openException(env, current.id, 'PAYOUT_FAILED', 'Processor payout is marked failed; watchdog ensured the transaction exception exists.');
+    if (anomaly.exception_type) {
+      const existed = await hasOpenException(env, anomaly.subject_id, anomaly.exception_type);
+      await openException(env, anomaly.subject_id, anomaly.exception_type, anomaly.exception_summary || anomaly.message);
       if (!existed) counters.repairs += 1;
-      await setAlert(env, {
-        key: payoutFailedKey,
-        category: 'PAYOUT',
-        severity: 'CRITICAL',
-        subjectType: 'TRANSACTION',
-        subjectId: current.id,
-        message: `${current.id} is attached to a failed processor payout.`,
-      });
-    } else {
-      await resolveAlert(env, payoutFailedKey);
     }
 
-    const payoutOverdueKey = `tx:payout-overdue:${current.id}`;
-    const payoutPaid = String(current.processor_payout_status || '').toLowerCase() === 'paid';
-    const expectedOverdue = current.expected_payout_arrival && !payoutPaid && hoursAgo(current.expected_payout_arrival) >= 12;
-    const noPayoutAfterThreeDays = !payoutPaid && !current.stripe_payout_id && Number(current.automatic_payouts_required) === 1 &&
-      current.payment_at && hoursAgo(current.payment_at) >= 72;
+    await setAlert(env, {
+      key: anomaly.alert_key,
+      category: anomaly.category,
+      severity: anomaly.severity,
+      subjectType: anomaly.subject_type,
+      subjectId: anomaly.subject_id,
+      message: anomaly.message,
+    });
+  }
 
-    if (expectedOverdue || noPayoutAfterThreeDays) {
-      const existed = await hasOpenException(env, current.id, 'EXPECTED_PAYOUT_NOT_FOUND');
-      await openException(env, current.id, 'EXPECTED_PAYOUT_NOT_FOUND', 'Expected automatic payout has not been reconciled within the watchdog tolerance window.');
-      if (!existed) counters.repairs += 1;
-      await setAlert(env, {
-        key: payoutOverdueKey,
-        category: 'PAYOUT',
-        severity: 'ERROR',
-        subjectType: 'TRANSACTION',
-        subjectId: current.id,
-        message: `${current.id} has not reconciled to the expected automatic payout on time.`,
-      });
-    } else {
-      if (payoutPaid) {
-        const existed = await hasOpenException(env, current.id, 'EXPECTED_PAYOUT_NOT_FOUND');
-        if (existed) {
-          await resolveException(env, current.id, 'EXPECTED_PAYOUT_NOT_FOUND', 'Watchdog observed the payout as paid and cleared the overdue-payout exception.');
-          counters.repairs += 1;
-        }
-      }
-      await resolveAlert(env, payoutOverdueKey);
+  const recovered = await env.DB.prepare(`
+    SELECT a.alert_key, a.subject_id
+    FROM system_alerts a
+    WHERE a.status='OPEN' AND a.alert_key LIKE 'tx:%'
+      AND NOT EXISTS (
+        SELECT 1 FROM watchdog_transaction_anomalies v WHERE v.alert_key=a.alert_key
+      )
+    ORDER BY a.last_seen_at ASC
+    LIMIT ?
+  `).bind(RESOLUTION_BATCH).all();
+
+  for (const alert of recovered.results || []) {
+    const exceptionType = exceptionTypeForTransactionAlert(alert.alert_key);
+    if (exceptionType && await hasOpenException(env, alert.subject_id, exceptionType)) {
+      await resolveException(env, alert.subject_id, exceptionType, 'Watchdog confirmed the originating transaction condition is no longer present.');
+      counters.repairs += 1;
     }
+    await resolveAlert(env, alert.alert_key);
   }
 }
 
 async function checkMerchantState(env, counters) {
   counters.checks += 1;
-  const result = await env.DB.prepare(`
-    SELECT id, status, processor, processor_account_id
-    FROM merchants
-    WHERE status = 'ACTIVE'
-    LIMIT 500
-  `).all();
+  const anomalies = await env.DB.prepare(`
+    SELECT v.* FROM watchdog_merchant_anomalies v
+    WHERE NOT EXISTS (
+      SELECT 1 FROM system_alerts a WHERE a.alert_key=v.alert_key AND a.status='OPEN'
+    )
+    ORDER BY v.subject_id
+    LIMIT ?
+  `).bind(MERCHANT_ANOMALY_BATCH).all();
 
-  for (const merchant of result.results || []) {
-    const key = `merchant:processor-account:${merchant.id}`;
-    if (merchant.processor === 'STRIPE' && !merchant.processor_account_id) {
-      await setAlert(env, {
-        key,
-        category: 'MERCHANT',
-        severity: 'CRITICAL',
-        subjectType: 'MERCHANT',
-        subjectId: merchant.id,
-        message: `${merchant.id} is ACTIVE but has no Stripe connected account ID.`,
-      });
-    } else {
-      await resolveAlert(env, key);
-    }
+  for (const anomaly of anomalies.results || []) {
+    await setAlert(env, {
+      key: anomaly.alert_key,
+      category: anomaly.category,
+      severity: anomaly.severity,
+      subjectType: anomaly.subject_type,
+      subjectId: anomaly.subject_id,
+      message: anomaly.message,
+    });
   }
+
+  const recovered = await env.DB.prepare(`
+    SELECT a.alert_key
+    FROM system_alerts a
+    WHERE a.status='OPEN' AND a.alert_key LIKE 'merchant:processor-account:%'
+      AND NOT EXISTS (SELECT 1 FROM watchdog_merchant_anomalies v WHERE v.alert_key=a.alert_key)
+    ORDER BY a.last_seen_at ASC
+    LIMIT ?
+  `).bind(RESOLUTION_BATCH).all();
+  for (const alert of recovered.results || []) await resolveAlert(env, alert.alert_key);
 }
 
 async function checkExternalDependencies(env, counters) {
@@ -460,15 +404,17 @@ async function checkExternalDependencies(env, counters) {
   }
 
   if (env.STRIPE_SECRET_KEY) {
-    const merchants = await env.DB.prepare(`
-      SELECT id, processor_account_id
-      FROM merchants
-      WHERE status = 'ACTIVE' AND processor = 'STRIPE' AND processor_account_id IS NOT NULL
-      ORDER BY id
-      LIMIT 100
-    `).all();
+    const cursorRow = await env.DB.prepare(`SELECT cursor_value FROM watchdog_cursors WHERE cursor_name='STRIPE_ACCOUNT_PROBE'`).first();
+    let cursor = String(cursorRow?.cursor_value || '');
+    let merchants = await activeStripeMerchantBatch(env, cursor);
+    if ((merchants.results || []).length === 0 && cursor) {
+      cursor = '';
+      merchants = await activeStripeMerchantBatch(env, cursor);
+    }
 
+    let lastId = null;
     for (const merchant of merchants.results || []) {
+      lastId = merchant.id;
       const key = `dependency:stripe-account:${merchant.id}`;
       try {
         const account = await retrieveConnectedAccount(env, merchant.processor_account_id);
@@ -488,7 +434,33 @@ async function checkExternalDependencies(env, counters) {
         });
       }
     }
+
+    if (lastId) {
+      await env.DB.prepare(`
+        INSERT INTO watchdog_cursors(cursor_name,cursor_value,updated_at)
+        VALUES ('STRIPE_ACCOUNT_PROBE',?,CURRENT_TIMESTAMP)
+        ON CONFLICT(cursor_name) DO UPDATE SET cursor_value=excluded.cursor_value,updated_at=CURRENT_TIMESTAMP
+      `).bind(lastId).run();
+    }
   }
+}
+
+async function activeStripeMerchantBatch(env, cursor) {
+  return env.DB.prepare(`
+    SELECT id, processor_account_id
+    FROM merchants
+    WHERE status='ACTIVE' AND processor='STRIPE' AND processor_account_id IS NOT NULL
+      AND id>?
+    ORDER BY id
+    LIMIT ?
+  `).bind(cursor || '', STRIPE_PROBE_BATCH).all();
+}
+
+function exceptionTypeForTransactionAlert(alertKey) {
+  if (String(alertKey).startsWith('tx:fee-shortfall:')) return 'UNEXPECTED_FEE';
+  if (String(alertKey).startsWith('tx:payout-failed:')) return 'PAYOUT_FAILED';
+  if (String(alertKey).startsWith('tx:payout-overdue:')) return 'EXPECTED_PAYOUT_NOT_FOUND';
+  return null;
 }
 
 async function hasOpenException(env, transactionId, exceptionType) {
