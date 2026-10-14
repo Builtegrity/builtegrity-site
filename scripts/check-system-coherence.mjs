@@ -44,10 +44,14 @@ const pricing = contract.commercial_decisions.pricing;
 assert(pricing.implementation_id === 'BG_STANDARD_V1', 'pricing implementation id drifted');
 assert(pricing.percentage_bps === 10 && pricing.uncapped === true, 'system contract pricing percentage/cap drifted');
 assert(JSON.stringify(pricing.bands.map(({min_cents,max_cents,base_fee_cents}) => [min_cents,max_cents,base_fee_cents])) === JSON.stringify([[1,100,1],[101,500,2],[501,1000,3],[1001,null,5]]), 'canonical pricing bands drifted');
-for (const needle of ['BG_STANDARD_V1','percentage_bps = 10','uncapped = 1']) {
-  assert(pricingMigration.includes(needle), `pricing migration no longer reflects contract: ${needle}`);
-}
-for (const baseMicros of ['10000','20000','30000','50000']) assert(pricingMigration.includes(baseMicros), `pricing migration is missing expected base-fee micros ${baseMicros}`);
+assert(/'BG_STANDARD_V1'\s*,\s*'ACTIVE'\s*,\s*'USD'\s*,\s*10\s*,\s*0\s*,\s*9007199254740991/i.test(pricingMigration), 'pricing migration V1 row no longer reflects 10 bps uncapped candidate');
+assert(/'AMOUNT_BANDS'\s*,\s*1\s*\)/i.test(pricingMigration), 'pricing migration no longer marks BG_STANDARD_V1 amount-band model as uncapped');
+for (const row of [
+  "('BGV1-BAND-001','BG_STANDARD_V1',1,100,1)",
+  "('BGV1-BAND-002','BG_STANDARD_V1',101,500,2)",
+  "('BGV1-BAND-003','BG_STANDARD_V1',501,1000,3)",
+  "('BGV1-BAND-004','BG_STANDARD_V1',1001,NULL,5)",
+]) assert(pricingMigration.includes(row), `pricing migration is missing canonical band ${row}`);
 assert(pricingDoc.includes('BG_STANDARD_V1') && pricingDoc.includes('0.10%') && pricingDoc.includes('no upper fee cap'), 'pricing documentation must reflect BG_STANDARD_V1');
 assert(!pricingDoc.includes('0.15%') && !pricingDoc.includes('$10 maximum') && !pricingDoc.includes('PRICE-2026-10-V1'), 'obsolete pricing model remains in pricing documentation');
 
