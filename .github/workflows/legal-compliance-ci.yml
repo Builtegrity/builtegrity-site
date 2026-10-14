@@ -22,6 +22,9 @@ jobs:
           node --check worker/src/records.js
           node --check worker/src/stripe.js
 
+      - name: Verify launch assurance and Stripe environment boundaries
+        run: node --test tests/launch-assurance.test.mjs
+
       - name: Build complete D1 schema
         run: |
           rm -f /tmp/builtegrity-legal.db
