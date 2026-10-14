@@ -8,23 +8,34 @@ Builtegrity does not process card data itself. Stripe remains the processor. The
 
 ## Read this first — ownership foundation
 
-Before changing architecture, deploying live money, or adding a new provider, read `docs/owner-independence-and-disaster-recovery.md`.
+Before changing architecture, deploying live money, or adding a new provider, read `docs/owner-independence-and-disaster-recovery.md` and `ops/system-contract.json`.
 
 Builtegrity's foundational rule is that the company must remain operable, diagnosable, recoverable, migratable, pausable, and terminable by its owner even if ChatGPT/Atlas, Work, a contractor, an employee, or any single vendor disappears.
 
-The machine-readable control inventory is `ops/owner-control-manifest.json`. The live owner-control gate is `npm run owner:gate:live`. It must pass before `TX-LIVE-0001`.
+The machine-readable owner-control inventory is `ops/owner-control-manifest.json`. The cross-system contract is `ops/system-contract.json`.
 
-## Locked V1 stack
+Before LIVE:
+
+- `npm run system:gate:live` must pass;
+- `npm run owner:gate:live` must pass;
+- the runtime/D1 production-readiness controls must independently allow LIVE;
+- all applicable legal, processor, security, tax, financial, provider, and owner-control evidence must be current.
+
+A technically working deployment is not permission to process live money.
+
+## V1 stack
 
 - GitHub — canonical source for code, migrations, CI, technical docs, and infrastructure configuration.
-- Cloudflare Workers + Static Assets — frontend/site hosting, API runtime, Stripe webhooks, and transaction processing logic. Pages is not a separate dependency.
+- Cloudflare Workers + Static Assets — production application frontend/site hosting, API runtime, Stripe webhooks, and transaction processing logic.
 - Cloudflare D1 — operational relational database for partners, merchants, users/relationships, customers, purchases, transactions, events, exceptions, processor references, and watchdog state.
 - Cloudflare R2 — private durable transaction PDFs and immutable monthly statement artifacts.
 - Stripe Connect — Processor Adapter #1, merchant connection, Checkout/direct-charge flow, application fees, processor financial records, and payout data.
 - Clerk — primary application identity/session layer for owner/staff and future merchant users. Builtegrity retains authorization/tenant relationships in its own database.
-- Resend — transactional email delivery such as payment confirmations, exception alerts, monthly statements, and merchant notifications.
+- Resend — transactional email delivery such as payment confirmations, exception alerts, monthly statements, and merchant notifications; separately, the planned legal receiving route uses verified inbound email handling.
 - Cloudflare Turnstile — abuse/bot protection on appropriate public entry points.
 - Google Drive/Sheets — company strategy, planning, economics, pilot pipeline, compliance planning, and human-readable specifications only; never the live transaction system.
+
+GitHub Pages may publish compatibility/legal mirror files from the repository, but it is not the production transaction runtime. Production application behavior lives in the Worker/Static Assets path.
 
 Optional/future adapters such as Cloudflare Access, Queues, Square, and partner APIs may be added without changing the core transaction model.
 
@@ -36,17 +47,67 @@ Optional/future adapters such as Cloudflare Access, Queues, Square, and partner 
 
 Identity is intentionally separate from tenancy. Clerk proves who a user is; Builtegrity decides which merchant(s), roles, and records that identity may access.
 
-## V1 lifecycle
+## Transaction state model: three separate axes
+
+Never collapse these into one status.
+
+### Lifecycle
 
 `CREATED -> CONSENTED -> PAYMENT_PENDING -> PAID -> PAYOUT_PENDING -> COMPLETE`
 
-Current integrity state is separate:
+Lifecycle answers: **where is the transaction operationally?**
+
+### Integrity
 
 - `INCOMPLETE`
 - `ACCOUNTED`
 - `NEEDS_ATTENTION`
 
-`ACCOUNTED` is intentionally narrower than “protected.” It means the required transaction context, consent, processor records, economics, and automatic-payout trail have been captured with no unresolved exception. It is not fraud protection, chargeback insurance, a legal-enforceability guarantee, or independent verification of bank receipt.
+Integrity answers: **is the transaction sufficiently reconciled/accounted for under the integrity model?**
+
+`ACCOUNTED` is not fraud protection, chargeback insurance, a legal-enforceability guarantee, or independent verification of bank receipt.
+
+### Record / revenue classification
+
+- `PENDING_PROTECTED`
+- `PROTECTED`
+- `OBSERVED`
+- `IMPORTED`
+- `FEE_EXCEPTION`
+
+Merchant-facing source classes are `PROTECTED`, `OBSERVED`, and `IMPORTED`.
+
+`PROTECTED` is a record/revenue classification. It requires the controlled Builtegrity route, successful payment history, and processor-confirmed Builtegrity application-fee evidence satisfying the locked fee invariant.
+
+`ACCOUNTED` and `PROTECTED` are therefore different axes. A record can be accounted/reconciled without being PROTECTED.
+
+Only `PROTECTED` transactions can create Builtegrity transaction-fee revenue. `OBSERVED` and `IMPORTED` records can be documented/reconciled but do not create the protected transaction fee.
+
+## Pricing, carry, and fee semantics
+
+The implemented pre-launch candidate is `BG_STANDARD_V1`, but implementation does not equal owner approval or legal approval. `ops/system-contract.json` records those states separately.
+
+Exact fee entitlement is represented in micros. Stripe application-fee collection occurs in whole smallest-currency units. A sub-cent residual may enter the merchant/currency carry ledger and later be collected on another successful protected payment.
+
+Keep these different economic facts separate:
+
+- exact fee entitlement attributable to the current transaction;
+- gross application-fee cash attached to the current payment;
+- current retained fee cash after later fee refunds/credits;
+- residual generated by the current transaction;
+- prior carry settled on the current payment.
+
+Prior carry settled later is collection of prior entitlement, not new fee entitlement earned by the later transaction.
+
+## Database migration lineage
+
+The authoritative schema is the ordered set of `migrations/*.sql` files.
+
+Historical D1 migrations through `0060` are frozen against the system baseline. They must never be renamed, deleted, or edited after the fact. Corrections are made with a new migration.
+
+Two legacy duplicate numeric prefixes (`0038` and `0053`) are grandfathered by exact filename. Future migration version numbers must be unique and contiguous.
+
+Run `npm run db:lineage` to verify migration history. `npm run system:coherence` includes that check.
 
 ## Runtime
 
@@ -105,8 +166,9 @@ It starts at `CREATED / INCOMPLETE` and can be exercised through the development
 - `/api/watchdogs/run` — authenticated manual deep watchdog run
 - `/api/webhooks/stripe` — signed Stripe webhook endpoint
 - `/api/records/resend-statement-webhook` — signed Resend monthly-statement delivery event endpoint
-- `migrations/` — D1 migrations
+- `migrations/` — immutable/additive D1 migration lineage
 - `transaction-engine/seed-tx-0001.sql` — fake proving transaction
+- `ops/system-contract.json` — cross-system architecture/commercial/release contract
 - `ops/owner-control-manifest.json` — owner-control/recovery verification state
 - `docs/owner-independence-and-disaster-recovery.md` — cornerstone ownership/recovery policy
 - `docs/transaction-engine-runbook.md` — setup and operating runbook
@@ -117,4 +179,4 @@ It starts at `CREATED / INCOMPLETE` and can be exercised through the development
 
 ## Status
 
-The engine is still pre-production. No live merchant payment should move through it until the Production Readiness Gate is satisfied, `npm run owner:gate:live` passes, and the exact Stripe account/platform configuration is confirmed in test mode first.
+The engine is still pre-production. No live merchant payment should move through it until the Production Readiness Gate is satisfied, `npm run system:gate:live` passes, and the exact Stripe account/platform configuration is confirmed in test mode first.
