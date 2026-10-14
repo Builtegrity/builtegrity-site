@@ -1,5 +1,9 @@
 import { assertMerchantLegalReadyForLiveAction } from './legal-enforcement.js';
 import { reserveAvailableFeeCarry } from './pricing.js';
+import {
+  assertTransactionFeeRefundRuleLocked,
+  lockTransactionFeeRefundRule,
+} from './fee-refund-compliance.js';
 
 function requireSecret(env, name) {
   const value = env[name];
@@ -51,30 +55,30 @@ export async function stripeRequest(env, path, options = {}) {
 }
 
 export async function createTrackedCheckout(env, tx) {
-  // Final fail-closed gates immediately before a live processor object can be created.
-  // Keeping them in the Stripe adapter prevents a future caller from bypassing compliance
-  // by invoking Checkout through a different HTTP route.
   await assertMerchantLegalReadyForLiveAction(env, tx.merchant_id, 'Stripe Checkout creation');
   await assertCustomerStateReady(env, tx.customer_attested_state_code);
 
-  if (!tx.processor_account_id || !String(tx.processor_account_id).startsWith('acct_')) {
-    throw new Error(`Merchant ${tx.merchant_id} does not have a usable Stripe connected account`);
+  // Lock the exact approved merchant acceptance + merchant/customer jurisdiction refund rule
+  // immediately before creating the processor object. No alternate caller can bypass this gate.
+  const complianceLocked = await lockTransactionFeeRefundRule(env, tx.id);
+  assertTransactionFeeRefundRuleLocked(complianceLocked);
+
+  if (!complianceLocked.processor_account_id || !String(complianceLocked.processor_account_id).startsWith('acct_')) {
+    throw new Error(`Merchant ${complianceLocked.merchant_id} does not have a usable Stripe connected account`);
   }
-  if (Number(tx.consent_accepted) !== 1) {
+  if (Number(complianceLocked.consent_accepted) !== 1) {
     throw new Error('Customer consent must be recorded before Stripe Checkout is created');
   }
-  if (!tx.payment_access_token) {
-    throw new Error(`Transaction ${tx.id} does not have a customer payment access token`);
+  if (!complianceLocked.payment_access_token) {
+    throw new Error(`Transaction ${complianceLocked.id} does not have a customer payment access token`);
   }
-  if (String(tx.currency || 'USD').toUpperCase() !== 'USD') {
+  if (String(complianceLocked.currency || 'USD').toUpperCase() !== 'USD') {
     throw new Error('Builtegrity V1 supports USD checkout only');
   }
 
-  // Settle only whole cents that were already earned as fractional carry by prior successful
-  // protected payments. Reservation is atomic in D1 and is released automatically by the
-  // resolution autopilot if the checkout is abandoned for more than 24 hours.
-  const reserved = await reserveAvailableFeeCarry(env, tx.id);
-  const effectiveTx = { ...tx, ...(reserved || {}) };
+  const reserved = await reserveAvailableFeeCarry(env, complianceLocked.id);
+  const effectiveTx = { ...complianceLocked, ...(reserved || {}) };
+  assertTransactionFeeRefundRuleLocked(effectiveTx);
   const currentTransactionFeeCents = Number(effectiveTx.integrity_fee_earned_cents || 0);
   const priorEarnedCarryCents = Number(effectiveTx.pricing_carry_reserved_cents || 0);
   const applicationFeeCents = currentTransactionFeeCents + priorEarnedCarryCents;
@@ -86,8 +90,6 @@ export async function createTrackedCheckout(env, tx) {
   const publicToken = encodeURIComponent(effectiveTx.payment_access_token);
   const form = {
     mode: 'payment',
-    // V1 deliberately permits cards only. Enabling bank debits, wallets, BNPL or other methods
-    // requires a separate legal/operational review before changing this allowlist.
     'payment_method_types[0]': 'card',
     billing_address_collection: 'required',
     success_url: `${baseUrl}/pay/success/?token=${publicToken}`,
@@ -97,11 +99,15 @@ export async function createTrackedCheckout(env, tx) {
     'metadata[builtegrity_tx_id]': effectiveTx.id,
     'metadata[builtegrity_purchase_id]': effectiveTx.purchase_id,
     'metadata[builtegrity_pricing_version]': effectiveTx.pricing_version_id || '',
+    'metadata[builtegrity_fee_refund_policy]': effectiveTx.fee_refund_policy_version_id || '',
+    'metadata[builtegrity_fee_refund_handler]': effectiveTx.fee_refund_handler_code || '',
     'metadata[builtegrity_fee_current_cents]': currentTransactionFeeCents,
     'metadata[builtegrity_fee_carry_cents]': priorEarnedCarryCents,
     'payment_intent_data[metadata][builtegrity_tx_id]': effectiveTx.id,
     'payment_intent_data[metadata][builtegrity_purchase_id]': effectiveTx.purchase_id,
     'payment_intent_data[metadata][builtegrity_pricing_version]': effectiveTx.pricing_version_id || '',
+    'payment_intent_data[metadata][builtegrity_fee_refund_policy]': effectiveTx.fee_refund_policy_version_id || '',
+    'payment_intent_data[metadata][builtegrity_fee_refund_handler]': effectiveTx.fee_refund_handler_code || '',
     'payment_intent_data[metadata][builtegrity_fee_current_cents]': currentTransactionFeeCents,
     'payment_intent_data[metadata][builtegrity_fee_carry_cents]': priorEarnedCarryCents,
     'line_items[0][quantity]': 1,
@@ -110,10 +116,7 @@ export async function createTrackedCheckout(env, tx) {
     'line_items[0][price_data][product_data][name]': effectiveTx.description,
   };
 
-  if (
-    effectiveTx.fee_collection_method === 'STRIPE_APPLICATION_FEE' &&
-    applicationFeeCents > 0
-  ) {
+  if (effectiveTx.fee_collection_method === 'STRIPE_APPLICATION_FEE' && applicationFeeCents > 0) {
     form['payment_intent_data[application_fee_amount]'] = applicationFeeCents;
   }
 
@@ -130,17 +133,24 @@ async function assertCustomerStateReady(env, value) {
   const pack = await env.DB.prepare(`
     SELECT customer_transaction_status,privacy_review_status,breach_review_status,
            electronic_transactions_review_status,consumer_protection_review_status,
+           platform_fee_refund_review_status,platform_fee_refund_handler_code,
+           platform_fee_refund_reference,platform_fee_refund_reviewed_at,platform_fee_refund_next_review_due_at,
            counsel_reference,reviewed_at,next_review_due_at
       FROM state_jurisdiction_support WHERE state_code=?
   `).bind(state).first();
   const current = pack && (!pack.next_review_due_at || Date.parse(pack.next_review_due_at) > Date.now());
+  const feeRuleCurrent = pack && (!pack.platform_fee_refund_next_review_due_at || Date.parse(pack.platform_fee_refund_next_review_due_at) > Date.now());
   const ready = pack && pack.customer_transaction_status === 'READY'
     && pack.privacy_review_status === 'CLEARED'
     && pack.breach_review_status === 'CLEARED'
     && pack.electronic_transactions_review_status === 'CLEARED'
     && pack.consumer_protection_review_status === 'CLEARED'
-    && pack.counsel_reference && pack.reviewed_at && current;
-  if (!ready) throw complianceError(`Builtegrity is not legally cleared for customer transactions in ${state}`);
+    && pack.platform_fee_refund_review_status === 'READY'
+    && pack.platform_fee_refund_handler_code
+    && pack.platform_fee_refund_reference
+    && pack.platform_fee_refund_reviewed_at
+    && pack.counsel_reference && pack.reviewed_at && current && feeRuleCurrent;
+  if (!ready) throw complianceError(`Builtegrity is not legally cleared for customer transactions and Platform Fee treatment in ${state}`);
 }
 
 function complianceError(message) {
@@ -182,26 +192,16 @@ export async function listPayoutBalanceTransactions(env, accountId, payoutId) {
 
 export async function verifyStripeSignature(rawBody, signatureHeader, endpointSecret, toleranceSeconds = 300) {
   if (!signatureHeader || !endpointSecret) return false;
-
   const parts = signatureHeader.split(',').map((part) => part.trim());
   const timestamp = parts.find((part) => part.startsWith('t='))?.slice(2);
   const signatures = parts.filter((part) => part.startsWith('v1=')).map((part) => part.slice(3));
   if (!timestamp || signatures.length === 0) return false;
-
   const age = Math.abs(Math.floor(Date.now() / 1000) - Number(timestamp));
   if (!Number.isFinite(age) || age > toleranceSeconds) return false;
-
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(endpointSecret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign'],
-  );
+  const key = await crypto.subtle.importKey('raw',new TextEncoder().encode(endpointSecret),{ name: 'HMAC', hash: 'SHA-256' },false,['sign']);
   const signed = `${timestamp}.${rawBody}`;
   const digest = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(signed));
   const expected = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
-
   return signatures.some((candidate) => timingSafeEqual(expected, candidate));
 }
 
