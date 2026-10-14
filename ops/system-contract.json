@@ -1,0 +1,90 @@
+{
+  "schema_version": "1.0",
+  "contract_id": "BUILTEGRITY-SYSTEM-V1",
+  "release_target": "TX-LIVE-0001",
+  "release_rule": "Live money requires system coherence, owner independence, production runtime readiness, commercial owner locks, and applicable legal/compliance approvals. A technically working deployment is not permission to process live money.",
+  "product_role": {
+    "processor": "STRIPE",
+    "builtegrity_is_processor": false,
+    "builtegrity_custodies_customer_or_merchant_funds": false,
+    "merchant_is_seller_and_merchant_of_record": true,
+    "v1_charge_model": "STRIPE_DIRECT_CHARGE_ON_CONNECTED_ACCOUNT",
+    "v1_scope": ["US_MERCHANT", "US_CUSTOMER_TRANSACTION", "USD", "ONE_TIME_PAYMENT", "AUTOMATIC_PAYOUTS"]
+  },
+  "data_hierarchy": ["PARTNER", "MERCHANT", "CUSTOMER", "PURCHASE", "TRANSACTION", "TRANSACTION_DATA"],
+  "customer_scope": "MERCHANT_SCOPED",
+  "direct_partner_id": "PARTNER-0001",
+  "transaction_state_axes": {
+    "lifecycle": ["CREATED", "CONSENTED", "PAYMENT_PENDING", "PAID", "PAYOUT_PENDING", "COMPLETE"],
+    "integrity": ["INCOMPLETE", "ACCOUNTED", "NEEDS_ATTENTION"],
+    "record_classification": ["PENDING_PROTECTED", "PROTECTED", "OBSERVED", "IMPORTED", "FEE_EXCEPTION"],
+    "merchant_facing_record_classifications": ["PROTECTED", "OBSERVED", "IMPORTED"],
+    "invariant": "ACCOUNTED is an integrity/completeness state. PROTECTED is a record/revenue classification. They are different axes and must never be treated as synonyms."
+  },
+  "revenue_contract": {
+    "revenue_record_classification": "PROTECTED",
+    "observed_creates_transaction_fee_revenue": false,
+    "imported_creates_transaction_fee_revenue": false,
+    "separate_monthly_or_setup_billing": false,
+    "fee_payer": "MERCHANT",
+    "processor_collection_method": "STRIPE_APPLICATION_FEE",
+    "transaction_fee_attribution_precision": "MICROS",
+    "processor_collection_precision": "SMALLEST_CURRENCY_UNIT",
+    "carry_rule": "A transaction's exact fee entitlement is attributed in micros. Only whole cents are placed on a Stripe application fee. A residual smaller than one cent accrues to the merchant carry ledger and may be collected on a later successful protected payment. Later carry settlement is cash collection of prior fee entitlement, not new fee entitlement for the later transaction.",
+    "protection_rule": "PROTECTED requires controlled Builtegrity route, successful payment history, and processor-confirmed gross application fee exactly matching the locked whole-cent fee plus any valid reserved carry collected on that payment."
+  },
+  "commercial_decisions": {
+    "pricing": {
+      "implementation_id": "BG_STANDARD_V1",
+      "implementation_status": "TEST_CANDIDATE",
+      "owner_lock_status": "PENDING_OWNER_LOCK",
+      "required_for_live": true,
+      "currency": "USD",
+      "percentage_bps": 10,
+      "uncapped": true,
+      "bands": [
+        {"min_cents": 1, "max_cents": 100, "base_fee_cents": 1},
+        {"min_cents": 101, "max_cents": 500, "base_fee_cents": 2},
+        {"min_cents": 501, "max_cents": 1000, "base_fee_cents": 3},
+        {"min_cents": 1001, "max_cents": null, "base_fee_cents": 5}
+      ],
+      "note": "Implemented in test/pre-launch code and public draft copy, but deliberately not represented as owner-locked until the owner explicitly locks the commercial schedule."
+    },
+    "platform_fee_refund_economics": {
+      "implementation_id": "FEE-REFUND-POLICY-V1",
+      "implementation_status": "TEST_CANDIDATE",
+      "owner_lock_status": "PENDING_OWNER_LOCK",
+      "legal_status": "PENDING_COUNSEL",
+      "required_for_live": true,
+      "candidate_default_handler": "RETAIN_IF_EARNED",
+      "legal_override_method": "STRICTER_APPLICABLE_RULE_WINS",
+      "processor_override_method": "PROCESSOR_REQUIREMENT_OVERRIDES_DEFAULT",
+      "note": "The machine supports stricter full/pro-rata refund handlers. Live treatment must be both owner-locked and counsel/jurisdiction approved; unknown law fails closed."
+    }
+  },
+  "financial_safety": {
+    "minimum_floor_margin_ppm": 800000,
+    "human_touch_target_ppm": 100,
+    "human_touch_mature_ppm": 50,
+    "human_touch_orange_ppm": 200,
+    "human_touch_red_ppm": 500,
+    "fee_reversal_reserve_ppm": 5000,
+    "effective_rate_warn_bps": 150,
+    "policy": "Runtime financial evidence is authoritative. Unknown or stale evidence fails closed for affected growth/payment actions."
+  },
+  "canonical_sources": {
+    "database_schema": "migrations/*.sql in lexical order",
+    "transaction_vocabulary": "transaction-engine/definitions.json plus this contract",
+    "runtime": "worker/src",
+    "public_application_assets": "public/",
+    "legal_response_program": "docs/legal-incident-autopilot.md and runtime legal controls",
+    "owner_provider_readiness": "ops/owner-control-manifest.json",
+    "note": "Standalone schema snapshots and divergent public/legal document copies are forbidden because they create competing truths."
+  },
+  "legal_authority": {
+    "counsel_role": "Qualified outside lawyer or law firm retained by Builtegrity under an active engagement. No provider is currently selected merely because the role exists in code.",
+    "registered_agent_role": "Receives formal service/process and forwards it into the legal-response route.",
+    "insurer_role": "Receives policy/claim notices when counsel or an approved coverage procedure requires notice.",
+    "ai_role": "Automation, evidence preservation, routing, monitoring and operational assistance only; never legal authority or counsel."
+  }
+}
