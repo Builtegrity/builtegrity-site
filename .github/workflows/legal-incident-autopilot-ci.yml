@@ -143,7 +143,7 @@ jobs:
           grep -q "handleLegalInboxWebhook" worker/src/records.js
           grep -q "handleLegalProviderWebhook" worker/src/records.js
           grep -q "/api/webhooks/legal-inbox" worker/src/records.js
-          grep -q "/api/webhooks/legal-provider/" worker/src/records.js
+          grep -q "legalProviderMatch" worker/src/records.js
 
       - name: Verify PILOT and LIVE require a standing legal-response route
         run: |
