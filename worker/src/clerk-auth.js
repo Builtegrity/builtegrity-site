@@ -23,6 +23,9 @@ export async function authenticateClerkSession(request, env) {
   if (String(payload.iss || '') !== String(env.CLERK_ISSUER || '')) return null;
 
   const allowedParties = splitCsv(env.CLERK_AUTHORIZED_PARTIES);
+  const strictProvenance = releaseStageRequiresStrictClerk(env);
+  if (strictProvenance && allowedParties.length === 0) return null;
+  if (strictProvenance && !payload.azp) return null;
   if (payload.azp && allowedParties.length && !allowedParties.includes(String(payload.azp))) {
     return null;
   }
@@ -40,6 +43,10 @@ export async function authenticateClerkSession(request, env) {
 export async function authenticateClerkOperator(request, env) {
   const principal = await authenticateClerkSession(request, env);
   if (!principal?.sub) return null;
+
+  // High-privilege operator access must always represent the actual Clerk subject,
+  // never an impersonated session carrying Clerk's actor (`act`) claim.
+  if (principal.claims?.act) return null;
 
   const allowedAdmins = splitCsv(env.CLERK_ADMIN_USER_IDS);
   if (!allowedAdmins.includes(principal.sub)) return null;
@@ -112,4 +119,8 @@ function splitCsv(value) {
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function releaseStageRequiresStrictClerk(env) {
+  return ['TEST', 'PILOT', 'LIVE'].includes(String(env.WATCHDOG_STAGE || 'PREVIEW').trim().toUpperCase());
 }
