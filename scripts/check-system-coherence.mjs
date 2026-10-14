@@ -13,6 +13,10 @@ const exists = (p) => fs.existsSync(path.join(root,p));
 const contract = readJson('ops/system-contract.json');
 const definitions = readJson('transaction-engine/definitions.json');
 const rootReadme = read('README.md');
+const rootIndex = read('index.html');
+const workerIndex = read('public/index.html');
+const pagesConfig = read('_config.yml');
+const deploymentDoc = read('docs/deployment-ownership.md');
 const pricingMigration = read('migrations/0045_bg_standard_v1_pricing.sql');
 const protectionMigration = read('migrations/0050_protection_invariant_with_carry_and_refunds.sql');
 const entitlementMigration = read('migrations/0061_protected_only_carry_entitlement.sql');
@@ -30,6 +34,31 @@ const ownerManifest = readJson('ops/owner-control-manifest.json');
 assert(contract.contract_id === 'BUILTEGRITY-SYSTEM-V1', 'canonical system contract id drifted');
 assert(contract.canonical_sources.database_schema.includes('migrations'), 'ordered migrations must remain the canonical schema');
 assert(!exists('transaction-engine/schema.sql'), 'standalone transaction-engine/schema.sql is forbidden; ordered migrations are authoritative');
+
+const deployment = contract.deployment_ownership;
+assert(deployment?.canonical_live_domain === 'builtegrity.com', 'canonical live domain drifted');
+assert(deployment?.canonical_live_runtime === 'CLOUDFLARE_WORKER_STATIC_ASSETS', 'Cloudflare Worker/Static Assets must remain the canonical live runtime');
+assert(deployment?.transaction_api_runtime === 'CLOUDFLARE_WORKER', 'Cloudflare Worker must remain the transaction API runtime');
+assert(deployment?.transaction_application_assets === 'public/', 'public/ must remain the transaction application asset root');
+assert(deployment?.github_pages_role === 'TEMPORARY_PRELAUNCH_COMPATIBILITY_SHELL', 'GitHub Pages role drifted from temporary prelaunch shell');
+assert(deployment?.github_pages_transaction_routes_allowed === false, 'GitHub Pages must never serve transaction routes');
+assert(deployment?.github_pages_internal_repository_paths_allowed === false, 'GitHub Pages must never intentionally publish internal repository paths');
+assert(deployment?.github_pages_custom_domain_must_be_retired_before_live === true, 'GitHub Pages custom domain must remain a LIVE blocker');
+assert(deployment?.single_runtime_domain_ownership_required_for_live === true, 'single-runtime domain ownership must remain required for LIVE');
+assert(/one authoritative live application runtime/i.test(deploymentDoc), 'deployment ownership documentation is missing the one-runtime rule');
+assert(/GitHub Pages.*temporary pre-launch compatibility shell/is.test(deploymentDoc), 'deployment ownership doc must describe Pages as temporary only');
+assert(/Cloudflare Worker/i.test(deploymentDoc) && /GitHub Pages must no longer claim `builtegrity.com`/i.test(deploymentDoc), 'deployment cutover doc must require Cloudflare ownership and Pages retirement before LIVE');
+
+for (const internalPath of ['worker','public','migrations','transaction-engine','scripts','ops','docs','templates','assets','README.md','package.json','package-lock.json','wrangler.toml.example']) {
+  assert(new RegExp(`(^|\\n)\\s*-\\s*${escapeRegex(internalPath)}\\s*($|\\n)`).test(pagesConfig), `GitHub Pages config must exclude ${internalPath}`);
+}
+assert(!/href=["']\/console\//i.test(rootIndex), 'temporary GitHub Pages homepage must not advertise the Worker console');
+assert(!/href=["']\/pay\//i.test(rootIndex), 'temporary GitHub Pages homepage must not advertise the Worker payment route');
+assert(!/href=["']\/login\//i.test(rootIndex), 'temporary GitHub Pages homepage must not advertise the Worker login route');
+assert(/not the transaction application/i.test(rootIndex), 'temporary Pages homepage must disclose that it is not the transaction application');
+assert(/href=["']\/console\//i.test(workerIndex), 'Cloudflare application homepage should retain its transaction-console route');
+assert(/href=["']\/pay\//i.test(workerIndex), 'Cloudflare application homepage should retain its customer payment test route');
+assert(rootIndex !== workerIndex, 'Pages shell and Worker application homepage must remain intentionally distinct');
 
 const migrationLineage = contract.migration_lineage;
 assert(migrationLineage?.baseline_commit === 'a07986c52abfc8e679ccb1dc9ae193a5a6f2854b', 'migration lineage baseline commit drifted');
@@ -117,7 +146,9 @@ assert(statementRuntime.includes('application_fee_gross_cents'), 'monthly statem
 assert(statementRuntime.includes('carry_settled_cents'), 'monthly statements must expose prior carry settlement separately');
 assert(statementRuntime.includes('STATEMENT_VERSION = 2'), 'semantic statement change must remain versioned as V2');
 
-for (const relative of ['terms/index.html','privacy/index.html','index.html','styles.css']) {
+// Static legal/privacy documents intentionally mirror across the temporary Pages shell and
+// Worker assets. Application entry points intentionally do not.
+for (const relative of ['terms/index.html','privacy/index.html','styles.css']) {
   assert(exists(relative) && exists(`public/${relative}`), `canonical/public mirror missing for ${relative}`);
   assert(read(relative) === read(`public/${relative}`), `root compatibility copy diverges from public/${relative}`);
 }
@@ -143,12 +174,14 @@ if (mode === 'live') {
   assert(refund.owner_lock_status === 'LOCKED', 'LIVE BLOCKED: Platform Fee refund economics have not been explicitly owner-locked');
   assert(refund.legal_status === 'APPROVED', 'LIVE BLOCKED: Platform Fee refund economics remain pending counsel approval');
   assert(contract.source_control.verification_status === 'VERIFIED', 'LIVE BLOCKED: main branch protection/required CI governance is not verified');
+  assert(deployment.verification_status === 'VERIFIED', 'LIVE BLOCKED: single-runtime domain ownership / Cloudflare cutover is not verified');
   assert(legalControl.status === 'VERIFIED', 'LIVE BLOCKED: standing counsel / legal-response program is not VERIFIED');
   assert(githubControl.status === 'VERIFIED', 'LIVE BLOCKED: GitHub owner recovery/control is not VERIFIED');
 }
 
 console.log(`Builtegrity system coherence ${mode} gate: PASS`);
 
+function escapeRegex(value){return String(value).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');}
 function assertJsonArrayEqual(actual,expected,label){assert(JSON.stringify(actual)===JSON.stringify(expected),`${label} differs between definitions.json and system contract`);}
 function assert(condition,message){if(!condition)fail(message);}
 function fail(message){console.error(`SYSTEM COHERENCE FAILURE: ${message}`);process.exit(1);}
