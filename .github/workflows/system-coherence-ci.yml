@@ -1,0 +1,85 @@
+name: System Coherence CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - system-coherence-hardening-v1
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install runtime dependencies
+        run: npm install --ignore-scripts --no-audit --no-fund
+
+      - name: Check coherence-critical JavaScript syntax
+        run: |
+          node --check scripts/check-system-coherence.mjs
+          node --check worker/src/monthly-statements.js
+          node --check worker/src/pricing.js
+          node --check worker/src/fee-refund-compliance.js
+          node --check worker/src/legal-enforcement.js
+          node --check worker/src/legal-incident-autopilot.js
+
+      - name: Build complete D1 schema from zero
+        run: |
+          rm -f /tmp/builtegrity-coherence.db
+          for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+            echo "Applying $file"
+            sqlite3 /tmp/builtegrity-coherence.db < "$file"
+          done
+          sqlite3 /tmp/builtegrity-coherence.db "PRAGMA foreign_key_check;" > /tmp/fk.txt
+          test ! -s /tmp/fk.txt
+
+      - name: Enforce whole-system structural coherence
+        run: npm run system:coherence
+
+      - name: Verify LIVE remains fail-closed on unresolved real-world approvals
+        run: |
+          if npm run system:gate:live > /tmp/live-gate.txt 2>&1; then
+            echo 'LIVE gate unexpectedly passed while pre-launch owner/legal/provider proofs remain unresolved'
+            cat /tmp/live-gate.txt
+            exit 1
+          fi
+          grep -Eq 'PENDING_OWNER_LOCK|has not been explicitly owner-locked|not VERIFIED|not verified|pending counsel' /tmp/live-gate.txt
+
+      - name: Verify monthly V2 source separates protection from payment success
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-coherence.db "SELECT COUNT(*) FROM sqlite_master WHERE type='view' AND name='monthly_statement_v2_source';")" = "1"
+          grep -q "record_classification='PROTECTED'" migrations/0060_monthly_statement_semantic_alignment.sql
+          grep -q "row.record_classification === 'PROTECTED'" worker/src/monthly-statements.js
+          grep -q "STATEMENT_VERSION = 2" worker/src/monthly-statements.js
+
+      - name: Verify fee entitlement cash and carry stay distinct
+        run: |
+          grep -q 'transaction_fee_entitlement_micros' migrations/0060_monthly_statement_semantic_alignment.sql
+          grep -q 'application_fee_gross_cents' migrations/0060_monthly_statement_semantic_alignment.sql
+          grep -q 'carry_settled_cents' migrations/0060_monthly_statement_semantic_alignment.sql
+          grep -q 'fee_residual_generated_micros' migrations/0060_monthly_statement_semantic_alignment.sql
+          grep -q 'Prior fractional carry settled' worker/src/monthly-statements.js
+
+      - name: Verify canonical public mirrors are byte-identical
+        run: |
+          cmp terms/index.html public/terms/index.html
+          cmp privacy/index.html public/privacy/index.html
+          cmp index.html public/index.html
+          cmp styles.css public/styles.css
+          for path in \
+            legal/fees/index.html \
+            legal/acceptable-use/index.html \
+            legal/dpa/index.html \
+            legal/electronic-records/index.html \
+            legal/security/index.html \
+            legal/subprocessors/index.html; do
+            cmp "$path" "public/$path"
+          done
+
+      - name: Verify no competing schema authority returns
+        run: |
+          test ! -e transaction-engine/schema.sql
+          grep -q 'migrations/\*.sql' transaction-engine/README.md

@@ -1,73 +1,81 @@
-# Transaction Integrity Engine — V1 Draft
+# Builtegrity Transaction Engine
 
-This directory is the first implementation skeleton for the transaction-integrity product being developed under the temporary Builtegrity launch shell.
+This directory contains transaction-engine definitions and test fixtures. It is **not** a second application and it is not the canonical database schema.
 
-It intentionally does **not** replace the existing public roofing site yet.
+## Canonical architecture
 
-## Core hierarchy
+Builtegrity V1 is transaction-integrity infrastructure around Stripe. Stripe processes the payment; Builtegrity records, contextualizes, monitors, reconciles, and reports the transaction. Builtegrity does not become the merchant of record or custody merchant/customer funds in V1.
 
-Every merchant has exactly one parent Partner record.
+Core hierarchy:
 
-- `PARTNER-0001` = Builtegrity Direct / house channel
-- External referral or distribution partners receive their own Partner IDs
-- A customer is scoped to one merchant; there is no global cross-merchant customer identity
-- A customer can have many purchases
-- A purchase can have many transactions
-- Each transaction is the center of its own integrity record
-- Each transaction can have many immutable events
-- Each transaction can have zero or many exceptions
+`Partner → Merchant → Customer → Purchase → Transaction → Transaction Data`
 
-```text
-Partner
-  -> Merchant
-      -> Customer
-          -> Purchase
-              -> Transaction
-                  -> Transaction Events
-                  -> Transaction Exceptions
-                  -> Processor / consent / economics / payout fields
-```
+Every merchant belongs to a parent partner category. Direct merchants use the internal `PARTNER-0001` / Builtegrity Direct relationship. Customer records are merchant-scoped.
 
-## Seed transaction
+## Three independent transaction-state axes
 
-`seed-tx-0001.sql` creates the agreed first fake test hierarchy:
+Never collapse these into one status.
 
-```text
-PARTNER-0001 — Builtegrity Direct
-  MER-0001 — ABC Cabinetry
-    CUST-0001 — John Smith
-      PUR-0001 — JOB-1048 / $4,000 custom kitchen cabinetry
-        TX-0001 — $1,200 deposit
-```
+### Lifecycle
 
-TX-0001 begins as:
+`CREATED → CONSENTED → PAYMENT_PENDING → PAID → PAYOUT_PENDING → COMPLETE`
 
-- lifecycle: `CREATED`
-- integrity: `INCOMPLETE`
-- exception status: `NONE`
-- test integrity fee earned: 25 cents
-- fee collection method: `STRIPE_APPLICATION_FEE`
-- customer consent: not yet accepted
-- Stripe financial identifiers: not yet populated
+Lifecycle answers: **where is the transaction operationally?**
 
-## Deliberate V1 boundaries
+### Integrity
 
-The schema separates concepts that must not be conflated:
+`INCOMPLETE | ACCOUNTED | NEEDS_ATTENTION`
 
-1. Lifecycle state is separate from integrity state.
-2. Exceptions are separate records, not replacement lifecycle states.
-3. Fee earned is separate from fee collection method.
-4. Processor records are attached to a Builtegrity transaction rather than defining the transaction itself.
-5. Transaction events are append-only so the historical story cannot be silently rewritten.
-6. `COMPLETE` is a current lifecycle state, not a guarantee that a later refund, dispute, adjustment, or payout failure cannot occur.
-7. `ACCOUNTED` replaces the earlier `PROTECTED` language. It describes record completeness, not insurance, fraud protection, chargeback protection, or legal enforceability.
+ACCOUNTED is an integrity state. It answers: **is the transaction sufficiently reconciled/accounted for under the integrity model?**
 
-## Files
+### Record / revenue classification
 
-- `schema.sql` — relational schema designed to be compatible with SQLite / Cloudflare D1
-- `seed-tx-0001.sql` — seed data for the first fake transaction
-- `definitions.json` — shared lifecycle, integrity, integration, fee and event vocabulary
+`PENDING_PROTECTED | PROTECTED | OBSERVED | IMPORTED | FEE_EXCEPTION`
 
-## Next implementation step
+PROTECTED is a record/revenue classification. It answers: **did this payment use the controlled protected route and satisfy the processor-confirmed Builtegrity fee invariant?**
 
-The next milestone is an internal transaction console that reads these records and renders TX-0001 as one complete transaction story. After that, Stripe test mode is connected so TX-0001 can advance automatically from `CREATED` through payment and payout events.
+`ACCOUNTED` and `PROTECTED` are therefore not synonyms. A record can be operationally/integrity-accounted while belonging to a different source/revenue class.
+
+Merchant-facing source classes are `PROTECTED`, `OBSERVED`, and `IMPORTED`. `PENDING_PROTECTED` and `FEE_EXCEPTION` are internal operational states.
+
+## Revenue invariant
+
+Only `PROTECTED` transactions can create Builtegrity transaction-fee revenue.
+
+`OBSERVED` transactions can be documented/monitored but do not create the transaction fee. `IMPORTED` transactions are archival/reference records and do not create the transaction fee.
+
+There is no separate monthly/setup billing path in V1. The fee is merchant-side Platform Fee economics collected through the protected processor flow.
+
+## Exact fee and carry
+
+The transaction's fee entitlement is represented exactly in micros. Stripe collection occurs in whole smallest-currency units. Fractional residuals are merchant-scoped and can be carried forward. A later payment that settles prior carry is collecting prior entitlement; it is not earning a new extra fee for the later transaction.
+
+See `ops/system-contract.json` and `docs/pricing-engine.md`.
+
+## Authoritative database schema
+
+The production schema is **only** the ordered set of files in:
+
+`migrations/*.sql`
+
+Apply them in lexical order through Wrangler/D1 migration tooling. A standalone `transaction-engine/schema.sql` snapshot is intentionally forbidden because it inevitably becomes stale and creates a competing schema authority.
+
+`transaction-engine/seed-tx-0001.sql` is test/demo seed data only.
+
+## Canonical cross-system contract
+
+`ops/system-contract.json` is the machine-readable cross-system contract for product role, state vocabularies, pricing candidate, fee/carry semantics, financial-safety thresholds, canonical sources, and commercial owner-lock status.
+
+Run:
+
+- `npm run system:coherence` for structural consistency;
+- `npm run system:gate` for structural + owner-independence checks;
+- `npm run system:gate:live` before live-money release.
+
+The LIVE gate intentionally fails while a required commercial decision, legal approval, provider setup, or owner-control proof is still pending.
+
+## Legal authority
+
+“Counsel” in this system means an actual qualified outside lawyer/law firm retained by Builtegrity under an active engagement. It does not mean ChatGPT, Atlas, an automated classifier, or a placeholder database record.
+
+Until standing counsel is engaged and verified, the legal-response program remains non-live and the release gate must fail closed.

@@ -2,7 +2,7 @@ name: Owner Independence CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, system-coherence-hardening-v1]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -23,7 +23,9 @@ jobs:
           grep -q 'Owner Zero-AI Drill' docs/owner-independence-and-disaster-recovery.md
           grep -q 'Private Owner Emergency Vault' docs/owner-independence-and-disaster-recovery.md
           grep -q 'owner:gate:live' package.json
-          grep -q 'owner_independence' docs/production-readiness-gate.md
+          grep -q 'Owner independence and disaster recovery' docs/production-readiness-gate.md
+          grep -q 'system:gate:live' docs/production-readiness-gate.md
+          grep -q 'branch protection' docs/production-readiness-gate.md
           grep -q 'owner-independence-and-disaster-recovery.md' docs/provider-independence.md
 
       - name: Verify live gate matches manifest verification state

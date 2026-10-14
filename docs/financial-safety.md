@@ -1,128 +1,108 @@
 # Financial Safety Covenant
 
-Builtegrity must never continue expanding through a known or measurable financial danger state without the machine applying a brake and making the condition explicit.
+Builtegrity must never continue expanding through a known or measurable financial danger state without applying a machine brake and making the condition explicit.
 
-This is stronger than a profitability dashboard. Financial safety is part of transaction authorization.
+No software can guarantee that a company can never fail. Unknown litigation, fraud, tax exposure, regulatory action, contractual liabilities, banking failure, or other external events can create losses outside the transaction engine. The enforceable covenant is:
 
-No software can guarantee that a company can never fail. Unknown litigation, fraud, tax exposure, regulatory action, contractual liabilities, banking failure, or other external events can create losses outside the transaction engine. The covenant is therefore precise:
+> **Builtegrity must not silently scale, onboard merchants, create new protected transactions, or create processor payments while its own available evidence says doing so is financially unsafe. Unknown or stale financial evidence is not green.**
 
-> **Builtegrity must not silently scale, onboard merchants, create new protected transactions, or create processor payments while its own available evidence says doing so is financially unsafe. Unknown or stale financial evidence is not treated as green.**
+## Canonical thresholds
 
-## Independent safety layers
+The current runtime guardrails, mirrored in `ops/system-contract.json`, are:
 
-The system protects against four different failure classes so one blind spot cannot silently sink the business.
+- minimum floor planning margin: **80%**;
+- human-touch operating target: **0.01%** (100 ppm);
+- mature target: **0.005%** (50 ppm);
+- warning/orange threshold: **0.02%** (200 ppm);
+- critical/red threshold: **0.05%** (500 ppm);
+- Platform Fee reversal/credit reserve: **0.5%** (5,000 ppm);
+- low-ticket effective-rate watch: **1.50%** (150 bps).
 
-### 1. Unit economics
+These are deliberately conservative. A documentation edit cannot relax them; runtime policy is authoritative and the system coherence gate checks that the documentation still reflects it.
 
-PRICE-V1 already carries conservative planning reserves. The financial safety engine consumes `pricing_floor_health` and requires the lowest-fee transaction to remain contribution-positive with at least a 50% planning margin under the configured reserves.
+## 1. Unit economics
+
+`BG_STANDARD_V1` carries conservative planning reserves. The financial-safety engine consumes `pricing_floor_health` and requires the lowest-fee lane to remain contribution-positive with at least the configured 80% planning margin after technical cost, human-case reserve, and fee-reversal/credit reserve.
 
 If the floor contribution reaches zero or its planning margin falls below the safety threshold, the state is RED and onboarding, new transaction creation, and new payment creation are blocked.
 
-Human operations are also bounded. A human-touch rate at or above 0.15% is ORANGE; at or above 0.20% it is RED. These thresholds are deliberately below the modeled five-cent floor break-even rate.
+Human-touch pressure is intentionally constrained far below one percent because support labor is one of the easiest ways for a micro-fee infrastructure business to destroy its economics. At or above 0.02% the system enters the configured warning/orange region; at or above 0.05% it reaches the critical/red boundary.
 
-### 2. Processor responsibility and processor cash exposure
+## 2. Processor responsibility and cash exposure
 
-Stripe Connect merchants are not allowed to become ACTIVE unless Stripe confirms both:
+Stripe Connect merchants may not become ACTIVE unless Stripe confirms the V1 processor-responsibility configuration required by the current runtime policy. If processing-fee payer or payment-loss liability moves into an unsafe platform-responsibility state, the merchant is paused or remains TEST according to the applicable gate.
 
-- processing-fee payer = `stripe`
-- payment-loss liability = `stripe`
+The platform records Stripe platform-balance snapshots including available, pending, and Connect-reserved balances. A negative platform available balance is RED. Non-zero reserve pressure is at least a warning state so it cannot remain invisible.
 
-If either responsibility moves to `application`, the merchant is PAUSED. Unknown responsibility leaves the merchant in TEST. Transaction creation and checkout independently re-check the stored responsibility state, and database triggers reject an ACTIVE Stripe Connect merchant with unsafe responsibility.
+Processor facts are never inferred from marketing copy or old assumptions. They are provider evidence with freshness requirements.
 
-The platform also records Stripe platform-balance snapshots from the Balance API:
+## 3. Company cash, commitments, and runway
 
-- available balance
-- pending balance
-- Connect reserved balance
+During PILOT, until a bank/accounting connection supplies the required information automatically, an authorized operator can record an append-only complete financial-position snapshot covering unrestricted/restricted cash, monthly fixed commitments, near-term liabilities, required reserves, debt, guarantees, and overdue critical obligations.
 
-A negative platform available balance is RED and blocks onboarding, new transactions, and new payment creation. A non-zero Connect reserve is at least YELLOW so reserve pressure cannot remain invisible.
+A manual snapshot expires after seven days. Missing or stale information becomes UNKNOWN and freezes affected new growth.
 
-### 3. Company cash, commitments, and reserve runway
+**LIVE cannot rely on a manual or test financial snapshot.** LIVE requires a current `BANK`, `ACCOUNTING`, or `COMPOSITE` source under the financial-safety policy.
 
-During PILOT, until a bank/accounting connection supplies this information automatically, an authorized operator can record an append-only complete financial-position snapshot. The snapshot explicitly includes:
-
-- unrestricted cash
-- restricted cash
-- monthly fixed commitments
-- liabilities due within 30 days
-- statutory reserve requirement
-- contingency reserve requirement
-- interest-bearing debt
-- personal-guarantee exposure
-- overdue critical obligations
-
-A manual snapshot must explicitly attest that those categories are complete. It expires after seven days. Missing or stale data becomes UNKNOWN and freezes new onboarding and new transaction creation.
-
-**LIVE cannot rely on a manual or test financial snapshot.** In LIVE, the latest complete financial position must come from a `BANK`, `ACCOUNTING`, or `COMPOSITE` source. Otherwise the safety engine adds `LIVE_AUTOMATED_FINANCIAL_SOURCE_REQUIRED`, moves to UNKNOWN, and freezes new growth. This turns automated financial telemetry into a production-readiness gate rather than an optional convenience.
-
-The default operating reserve target is three months after near-term liabilities and required reserves:
+Default operating reserve target:
 
 `safe runway = (unrestricted cash - 30-day liabilities - statutory reserve - contingency reserve) / monthly fixed commitments`
 
-Default states:
+Default interpretation:
 
-- 3+ months: GREEN if all other controls are healthy
-- 2–3 months: YELLOW
-- 1–2 months: ORANGE; freeze new merchant onboarding
-- under 1 month or near-term liabilities exceed unrestricted cash: RED; freeze onboarding and new transaction creation
+- 3+ months: GREEN if all other controls are healthy;
+- 2–3 months: YELLOW;
+- 1–2 months: ORANGE and freeze specified growth actions;
+- under 1 month or near-term liabilities exceed unrestricted cash: RED.
 
-Low runway does not automatically kill an already-created profitable customer payment. If unit economics, processor telemetry, and processor responsibility remain safe, completing an existing payment can improve cash rather than worsen it. Hard-stop processor or unit-economic conditions still block payment creation.
+Low runway does not automatically destroy an already-created profitable customer payment when completing it reduces rather than increases exposure. Hard processor, legal, security, compliance, or unit-economic stops still win.
 
-### 4. Unknown and stale telemetry
+## 4. Unknown and stale telemetry
 
 `UNKNOWN` is not a softer version of GREEN.
 
-The machine requires:
+Required freshness includes the configured company financial-position window, Stripe platform-balance window, pricing/provider-responsibility review window, and financial-safety decision window. In PILOT/LIVE, stale evidence expires authorization rather than granting indefinite permission from an old green state.
 
-- a complete company financial-position snapshot no older than seven days
-- a Stripe platform-balance snapshot no older than two hours
-- a pricing/cost/provider responsibility review no older than 90 days
-- a current financial-safety decision no older than 30 minutes during PILOT/LIVE
-- an automated financial-position source before LIVE growth is permitted
-
-If the monitor itself stops running, the last GREEN decision expires. Production activity does not get unlimited permission from stale evidence.
+Before LIVE, an external observer must monitor readiness so a stopped Worker/cron cannot fail silently.
 
 ## Debt and personal guarantees
 
-The default policy forbids interest-bearing debt and personal guarantees. Either recorded exposure makes financial safety RED for new growth.
+The default policy forbids interest-bearing debt and personal guarantees. Recorded exposure makes financial safety RED for new growth unless a future versioned governance decision explicitly changes that policy.
 
-This is intentionally conservative. If the company ever decides to use leverage, changing that policy should be an explicit architecture/governance decision rather than an accidental operating condition.
+Leverage must never enter the system accidentally through an undocumented operational workaround.
 
 ## Machine states and brakes
 
 | State | Meaning | Default machine response |
 | --- | --- | --- |
-| GREEN | Required data is fresh and all safety thresholds pass | Operate normally |
-| YELLOW | Safety cushion is degrading but no immediate loss boundary is near | Continue, create warning, email operator |
-| ORANGE | Growth would increase risk | Freeze specified growth actions; open internal finance case; email operator |
-| RED | Known financial safety boundary breached | Apply hard brakes according to reason; open critical finance case; email operator |
-| UNKNOWN | Required evidence is missing or stale | Fail closed for affected growth/payment actions; open finance case; email operator |
+| GREEN | Required evidence is fresh and thresholds pass | Operate normally |
+| YELLOW | Cushion is degrading | Continue within policy, alert and monitor |
+| ORANGE | Growth would materially increase risk | Freeze specified growth actions and route a finance case |
+| RED | Known safety boundary breached | Apply hard brakes and route a critical finance case |
+| UNKNOWN | Required evidence is missing/stale | Fail closed for affected actions and route a finance case |
 
-Every evaluation is stored in append-only `financial_safety_evaluations`. Current authorization state is kept in `financial_safety_state`.
+Every evaluation is append-recorded in `financial_safety_evaluations`; current authorization lives in `financial_safety_state`.
 
-## Non-silent alerting
+## Non-silent resolution
 
-`worker/src/financial-safety-monitor.js` converts machine state into persistent `system_alerts`:
+Financial alerts are persistent and deduplicated. The correct path is not “override the warning.” Correct the underlying economics/evidence, run a fresh evaluation, and allow the machine to clear the brake.
 
-- YELLOW -> `finance:solvency-warning`
-- ORANGE / UNKNOWN / RED -> `finance:solvency-brake`
+Human escalation is an exception path, not a substitute for the machine fixing or containing the underlying condition.
 
-The brake alert routes to `FINANCIAL_SOLVENCY_RISK`, which has only three operator actions. The system also sends an out-of-band Resend email with state, reason codes, runway, reserve surplus, Stripe platform balance, unit margin, and observed human-touch rate. Alerts are deduplicated so an unresolved state can remind without flooding.
+## Provider/model expiry
 
-The correct resolution path is never “override the warning.” Correct the underlying financial input/economics, run a new evaluation, and allow the machine to clear the brake.
+Provider prices and processor-responsibility semantics are not permanent facts. Financial-model reviews expire and must be refreshed. Vendor or processor changes therefore cannot remain embedded forever in an old cost model.
 
-The internal monitor should not be the only production observer. Before LIVE activation, the public readiness endpoint must also be watched externally for a stale/missing watchdog heartbeat so a stopped Worker cron cannot fail silently. Builtegrity already has an external Machine Watch workflow designed to inspect the readiness route once the Worker is deployed; external notifications must be enabled as part of the LIVE checklist.
+## Cross-system rule
 
-## Financial model expiry
+Financial safety does not stand alone. Legal/compliance, security, pricing, processor, books/tax, and owner-independence gates can independently stop an action even when financial safety is GREEN.
 
-Provider prices and processor responsibility semantics are not permanent facts. `financial_model_reviews` require both provider pricing and processor responsibility assumptions to be re-reviewed at least every 90 days. An expired review becomes UNKNOWN and freezes growth.
+Conversely, a legally/compliance-ready transaction is not allowed to proceed if current financial evidence says the machine should brake.
 
-This prevents a vendor price increase or processor-policy change from remaining embedded forever in an old cost model.
+## Production activation
 
-## Production activation rule
+Financial-safety enforcement begins at PILOT under the configured policy. LIVE additionally requires automated financial telemetry, externally monitored readiness, owner/provider independence, and the whole-system live gate:
 
-Financial safety enforcement begins at PILOT by default. PILOT/LIVE require an enforced, fresh financial-safety evaluation before merchant onboarding, new transaction creation, or payment creation can proceed.
+`npm run system:gate:live`
 
-LIVE additionally requires automated `BANK`, `ACCOUNTING`, or `COMPOSITE` financial-position telemetry and an externally monitored readiness heartbeat with notifications enabled. Those are launch gates, not post-launch cleanup items.
-
-The repository implementation does not become production protection until migrations `0018_financial_safety_engine.sql` and `0019_financial_safety_hardening.sql` and the corresponding Worker code are deployed to the production Cloudflare D1/Worker environment.
+Repository code becomes production protection only after the ordered D1 migrations and matching Worker code are deployed and verified in the production environment.

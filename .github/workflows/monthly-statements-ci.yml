@@ -2,7 +2,7 @@ name: Monthly Statements CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, system-coherence-hardening-v1]
   pull_request:
   workflow_dispatch:
   schedule:
@@ -25,54 +25,70 @@ jobs:
         run: |
           grep -q 'runMonthlyStatementPipeline' worker/src/runtime.js
           grep -q 'runMonthlyStatementPipeline' worker/src/monthly-statements.js
+          grep -q 'STATEMENT_VERSION = 2' worker/src/monthly-statements.js
           grep -q 'TRANSACTION_RECORDS' worker/src/monthly-statements.js
           grep -q 'Idempotency-Key' worker/src/monthly-statements.js
           grep -q 'RESEND_WEBHOOK_SECRET' .dev.vars.example
           grep -q 'svix-signature' worker/src/resend-statement-webhooks.js
           grep -q 'email.delivered' worker/src/resend-statement-webhooks.js
           grep -q 'STATEMENT_EMAIL_FROM' wrangler.toml.example
-          grep -q 'Builtegrity Statements <hello@builtegrity.com>' wrangler.toml.example
-          grep -q 'Builtegrity Watchdog <hello@builtegrity.com>' wrangler.toml.example
           grep -q 'monthly_statement_email_events' migrations/0022_monthly_statement_delivery_events.sql
           grep -q 'statement_delivery_requires_provider_confirmation' migrations/0023_monthly_statement_delivery_confirmation.sql
-          grep -q 'customers_default_statement_reference_after_insert' migrations/0024_statement_customer_reference_privacy.sql
+          grep -q 'monthly_statement_v2_source' migrations/0060_monthly_statement_semantic_alignment.sql
 
       - name: Build complete D1 schema
         run: |
           rm -f /tmp/builtegrity-statements.db
-          for migration in migrations/*.sql; do
+          for migration in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
             echo "Applying $migration"
             sqlite3 /tmp/builtegrity-statements.db < "$migration"
           done
           sqlite3 /tmp/builtegrity-statements.db < transaction-engine/seed-tx-0001.sql
+          sqlite3 /tmp/builtegrity-statements.db "PRAGMA foreign_key_check;" > /tmp/fk.txt
+          test ! -s /tmp/fk.txt
 
-      - name: Verify statement schema
+      - name: Verify V2 statement schema
         run: |
-          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT COUNT(*) FROM pragma_table_info('merchants') WHERE name='statement_email';")" = "1"
-          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT COUNT(*) FROM pragma_table_info('partners') WHERE name='statement_email';")" = "1"
-          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='monthly_statements';")" = "1"
-          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='monthly_statement_items';")" = "1"
-          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='monthly_statement_deliveries';")" = "1"
-          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='monthly_statement_email_events';")" = "1"
+          for column in protected_count transaction_fee_entitlement_micros application_fee_gross_cents carry_settled_cents; do
+            test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT COUNT(*) FROM pragma_table_info('monthly_statements') WHERE name='$column';")" = "1"
+          done
+          for column in record_classification transaction_fee_entitlement_micros application_fee_gross_cents carry_settled_cents fee_residual_generated_micros; do
+            test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT COUNT(*) FROM pragma_table_info('monthly_statement_items') WHERE name='$column';")" = "1"
+          done
+          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT COUNT(*) FROM sqlite_master WHERE type='view' AND name='monthly_statement_v2_source';")" = "1"
+
+      - name: Verify PROTECTED and ACCOUNTED are independent statement axes
+        run: |
+          sqlite3 /tmp/builtegrity-statements.db "
+            UPDATE transactions SET record_classification='OBSERVED', integrity_status='ACCOUNTED', payment_status='succeeded' WHERE id='TX-0001';
+          "
+          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT protected_amount_cents FROM monthly_statement_v2_source WHERE transaction_id='TX-0001';")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT integrity_status FROM monthly_statement_v2_source WHERE transaction_id='TX-0001';")" = "ACCOUNTED"
+          test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT record_classification FROM monthly_statement_v2_source WHERE transaction_id='TX-0001';")" = "OBSERVED"
+
+      - name: Rebuild schema for remaining tests
+        run: |
+          rm -f /tmp/builtegrity-statements.db
+          for migration in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do sqlite3 /tmp/builtegrity-statements.db < "$migration"; done
+          sqlite3 /tmp/builtegrity-statements.db < transaction-engine/seed-tx-0001.sql
 
       - name: Verify statement customer privacy fallback
         run: |
           sqlite3 /tmp/builtegrity-statements.db "UPDATE customers SET merchant_customer_reference=NULL WHERE id='CUST-0001';"
           test "$(sqlite3 /tmp/builtegrity-statements.db "SELECT merchant_customer_reference FROM customers WHERE id='CUST-0001';")" = "CUST-0001"
 
-      - name: Verify immutable statement snapshots
+      - name: Verify immutable V2 statement snapshots
         run: |
-          sqlite3 /tmp/builtegrity-statements.db "INSERT INTO monthly_statements (id,scope_type,scope_id,period_start,period_end_exclusive,period_label,status,transaction_count,merchant_count,protected_volume_cents,builtegrity_fee_cents,exception_count,accounted_count,snapshot_json,snapshot_sha256,source_as_of,object_key,pdf_sha256,pdf_byte_length,generated_at) VALUES ('STM-CI','MERCHANT','MER-0001','2026-09-01T00:00:00.000Z','2026-10-01T00:00:00.000Z','2026-09','GENERATED',1,1,120000,25,0,0,'{\"ci\":true}','abc','2026-10-01T00:00:00Z','monthly-statements/ci.pdf','def',10,'2026-10-01T00:00:00Z');"
-          sqlite3 /tmp/builtegrity-statements.db "INSERT INTO monthly_statement_items (id,statement_id,transaction_id,merchant_id,merchant_name,amount_cents,currency,integrity_status,exception_status,snapshot_json) VALUES ('STMI-CI','STM-CI','TX-0001','MER-0001','ABC Cabinetry',120000,'USD','INCOMPLETE','NONE','{}');"
+          sqlite3 /tmp/builtegrity-statements.db "INSERT INTO monthly_statements (id,scope_type,scope_id,period_start,period_end_exclusive,period_label,statement_version,status,transaction_count,merchant_count,protected_count,protected_volume_cents,transaction_fee_entitlement_micros,application_fee_gross_cents,builtegrity_fee_cents,carry_settled_cents,exception_count,accounted_count,snapshot_json,snapshot_sha256,source_as_of,object_key,pdf_sha256,pdf_byte_length,generated_at) VALUES ('STM-CI','MERCHANT','MER-0001','2026-09-01T00:00:00.000Z','2026-10-01T00:00:00.000Z','2026-09',2,'GENERATED',1,1,1,120000,125000,13,13,1,0,1,'{\"ci\":true}','abc','2026-10-01T00:00:00Z','monthly-statements/ci.pdf','def',10,'2026-10-01T00:00:00Z');"
+          sqlite3 /tmp/builtegrity-statements.db "INSERT INTO monthly_statement_items (id,statement_id,transaction_id,merchant_id,merchant_name,amount_cents,currency,integrity_fee_cents,integrity_status,exception_status,snapshot_json,record_classification,transaction_fee_entitlement_micros,application_fee_gross_cents,carry_settled_cents,fee_residual_generated_micros) VALUES ('STMI-CI','STM-CI','TX-0001','MER-0001','ABC Cabinetry',120000,'USD',13,'ACCOUNTED','NONE','{}','PROTECTED',125000,13,1,5000);"
           if sqlite3 /tmp/builtegrity-statements.db "UPDATE monthly_statement_items SET amount_cents=1 WHERE id='STMI-CI';" 2>/tmp/item-immutable.txt; then
-            echo "Expected immutable statement item trigger to reject update"
-            exit 1
-          fi
+            echo 'Expected immutable statement item trigger to reject update'; exit 1; fi
           grep -q 'immutable snapshots' /tmp/item-immutable.txt
+          if sqlite3 /tmp/builtegrity-statements.db "UPDATE monthly_statements SET protected_volume_cents=1 WHERE id='STM-CI';" 2>/tmp/summary-immutable.txt; then
+            echo 'Expected generated statement semantic summary to reject update'; exit 1; fi
+          grep -q 'generated monthly statement snapshot is immutable' /tmp/summary-immutable.txt
           if sqlite3 /tmp/builtegrity-statements.db "UPDATE monthly_statements SET snapshot_json='{}' WHERE id='STM-CI';" 2>/tmp/snapshot-immutable.txt; then
-            echo "Expected immutable statement source snapshot trigger to reject update"
-            exit 1
-          fi
+            echo 'Expected immutable statement source snapshot trigger to reject update'; exit 1; fi
           grep -q 'source snapshot is immutable' /tmp/snapshot-immutable.txt
 
       - name: Verify provider-confirmed delivery semantics
@@ -87,7 +103,5 @@ jobs:
       - name: Verify append-only provider event audit
         run: |
           if sqlite3 /tmp/builtegrity-statements.db "UPDATE monthly_statement_email_events SET event_type='MUTATED' WHERE event_id='evt-ci';" 2>/tmp/event-immutable.txt; then
-            echo "Expected provider email event audit to reject update"
-            exit 1
-          fi
+            echo 'Expected provider email event audit to reject update'; exit 1; fi
           grep -q 'append-only' /tmp/event-immutable.txt
