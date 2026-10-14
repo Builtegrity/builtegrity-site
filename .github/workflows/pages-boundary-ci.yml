@@ -31,7 +31,7 @@ jobs:
           grep -qi 'not the transaction application' _site/index.html
           grep -qi 'No live merchant funds' _site/index.html
 
-          if grep -Eqi 'href=["'"']/(console|pay|login)/' _site/index.html; then
+          if grep -Eqi "href=['\"]/(console|pay|login)/" _site/index.html; then
             echo 'Pages shell exposes a Worker-only application route'
             exit 1
           fi
