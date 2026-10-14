@@ -155,6 +155,19 @@ See `docs/provider-procurement-standard.md` before requesting quotes or enabling
 | [Clerk Setup](../docs/clerk-setup.md) | RUNBOOK | Yes | Identity-provider configuration without embedding credentials. |
 | [Cloudflare Access Setup](../docs/cloudflare-access-setup.md) | RUNBOOK | No | Optional infrastructure defense-in-depth setup; not primary product auth. |
 
+### Public Legal Documents
+
+| Document | Authority | Required | Purpose |
+| --- | --- | ---: | --- |
+| [Acceptable Use Policy](../public/legal/acceptable-use/index.html) | MERCHANT_FACING_DRAFT | Yes | Prohibited/restricted use and enforcement disclosure. |
+| [Data Processing Addendum](../public/legal/dpa/index.html) | MERCHANT_FACING_DRAFT | Yes | Merchant processor/service-provider data-protection terms. |
+| [Electronic Records Consent](../public/legal/electronic-records/index.html) | MERCHANT_FACING_DRAFT | Yes | Electronic records/signature consent and statutory-boundary disclosure. |
+| [Fee Schedule](../public/legal/fees/index.html) | MERCHANT_FACING_DRAFT | Yes | Merchant-facing BG_STANDARD_V1 fee/refund disclosure; must match locked commercial and legal policy before LIVE. |
+| [Platform Agreement](../public/terms/index.html) | MERCHANT_FACING_DRAFT | Yes | Merchant platform terms; remains pre-launch draft until counsel-approved version is activated. |
+| [Privacy Notice](../public/privacy/index.html) | PUBLIC_DISCLOSURE_DRAFT | Yes | Public privacy disclosure; version approval remains a legal/compliance gate. |
+| [Security Summary](../public/legal/security/index.html) | PUBLIC_DISCLOSURE_DRAFT | Yes | Public security disclosure; not a certification or guarantee. |
+| [Subprocessor Registry](../public/legal/subprocessors/index.html) | PUBLIC_DISCLOSURE_DRAFT | Yes | Public service-provider/subprocessor disclosure and change-control reference. |
+
 ### Reporting
 
 | Document | Authority | Required | Purpose |
