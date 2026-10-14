@@ -1,4 +1,5 @@
 import { resolveInternalCaseForAlert, syncInternalCaseForAlert } from './cases.js';
+import { runResolutionAutopilot } from './autopilot.js';
 
 const INTERNAL_RULES = [
   { match: (a) => a.alert_key === 'watchdog:runner-failure', caseType: 'CATASTROPHIC_INCIDENT' },
@@ -12,6 +13,8 @@ const INTERNAL_RULES = [
   { match: (a) => a.alert_key === 'finance:solvency-brake', caseType: 'FINANCIAL_SOLVENCY_RISK' },
   { match: (a) => a.alert_key === 'dependency:clerk-jwks', caseType: 'PLATFORM_PROVIDER_ACTION_REQUIRED' },
   { match: (a) => a.alert_key === 'dependency:public-health-route', caseType: 'PLATFORM_PROVIDER_ACTION_REQUIRED' },
+  { match: (a) => a.alert_key.startsWith('resolution:'), caseType: 'UNKNOWN_EXCEPTION' },
+  { match: (a) => a.alert_key.startsWith('workforce:'), caseType: 'UNKNOWN_EXCEPTION' },
 ];
 
 const MERCHANT_RULES = [
@@ -65,7 +68,11 @@ export async function syncInternalCasesFromWatchdogs(env) {
     }
   }
 
-  return { internal, merchant, system, resolved };
+  // The resolver runs only after the watchdog and case router have established the source of truth.
+  // It can notify the correct party, release abandoned fractional-fee reservations, and dispatch
+  // machine-verifiable work to pre-approved variable-labor vendors. It never bypasses the case engine.
+  const autopilot = await runResolutionAutopilot(env);
+  return { internal, merchant, system, resolved, autopilot };
 }
 
 export function classifyAlert(alert) {
