@@ -6,20 +6,32 @@ The original Builtegrity roofing-lead concept is retired. Builtegrity is current
 
 Builtegrity does not process card data itself. Stripe remains the processor. The V1 engine connects commercial context, customer consent, legal/compliance evidence, and Stripe payment/fee/payout facts into one normalized transaction-integrity record.
 
+## Master operating record — start here
+
+For a clean owner-facing view of the entire system, current LIVE blockers, provider semantics and documentation map, open `docs/MASTER.md`.
+
+`docs/MASTER.md` is generated from the canonical system contract, owner-control manifest and document register. Do not hand-edit it.
+
+- `npm run docs:check` verifies documentation coverage and master freshness.
+- `npm run docs:fix` safely regenerates the master from canonical sources.
+- Both normal and LIVE system gates include the documentation integrity check.
+
+Sensitive recovery material, credentials, privileged legal files, private provider contracts, banking details and patent strategy never belong in the repository or master. Their required storage classes are listed in `ops/document-register.json`.
+
 ## Read this first — ownership foundation
 
-Before changing architecture, deploying live money, or adding a new provider, read `docs/owner-independence-and-disaster-recovery.md` and `ops/system-contract.json`.
+Before changing architecture, deploying live money, or adding a new provider, read `docs/MASTER.md`, `docs/owner-independence-and-disaster-recovery.md` and `ops/system-contract.json`.
 
 Builtegrity's foundational rule is that the company must remain operable, diagnosable, recoverable, migratable, pausable, and terminable by its owner even if ChatGPT/Atlas, Work, a contractor, an employee, or any single vendor disappears.
 
-The machine-readable owner-control inventory is `ops/owner-control-manifest.json`. The cross-system contract is `ops/system-contract.json`.
+The machine-readable owner-control inventory is `ops/owner-control-manifest.json`. The cross-system contract is `ops/system-contract.json`. The controlled documentation inventory is `ops/document-register.json`.
 
 Before LIVE:
 
 - `npm run system:gate:live` must pass;
 - `npm run owner:gate:live` must pass;
 - the runtime/D1 production-readiness controls must independently allow LIVE;
-- all applicable legal, processor, security, tax, financial, provider, source-control, and owner-control evidence must be current.
+- all applicable legal, processor, security, tax, financial, provider, source-control, documentation and owner-control evidence must be current.
 
 A technically working deployment is not permission to process live money.
 
@@ -175,6 +187,8 @@ It starts at `CREATED / INCOMPLETE` and can be exercised through the development
 
 ## Important paths
 
+- `docs/MASTER.md` — generated owner-facing master operating record
+- `ops/document-register.json` — controlled documentation and private-record inventory
 - `/login/` — application sign-in handoff to Clerk
 - `/console/` — internal transaction console
 - `/pay/?token=...` — customer transaction/terms page
@@ -188,6 +202,7 @@ It starts at `CREATED / INCOMPLETE` and can be exercised through the development
 - `ops/system-contract.json` — cross-system architecture/commercial/release contract
 - `ops/owner-control-manifest.json` — owner-control/recovery verification state
 - `docs/owner-independence-and-disaster-recovery.md` — cornerstone ownership/recovery policy
+- `docs/provider-procurement-standard.md` — provider quote/contract/automation semantics
 - `docs/transaction-engine-runbook.md` — setup and operating runbook
 - `docs/watchdog-operations.md` — exception-only operations/watchdog rules
 - `docs/monthly-statements.md` — automated statement operating contract
