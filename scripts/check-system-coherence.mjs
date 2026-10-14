@@ -30,17 +30,21 @@ assert(!exists('transaction-engine/schema.sql'), 'standalone transaction-engine/
 const expectedLifecycle = contract.transaction_state_axes.lifecycle;
 const expectedIntegrity = contract.transaction_state_axes.integrity;
 const expectedRecord = contract.transaction_state_axes.record_classification;
-assertJsonArrayEqual(definitions.transaction.lifecycle_status.values, expectedLifecycle, 'lifecycle status vocabulary');
-assertJsonArrayEqual(definitions.transaction.integrity_status.values, expectedIntegrity, 'integrity status vocabulary');
-assertJsonArrayEqual(definitions.transaction.record_classification.values, expectedRecord, 'record classification vocabulary');
+assertJsonArrayEqual(definitions.lifecycle, expectedLifecycle, 'lifecycle status vocabulary');
+assertJsonArrayEqual(definitions.integrity_statuses, expectedIntegrity, 'integrity status vocabulary');
+assertJsonArrayEqual(definitions.record_classifications, expectedRecord, 'record classification vocabulary');
+assertJsonArrayEqual(definitions.merchant_facing_record_classes, contract.transaction_state_axes.merchant_facing_record_classifications, 'merchant-facing record classifications');
 assert(engineReadme.includes('ACCOUNTED is an integrity state') && engineReadme.includes('PROTECTED is a record/revenue classification'), 'transaction-engine README must explicitly separate ACCOUNTED from PROTECTED');
 assert(!engineReadme.includes('ACCOUNTED replaces the earlier PROTECTED'), 'obsolete ACCOUNTED-replaces-PROTECTED wording reappeared');
+assert(/Only PROTECTED transactions may recognize Builtegrity transaction revenue/i.test(definitions.protected_definition), 'definitions must keep PROTECTED as the transaction-revenue gate');
+assert(/OBSERVED records do not create Builtegrity transaction revenue/i.test(definitions.observed_definition), 'definitions must keep OBSERVED non-revenue producing');
+assert(/IMPORTED records do not create Builtegrity transaction revenue/i.test(definitions.imported_definition), 'definitions must keep IMPORTED non-revenue producing');
 
 const pricing = contract.commercial_decisions.pricing;
 assert(pricing.implementation_id === 'BG_STANDARD_V1', 'pricing implementation id drifted');
 assert(pricing.percentage_bps === 10 && pricing.uncapped === true, 'system contract pricing percentage/cap drifted');
 assert(JSON.stringify(pricing.bands.map(({min_cents,max_cents,base_fee_cents}) => [min_cents,max_cents,base_fee_cents])) === JSON.stringify([[1,100,1],[101,500,2],[501,1000,3],[1001,null,5]]), 'canonical pricing bands drifted');
-for (const needle of ["BG_STANDARD_V1","percentage_bps = 10","uncapped = 1"]) {
+for (const needle of ['BG_STANDARD_V1','percentage_bps = 10','uncapped = 1']) {
   assert(pricingMigration.includes(needle), `pricing migration no longer reflects contract: ${needle}`);
 }
 for (const baseMicros of ['10000','20000','30000','50000']) assert(pricingMigration.includes(baseMicros), `pricing migration is missing expected base-fee micros ${baseMicros}`);
@@ -50,6 +54,7 @@ assert(!pricingDoc.includes('0.15%') && !pricingDoc.includes('$10 maximum') && !
 assert(carryMigration.includes('merchant_fee_carry') && carryMigration.includes('pricing_fee_residual_micros'), 'fractional carry implementation missing');
 assert(contract.revenue_contract.transaction_fee_attribution_precision === 'MICROS', 'transaction fee attribution precision must remain micros');
 assert(contract.revenue_contract.processor_collection_precision === 'SMALLEST_CURRENCY_UNIT', 'processor collection precision must remain smallest currency unit');
+assert(/application-fee refunds are append-only financial adjustments/i.test(definitions.refund_accounting_rule), 'transaction definitions must preserve adjustment-not-rewrite refund accounting');
 
 const refund = contract.commercial_decisions.platform_fee_refund_economics;
 assert(refund.implementation_id === 'FEE-REFUND-POLICY-V1', 'fee/refund policy id drifted');
