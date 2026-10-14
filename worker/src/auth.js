@@ -1,5 +1,6 @@
 import { authenticateClerkOperator } from './clerk-auth.js';
 import { authenticateCloudflareAccess } from './cloudflare-access.js';
+import { handlePublicSecurityRoute } from './public-security.js';
 
 const COOKIE_NAME = 'builtegrity_session';
 const DEFAULT_TTL_SECONDS = 60 * 60 * 12;
@@ -12,6 +13,12 @@ export async function handleAuthRoute(request, env) {
   if (!authenticationModeAllowed(env, provider)) {
     return json({ error: 'Configured authentication mode is not permitted for this release stage.' }, 503);
   }
+
+  // Public transaction mutations are not operator-authenticated, but they still pass through
+  // the outer Worker boundary before the core engine. Keep abuse/security verification here so
+  // the transaction engine remains focused on transaction semantics.
+  const publicSecurityResponse = await handlePublicSecurityRoute(request, env);
+  if (publicSecurityResponse) return publicSecurityResponse;
 
   if (url.pathname === '/auth/session' && request.method === 'GET') {
     const principal = await authenticateOperator(request, env);
