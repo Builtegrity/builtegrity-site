@@ -1,0 +1,24 @@
+title: Builtegrity
+url: https://builtegrity.com
+
+# GitHub Pages is a temporary pre-launch compatibility shell only.
+# The transaction application lives under public/ for Cloudflare Worker Static Assets and
+# must never be published by Pages as a second application copy.
+exclude:
+  - README.md
+  - package.json
+  - package-lock.json
+  - wrangler.toml.example
+  - worker
+  - public
+  - migrations
+  - transaction-engine
+  - scripts
+  - ops
+  - docs
+  - templates
+  - assets
+  - node_modules
+  - .github
+  - .gitignore
+  - .dev.vars.example
