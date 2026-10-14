@@ -1,0 +1,165 @@
+name: Security Auth Gate CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '41 */6 * * *'
+
+jobs:
+  validate-auth-gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check authentication and readiness syntax
+        run: |
+          node --check worker/src/auth.js
+          node --check worker/src/clerk-auth.js
+          node --check worker/src/watchdogs.js
+
+      - name: Prove release auth modes and readiness fail closed
+        run: |
+          node --input-type=module <<'NODE'
+          import { authenticateOperator, authenticationModeAllowed } from './worker/src/auth.js';
+          import { configurationPolicyViolations, systemReadiness } from './worker/src/watchdogs.js';
+
+          const DB = {
+            prepare(sql) {
+              return {
+                first() {
+                  if (String(sql).includes('SELECT 1 AS ok')) return Promise.resolve({ ok: 1 });
+                  return Promise.resolve({ run_kind: 'FAST', status: 'OK', started_at: new Date().toISOString(), finished_at: new Date().toISOString() });
+                },
+              };
+            },
+          };
+
+          const base = {
+            DB,
+            WATCHDOG_STAGE: 'LIVE',
+            AUTH_PROVIDER: 'CLERK',
+            DEV_MODE: 'false',
+            STRIPE_SECRET_KEY: 'test-secret',
+            STRIPE_WEBHOOK_SECRET: 'test-webhook-secret',
+            STRIPE_CONNECT_CLIENT_ID: 'ca_test',
+            CLERK_JWT_KEY: 'test-public-key',
+            CLERK_ISSUER: 'https://clerk.example',
+            CLERK_ADMIN_USER_IDS: 'user_owner',
+            CLERK_AUTHORIZED_PARTIES: 'https://builtegrity.com,https://admin.builtegrity.com',
+            CLERK_SIGN_IN_URL: 'https://accounts.example/sign-in',
+            TURNSTILE_SITE_KEY: 'site-key',
+            TURNSTILE_SECRET_KEY: 'secret-key',
+            RESEND_API_KEY: 're_test',
+            ALERT_EMAIL_FROM: 'watchdog@example.com',
+            ALERT_EMAIL_TO: 'owner@example.com',
+            APP_BASE_URL: 'https://builtegrity.com',
+            ADMIN_BASE_URL: 'https://admin.builtegrity.com',
+            ADMIN_HOSTNAME: 'admin.builtegrity.com',
+          };
+
+          const good = await systemReadiness(base);
+          if (!good.ok || !good.config_complete || good.config_policy_violation_count !== 0) {
+            throw new Error(`Expected canonical LIVE auth config to pass readiness: ${JSON.stringify(good)}`);
+          }
+
+          const hostile = { ...base, AUTH_PROVIDER: 'DEV_BYPASS', DEV_MODE: 'true' };
+          const hostileReady = await systemReadiness(hostile);
+          if (hostileReady.ok || hostileReady.config_policy_violation_count < 2) {
+            throw new Error(`DEV_BYPASS must fail LIVE readiness: ${JSON.stringify(hostileReady)}`);
+          }
+          if (authenticationModeAllowed(hostile)) throw new Error('DEV_BYPASS must not be allowed for LIVE');
+          const hostilePrincipal = await authenticateOperator(new Request('https://admin.builtegrity.com/api/watchdogs/status'), hostile);
+          if (hostilePrincipal !== null) throw new Error('DEV_BYPASS authenticated an operator during LIVE');
+
+          const ownerFallback = { ...base, AUTH_PROVIDER: 'OWNER_SESSION' };
+          if ((await systemReadiness(ownerFallback)).ok) throw new Error('OWNER_SESSION must not pass LIVE readiness');
+          if (authenticationModeAllowed(ownerFallback)) throw new Error('OWNER_SESSION must not be allowed for LIVE');
+
+          const invalidStage = { ...base, WATCHDOG_STAGE: 'LIV' };
+          const invalidReady = await systemReadiness(invalidStage);
+          if (invalidReady.ok || invalidReady.stage !== 'INVALID') throw new Error(`Invalid stage must fail closed: ${JSON.stringify(invalidReady)}`);
+          if (!configurationPolicyViolations(invalidStage).some((item) => item.code === 'INVALID_WATCHDOG_STAGE')) {
+            throw new Error('Invalid stage policy violation was not recorded');
+          }
+
+          const wrongParty = { ...base, CLERK_AUTHORIZED_PARTIES: 'https://builtegrity.com' };
+          const wrongPartyReady = await systemReadiness(wrongParty);
+          if (wrongPartyReady.ok) throw new Error('Missing admin authorized party must fail LIVE readiness');
+
+          const preview = { WATCHDOG_STAGE: 'PREVIEW', AUTH_PROVIDER: 'DEV_BYPASS', DEV_MODE: 'true' };
+          if (!authenticationModeAllowed(preview)) throw new Error('PREVIEW development bypass should remain available when deliberately selected');
+          const previewPrincipal = await authenticateOperator(new Request('http://localhost:8787/console/'), preview);
+          if (previewPrincipal?.provider !== 'DEV_BYPASS') throw new Error('PREVIEW development bypass no longer functions');
+          NODE
+
+      - name: Prove Clerk owner provenance and impersonation rejection
+        run: |
+          node --input-type=module <<'NODE'
+          import { authenticateClerkOperator } from './worker/src/clerk-auth.js';
+
+          const pair = await crypto.subtle.generateKey(
+            { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+            true,
+            ['sign', 'verify'],
+          );
+          const spki = new Uint8Array(await crypto.subtle.exportKey('spki', pair.publicKey));
+          const pem = `-----BEGIN PUBLIC KEY-----\n${Buffer.from(spki).toString('base64').match(/.{1,64}/g).join('\n')}\n-----END PUBLIC KEY-----`;
+
+          const env = {
+            WATCHDOG_STAGE: 'LIVE',
+            CLERK_JWT_KEY: pem,
+            CLERK_ISSUER: 'https://clerk.example',
+            CLERK_AUTHORIZED_PARTIES: 'https://admin.builtegrity.com,https://builtegrity.com',
+            CLERK_ADMIN_USER_IDS: 'user_owner',
+          };
+
+          async function token(extra = {}) {
+            const header = { alg: 'RS256', typ: 'JWT' };
+            const now = Math.floor(Date.now() / 1000);
+            const payload = {
+              sub: 'user_owner',
+              sid: 'sess_test',
+              iss: env.CLERK_ISSUER,
+              azp: 'https://admin.builtegrity.com',
+              iat: now,
+              nbf: now - 1,
+              exp: now + 300,
+              ...extra,
+            };
+            const enc = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+            const input = `${enc(header)}.${enc(payload)}`;
+            const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', pair.privateKey, new TextEncoder().encode(input));
+            return `${input}.${Buffer.from(signature).toString('base64url')}`;
+          }
+
+          async function principal(jwt) {
+            return authenticateClerkOperator(new Request('https://admin.builtegrity.com/console/', {
+              headers: { cookie: `__session=${jwt}` },
+            }), env);
+          }
+
+          const valid = await principal(await token());
+          if (valid?.role !== 'OWNER' || valid?.provider !== 'CLERK') throw new Error('Valid owner Clerk token did not authenticate');
+
+          const missingAzp = await principal(await token({ azp: undefined }));
+          if (missingAzp !== null) throw new Error('LIVE Clerk token without azp must be rejected');
+
+          const wrongAzp = await principal(await token({ azp: 'https://evil.example' }));
+          if (wrongAzp !== null) throw new Error('Clerk token from unauthorized party must be rejected');
+
+          const impersonated = await principal(await token({ act: { sub: 'user_support', sid: 'sess_actor' } }));
+          if (impersonated !== null) throw new Error('Impersonated Clerk session must not receive OWNER access');
+          NODE
+
+      - name: Guard release auth policy against regression
+        run: |
+          grep -q "provider === 'CLERK'" worker/src/auth.js
+          grep -q "RELEASE_STAGES" worker/src/auth.js
+          grep -q "INVALID_WATCHDOG_STAGE" worker/src/watchdogs.js
+          grep -q "CLERK_AUTHORIZED_PARTIES_REQUIRED" worker/src/watchdogs.js
+          grep -q "principal.claims?.act" worker/src/clerk-auth.js
+          grep -q "strictProvenance && !payload.azp" worker/src/clerk-auth.js
