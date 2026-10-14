@@ -1,0 +1,74 @@
+name: Final Autopilot Wiring CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - autopilot-final-wiring
+      - main
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check worker/src/autopilot.js
+          node --check worker/src/case-router.js
+          node --check worker/src/platform-credits.js
+
+      - name: Build full schema from zero
+        run: |
+          rm -f /tmp/builtegrity-final-wiring.db
+          for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
+            echo "Applying $file"
+            sqlite3 /tmp/builtegrity-final-wiring.db < "$file"
+          done
+          sqlite3 /tmp/builtegrity-final-wiring.db "PRAGMA foreign_key_check;" > /tmp/fk.txt
+          test ! -s /tmp/fk.txt
+
+      - name: Verify platform credits are actually scheduled
+        run: |
+          grep -q "processAuthorizedPlatformCredits" worker/src/case-router.js
+          grep -q "platform_credits: platformCredits" worker/src/case-router.js
+          grep -q "Idempotency-Key.*builtegrity-credit" worker/src/platform-credits.js
+          grep -q "platform_fee_credit_authorizations" worker/src/platform-credits.js
+          grep -q "finance:platform-credit" worker/src/platform-credits.js
+
+      - name: Verify Resend failures route to Resend
+        run: |
+          node --input-type=module <<'NODE'
+          import { classifyResolutionPlaybook } from './worker/src/autopilot.js';
+          for (const key of ['dependency:resend-config:RES-1','dependency:resend-api:RES-1']) {
+            const code = classifyResolutionPlaybook({ alert_key:key, category:'DEPENDENCY', severity:'ERROR' });
+            if (code !== 'RESEND_DEPENDENCY') throw new Error(`${key} routed to ${code}`);
+          }
+          NODE
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT provider_code||':'||outsourcing_allowed||':'||privileged_access_required FROM resolution_playbooks WHERE code='RESEND_DEPENDENCY';")" = "RESEND:1:1"
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM resolution_steps WHERE playbook_code='RESEND_DEPENDENCY';")" = "4"
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT support_url FROM resolution_providers WHERE code='RESEND';")" = "https://resend.com/support"
+          grep -q "dependency:resend-config" worker/src/autopilot.js
+          grep -q "dependency:resend-api" worker/src/autopilot.js
+          grep -q "resolveResendDependencyAlerts" worker/src/autopilot.js
+
+      - name: Verify no provider-specific dependency can silently become generic
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM resolution_playbooks WHERE code IN ('STRIPE_PAYOUT_FAILED','STRIPE_PAYOUT_DELAYED','STRIPE_ACCOUNT_REQUIREMENTS') AND provider_code='STRIPE';")" = "3"
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM resolution_playbooks WHERE code='CLERK_DEPENDENCY' AND provider_code='CLERK';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM resolution_playbooks WHERE code='PUBLIC_RUNTIME_DEPENDENCY' AND provider_code='CLOUDFLARE';")" = "1"
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM resolution_playbooks WHERE code='RESEND_DEPENDENCY' AND provider_code='RESEND';")" = "1"
+
+      - name: Verify automation remains fail-closed
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM workforce_vendors WHERE status='APPROVED' AND auto_dispatch_enabled=1;")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM workforce_vendor_capabilities WHERE approved=1;")" = "0"
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM non_outsourceable_work WHERE category IN ('SECURITY_DECISION','LEGAL_DECISION','PRICING_CHANGE','REVENUE_WRITEOFF','VENDOR_APPROVAL');")" = "5"
+          test "$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM resolution_playbooks WHERE code IN ('SECURITY_HOLD','LEGAL_HOLD','FINANCIAL_SAFETY') AND outsourcing_allowed=0;")" = "3"
+
+      - name: Verify every active playbook still has a runbook
+        run: |
+          missing="$(sqlite3 /tmp/builtegrity-final-wiring.db "SELECT COUNT(*) FROM resolution_playbooks p WHERE p.active=1 AND NOT EXISTS (SELECT 1 FROM resolution_steps s WHERE s.playbook_code=p.code);")"
+          test "$missing" = "0"
