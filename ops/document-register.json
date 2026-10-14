@@ -1,9 +1,29 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "register_id": "BUILTEGRITY-DOCUMENT-CONTROL-V1",
   "master_document": "docs/MASTER.md",
   "generated_by": "scripts/render-master-document.mjs",
   "policy": "Public-repository documentation may contain architecture, procedures, statuses and secret-location names, but never credential values, MFA recovery material, privileged legal communications, claim strategy, bank credentials or private provider contract terms. The master is generated from canonical machine-readable sources and this register; it is not an independent source of transaction truth.",
+  "automation_policy": {
+    "safe_auto_fix": [
+      "Regenerate docs/MASTER.md from canonical machine-readable inputs.",
+      "Rebuild owner-facing status tables and documentation links from the register.",
+      "Fail CI when a required registered document is missing or a docs/*.md file is unregistered.",
+      "Fail CI when a private-record class is incorrectly assigned a repository path.",
+      "Fail normal and LIVE system gates when the committed master is stale."
+    ],
+    "never_auto_decide": [
+      "Legal approval, legal interpretation or counsel clearance.",
+      "Owner commercial/pricing/refund-policy locks.",
+      "Provider selection, contracting, confidential pricing or automation approval.",
+      "Security exceptions or acceptance of material residual risk.",
+      "Repository visibility, branch protection or other external administrator controls.",
+      "Where confidential/privileged material should be stored beyond the approved storage class.",
+      "LIVE readiness solely because documentation exists."
+    ],
+    "repair_command": "npm run docs:fix",
+    "verification_command": "npm run docs:check"
+  },
   "documents": [
     {"id":"system_contract","title":"System Contract","path":"ops/system-contract.json","category":"GOVERNANCE","authority":"CANONICAL_MACHINE","security":"PUBLIC_REPO_SAFE","required":true,"purpose":"Cross-system architecture, commercial decision state, deployment/source-control gates and release invariants."},
     {"id":"owner_control_manifest","title":"Owner Control Manifest","path":"ops/owner-control-manifest.json","category":"GOVERNANCE","authority":"CANONICAL_MACHINE","security":"PUBLIC_REPO_SAFE","required":true,"purpose":"Owner recovery/readiness status for critical providers and systems."},
