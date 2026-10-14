@@ -15,9 +15,20 @@ GitHub Pages is not the production transaction runtime.
 
 ## Current pre-launch exception
 
-GitHub Pages currently deploys the repository root to the custom domain `builtegrity.com`. The deployed root page is explicitly marked as a test environment and states that no live merchant funds should move until production readiness is complete.
+GitHub Pages currently deploys the repository root to the custom domain `builtegrity.com`. That arrangement is tolerated only during PREVIEW/TEST because no live transaction traffic is authorized. It creates a deliberate LIVE blocker: GitHub Pages and Cloudflare Worker must not both claim ownership of the same production hostname.
 
-That arrangement is tolerated only during PREVIEW/TEST because no live transaction traffic is authorized. It creates a deliberate LIVE blocker: GitHub Pages and Cloudflare Worker must not both claim ownership of the same production hostname.
+The repository-side Pages artifact is intentionally a **bounded static pre-launch shell**. It may publish the pre-launch homepage, 404 page, stylesheet, robots/sitemap/CNAME, and static legal/privacy drafts. It must not publish the Worker transaction application, `public/` duplicate application tree, Worker source, migrations, transaction-engine fixtures, scripts, operations files, internal docs, templates, or other internal repository directories.
+
+The root `_config.yml` defines that repository-side Pages boundary. Pages Boundary CI builds the Jekyll artifact and verifies the exclusion list rather than trusting configuration text alone.
+
+## Root shell versus Worker application
+
+The repository has two intentionally different entry points during pre-launch:
+
+- root `index.html` — GitHub Pages temporary pre-launch shell; it must not expose `/console/`, `/pay/`, `/login/`, API or webhook routes that require the Worker;
+- `public/index.html` — Cloudflare Worker Static Assets application entry point; it may link to Worker-backed application routes.
+
+Do not reintroduce a rule that these two files must be byte-identical. Static legal/privacy documents may remain mirrored root ↔ `public/` where that mirror is intentional and CI-enforced.
 
 ## Required cutover before LIVE
 
@@ -37,6 +48,8 @@ A GitHub Pages mirror may remain only on a non-production compatibility hostname
 ## Failure rule
 
 If production hostname ownership is ambiguous, unknown, split, or has reverted to GitHub Pages, LIVE must fail closed. Do not create new protected payments until routing ownership is restored and independently verified.
+
+If the Pages artifact begins exposing internal repository paths or the Worker application before cutover, CI must fail even though the environment is still pre-launch. Pre-launch tolerance for the custom-domain conflict is not permission to publish a duplicate application or internal source tree.
 
 ## External GitHub administration
 
