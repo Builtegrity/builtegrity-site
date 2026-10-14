@@ -4,6 +4,10 @@ import {
   getMerchantComplianceStatus,
   recordMerchantLegalAcceptances,
 } from './legal-compliance.js';
+import {
+  getCurrentMerchantFeePolicyAcceptance,
+  recordMerchantFeePolicyAcceptance,
+} from './fee-refund-compliance.js';
 
 export async function handleMerchantComplianceRoute(request, env) {
   const url = new URL(request.url);
@@ -17,26 +21,45 @@ export async function handleMerchantComplianceRoute(request, env) {
 
   if (statusMatch && request.method === 'GET') {
     await requireMerchantMembership(env, principal, merchantId, 'VIEWER');
-    return json(await getMerchantComplianceStatus(env, merchantId));
+    const [legal, feePolicy] = await Promise.all([
+      getMerchantComplianceStatus(env, merchantId),
+      getCurrentMerchantFeePolicyAcceptance(env, merchantId),
+    ]);
+    return json({
+      ...legal,
+      fee_policy: feePolicy,
+      ready: Boolean(legal.ready && feePolicy.ready),
+      reasons: [
+        ...(legal.reasons || []),
+        ...(feePolicy.ready ? [] : ['FEE_REFUND_POLICY_ACCEPTANCE_MISSING']),
+      ],
+    });
   }
 
   if (acceptMatch && request.method === 'POST') {
     requireSameOrigin(request, url);
     await requireMerchantMembership(env, principal, merchantId, 'ADMIN');
     const body = await readJson(request);
-    const result = await recordMerchantLegalAcceptances(
-      env,
-      merchantId,
-      principal.sub,
-      body,
-      {
-        // Raw network/browser evidence is never persisted. legal-compliance.js salts and
-        // hashes these values before the immutable acceptance row is written.
-        ip: request.headers.get('CF-Connecting-IP') || '',
-        userAgent: request.headers.get('User-Agent') || '',
-      },
-    );
-    return json(result, 201);
+    const evidence = {
+      ip: request.headers.get('CF-Connecting-IP') || '',
+      userAgent: request.headers.get('User-Agent') || '',
+    };
+
+    // Both acknowledgments are required in the same affirmative clickwrap action. The generic
+    // legal-document acceptance and the fee/refund acknowledgment are stored as separate,
+    // immutable evidence so a future document change cannot obscure what the merchant agreed to.
+    await recordMerchantLegalAcceptances(env, merchantId, principal.sub, body, evidence);
+    const feePolicy = await recordMerchantFeePolicyAcceptance(env, merchantId, principal.sub, body, evidence);
+    const legal = await getMerchantComplianceStatus(env, merchantId);
+    return json({
+      ...legal,
+      fee_policy: feePolicy,
+      ready: Boolean(legal.ready && feePolicy.ready),
+      reasons: [
+        ...(legal.reasons || []),
+        ...(feePolicy.ready ? [] : ['FEE_REFUND_POLICY_ACCEPTANCE_MISSING']),
+      ],
+    }, 201);
   }
 
   return json({ error: 'Method not allowed' }, 405, { Allow: statusMatch ? 'GET' : 'POST' });
