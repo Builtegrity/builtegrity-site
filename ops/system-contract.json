@@ -72,6 +72,15 @@
     "effective_rate_warn_bps": 150,
     "policy": "Runtime financial evidence is authoritative. Unknown or stale evidence fails closed for affected growth/payment actions."
   },
+  "source_control": {
+    "canonical_repository": "Builtegrity/builtegrity-site",
+    "canonical_branch": "main",
+    "branch_protection_required_for_live": true,
+    "required_status_checks_required_for_live": true,
+    "direct_unreviewed_main_bypass_allowed_for_live": false,
+    "verification_status": "NOT_VERIFIED",
+    "note": "The connected GitHub App can build and merge through PRs but cannot configure repository administration. main branch protection/ruleset and required CI must be enabled and independently verified before LIVE."
+  },
   "canonical_sources": {
     "database_schema": "migrations/*.sql in lexical order",
     "transaction_vocabulary": "transaction-engine/definitions.json plus this contract",
