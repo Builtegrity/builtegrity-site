@@ -1,7 +1,7 @@
 import { evaluateLegalReadiness } from './legal-compliance.js';
 
 export async function assertMerchantLegalReadyForLiveAction(env, merchantId, actionLabel = 'Live merchant activity') {
-  const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').toUpperCase();
+  const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').trim().toUpperCase();
   if (!['PILOT','LIVE'].includes(stage)) return { enforced: false, stage };
 
   // The SQL readiness views are deliberately stricter than status labels: they require

@@ -1,3 +1,5 @@
+import { assertStripeEnvironment } from './launch-assurance.js';
+
 function requireEnv(env, name) {
   const value = env[name];
   if (!value) throw new Error(`Missing required Stripe configuration: ${name}`);
@@ -22,6 +24,7 @@ export function buildStripeOAuthUrl(env, stateToken) {
 }
 
 export async function exchangeStripeOAuthCode(env, code) {
+  assertStripeEnvironment(env);
   const secret = requireEnv(env, 'STRIPE_SECRET_KEY');
   const body = new URLSearchParams({
     grant_type: 'authorization_code',
@@ -47,6 +50,7 @@ export async function exchangeStripeOAuthCode(env, code) {
 }
 
 export async function deauthorizeStripeAccount(env, stripeUserId) {
+  assertStripeEnvironment(env);
   const secret = requireEnv(env, 'STRIPE_SECRET_KEY');
   const clientId = requireEnv(env, 'STRIPE_CONNECT_CLIENT_ID');
   const body = new URLSearchParams({ client_id: clientId, stripe_user_id: stripeUserId });

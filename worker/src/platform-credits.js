@@ -1,3 +1,5 @@
+import { assertStripeEnvironment } from './launch-assurance.js';
+
 export async function processAuthorizedPlatformCredits(env, options = {}) {
   const limit = Math.min(100, Math.max(1, Number(options.limit || 25)));
   const rows = await env.DB.prepare(`
@@ -41,6 +43,7 @@ export async function processAuthorizedPlatformCredits(env, options = {}) {
     body.set('metadata[reason_code]', credit.reason_code);
 
     try {
+      assertStripeEnvironment(env);
       const response = await fetch(
         `https://api.stripe.com/v1/application_fees/${encodeURIComponent(credit.stripe_application_fee_id)}/refunds`,
         {

@@ -209,6 +209,27 @@ Use `docs/owner-independence-and-disaster-recovery.md` and `ops/owner-control-ma
 - [ ] Every `required_for_live` owner-control system is `VERIFIED`.
 - [ ] `npm run owner:gate:live` passes.
 
+## Gate P0 — Personal financial exposure policy — BLOCKING BEFORE FIRST LIVE PILOT
+
+These are voluntary owner launch requirements, not claims that the law mandates an LLC or insurance for every software business.
+
+- [ ] `POLICY-LIMITED-LIABILITY-ENTITY`: active LLC/corporation, correct company contracting and processor/bank identities, separate books, and guarantee review evidenced.
+- [ ] `POLICY-TECH-EO-CYBER-COVERAGE`: coverage actually bound for this product, insured parties and defense terms verified, exclusions/limits/retention understood and funded, retroactive date and notice route reviewed.
+- [ ] `POLICY-PROCESSOR-LOSS-ALLOCATION`: actual Connect account configuration and applicable terms reviewed; connected-account losses assigned to Stripe within documented exceptions. Direct charges alone are not clearance.
+- [ ] Each policy row is SATISFIED with a private evidence reference, a nonfuture verification timestamp and an unexpired review date. NOT_APPLICABLE does not satisfy these launch requirements.
+- [ ] Insurance review date is no later than policy expiration. Cancellation, material product/processor changes or loss of entity standing immediately reopens the relevant requirement.
+- [ ] A named human reviews notices and renewals; configuration cannot verify the authenticity or legal adequacy of an uploaded reference.
+
+Migration 0063 seeds these requirements OPEN. No AI, demo, CI result or owner assertion substitutes for formation documents, a bound policy and qualified review. Keep private documents out of this public repository. Existing statutory, contractual, security and counsel gates remain mandatory.
+
+PREVIEW/TEST reject live Stripe credentials at API, OAuth exchange and fee-credit boundaries. Unknown credential formats/stages fail closed. PILOT/LIVE retain all legal checks even when test credentials are used for a drill. This prevents an environment label from disguising live financial activity; it does not authenticate evidence or establish insurance coverage.
+
+### Litigation probability evidence
+
+As reviewed October 14, 2026, no defensible public launch-to-first-lawsuit cohort for small U.S. payment-documentation platforms was identified. Insurance claims, cyber incidents, demand letters, filed suits and judgments are distinct outcomes. Coalition's 2026 cyber report covers 100,000+ global policyholders and 2025 claims, not the first lawsuit after launch of comparable startups (https://www.coalitioninc.com/claims-report/2026). Hiscox's 2025 underinsurance survey covers 2,000 U.S. small-business owners and insurance understanding, not that probability (https://www.hiscox.com/underinsurance).
+
+Do not advertise or internally certify a 90–100% no-lawsuit likelihood. Reassess with a broker/counsel using matched industry, company age, revenue, payment volume, record count, states served, controls, claims definition and observation period. Incident date, discovery date, demand date and filing date can differ substantially. A later LLC or policy does not automatically cover earlier personal obligations or acts.
+
 ## Gate P — Pilot suitability — BLOCKING BEFORE FIRST LIVE PILOT
 
 - [ ] U.S. merchant with eligible existing Stripe account.
