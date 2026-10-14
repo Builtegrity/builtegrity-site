@@ -66,6 +66,7 @@ export function classifyResolutionPlaybook(alert) {
   if (key.startsWith('tx:fee-shortfall:')) return 'FEE_RECONCILIATION';
   if (key === 'dependency:clerk-jwks') return 'CLERK_DEPENDENCY';
   if (key === 'dependency:public-health-route') return 'PUBLIC_RUNTIME_DEPENDENCY';
+  if (key.startsWith('dependency:resend-')) return 'RESEND_DEPENDENCY';
   if (key.startsWith('config:')) return 'PLATFORM_CONFIGURATION';
   if (key.startsWith('tx:complete-not-accounted:') || key.startsWith('merchant:processor-account:')) return 'DATA_INTEGRITY';
   if (key.startsWith('merchant:financial-responsibility:') || key.startsWith('finance:')) return 'FINANCIAL_SAFETY';
@@ -173,7 +174,7 @@ async function maybeSendGuidance(env, instance, playbook, context) {
   }
   if (!env.RESEND_API_KEY || !env.ALERT_EMAIL_FROM) {
     await markResolutionBlocked(env, instance.id, 'Resend delivery configuration is unavailable');
-    await openAutopilotAlert(env, `resolution:delivery-unavailable:${instance.id}`, 'RESOLUTION', 'ERROR', 'RESOLUTION', instance.id,
+    await openAutopilotAlert(env, `dependency:resend-config:${instance.id}`, 'DEPENDENCY', 'ERROR', 'RESOLUTION', instance.id,
       'Resolution guidance cannot be delivered because RESEND_API_KEY or ALERT_EMAIL_FROM is missing.');
     return { sent: false, blocked: true };
   }
@@ -210,16 +211,20 @@ async function maybeSendGuidance(env, instance, playbook, context) {
              next_check_at=datetime('now','+15 minutes'), last_error=NULL
        WHERE id=?
     `).bind(instance.id).run();
+    await resolveResendDependencyAlerts(env, instance.id);
     return { sent: true };
   } catch (error) {
+    const message = String(error?.message || error).slice(0, 1000);
     await env.DB.prepare(`
       INSERT INTO resolution_notifications
         (id,resolution_instance_id,audience_type,recipient,status,error_text)
       VALUES (?,?,?,?, 'FAILED', ?)
-    `).bind(notificationId, instance.id, playbook.party_type, recipient, String(error?.message || error).slice(0, 1000)).run();
+    `).bind(notificationId, instance.id, playbook.party_type, recipient, message).run();
     await env.DB.prepare(`
       UPDATE resolution_instances SET last_error=?, updated_at=CURRENT_TIMESTAMP WHERE id=?
-    `).bind(String(error?.message || error).slice(0, 1000), instance.id).run();
+    `).bind(message, instance.id).run();
+    await openAutopilotAlert(env, `dependency:resend-api:${instance.id}`, 'DEPENDENCY', 'ERROR', 'RESOLUTION', instance.id,
+      `Resend failed while delivering required resolution guidance: ${message}`);
     return { sent: false, failed: true };
   }
 }
@@ -540,6 +545,14 @@ async function releaseAbandonedCarry(env) {
     if (outcome.released) released += 1;
   }
   return released;
+}
+
+async function resolveResendDependencyAlerts(env, instanceId) {
+  await env.DB.prepare(`
+    UPDATE system_alerts
+       SET status='RESOLVED', resolved_at=CURRENT_TIMESTAMP, last_seen_at=CURRENT_TIMESTAMP
+     WHERE status='OPEN' AND alert_key IN (?, ?)
+  `).bind(`dependency:resend-config:${instanceId}`, `dependency:resend-api:${instanceId}`).run();
 }
 
 async function markResolutionBlocked(env, instanceId, message) {
