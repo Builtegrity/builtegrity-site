@@ -8,84 +8,104 @@ Clerk answers **who is this authenticated application user?**
 
 Builtegrity/D1 answers **which merchant, partner, role, permissions, and records may that user access?**
 
-Do not make Clerk Organizations the merchant hierarchy, tenancy store, or authorization source. The existing `merchant_access` and `partner_access` tables are the Builtegrity-owned authorization layer. This keeps merchant count from creating avoidable identity-provider organization costs and keeps the product portable to another identity provider later.
+Do not make Clerk Organizations the merchant hierarchy, tenancy store, or authorization source. Builtegrity-owned access tables remain the authorization layer so the product can scale without unnecessary identity-provider organization coupling and can later replace the identity provider without replacing business records.
 
-A consumer does not need a Clerk account simply to pay or view their own transaction record. Public transaction access uses an unguessable Builtegrity-owned record token. Never expose internal economics through that public record route.
+A consumer does not need a Clerk account merely to pay or view their own safe transaction record. Public record access uses an unguessable Builtegrity-owned token and never exposes internal economics.
 
-## 2. The Builtegrity fee is merchant-paid
+## 2. The Builtegrity Platform Fee is merchant-side economics
 
 `transactions.fee_payer` is constrained to `MERCHANT`.
 
-For Stripe Connect V1, the transaction remains a direct charge on the connected merchant account and Builtegrity's revenue is collected through `application_fee_amount`. Do not convert the V1 flow into a consumer surcharge and do not make Builtegrity the merchant's payment processor merely to collect the integrity fee.
+For Stripe Connect V1, the customer purchase remains a direct charge on the connected merchant account. Builtegrity collects the disclosed Platform Fee using the application-fee mechanism. Do not turn V1 into a consumer surcharge and do not make Builtegrity the merchant's processor merely to collect the Platform Fee.
 
-The merchant-facing agreement and pricing UI must still disclose the Builtegrity fee clearly. "Merchant-paid" means it is deducted from merchant proceeds, not hidden from contractual disclosure.
+Merchant-side economics still require clear contractual disclosure/acceptance.
 
-## 3. Every transaction has hidden unit economics immediately
+## 3. Protection and accounting are different axes
 
-`transaction_economics_ledger` is internal-only and supports sub-cent precision using **micros**:
+`PROTECTED` is the record/revenue classification that can create Builtegrity transaction-fee revenue. `ACCOUNTED` is an integrity/completeness state.
 
-- `$1.00 = 1,000,000 micros`
-- estimated fee revenue
-- estimated core infrastructure
-- estimated transaction-email budget
-- estimated lifetime storage
-- actual integrity-fee revenue when Stripe records the application fee
-- adjustments
-- future partner share
-- PDF generation/cache-delivery costs
-- future actual metered provider costs
+`OBSERVED` and `IMPORTED` can be accounted/reconciled without becoming PROTECTED and without creating protected transaction-fee revenue.
 
-Estimated and actual entries must never be mixed or mislabeled. `transaction_economics_summary` exposes estimated and actual contribution separately.
+Economics, statements, books, and tax workpapers must use record classification—not payment success or ACCOUNTED status—to decide whether a transaction belongs to protected revenue/volume.
 
-The current conservative cost model is stored in `transaction_cost_models`, not hard-coded into pricing logic. New models can be activated as real production measurements improve.
+## 4. Exact fee entitlement, cash, and carry are separate facts
 
-The migration trigger initializes economics automatically whenever a transaction is inserted, so the cost layer does not depend on a developer remembering to call an application helper.
+Never collapse these into one field or one label:
 
-## 4. PDFs are generated automatically on request
+1. **Exact transaction-fee entitlement** — the fee attributable to this transaction, represented in micros (`integrity_fee_earned_micros` / locked pricing evidence).
+2. **Gross application-fee cash** — the processor-confirmed whole-cent application fee attached to the payment. It may include prior carry.
+3. **Current retained fee cash** — gross application-fee cash less later application-fee refunds/credits.
+4. **Current residual generated** — the sub-cent part of this transaction's exact entitlement.
+5. **Prior carry settled** — whole cents of previously accrued residual collected on this later successful protected payment.
 
-The canonical structured transaction record remains authoritative. PDFs are rendered views of that record.
+A later payment that settles prior carry is collecting prior entitlement. It must not create a second entitlement entry or be described as though the later transaction earned that extra amount.
+
+The merchant carry ledger is a settlement bridge between exact internal entitlement and processor whole-cent collection. It is not a separate subscription/billing system.
+
+## 5. Transaction economics ledger
+
+`transaction_economics_ledger` is internal-only and supports sub-cent precision using micros:
+
+- `$1.00 = 1,000,000 micros`;
+- estimated fee revenue/economic target;
+- estimated infrastructure/email/storage/support cost;
+- actual application-fee cash revenue when processor evidence is recorded;
+- actual adjustments/refunds/credits;
+- future partner share;
+- future actual metered provider costs.
+
+Estimated and actual entries must never be mixed or mislabeled. Actual books reconciliation follows the ACTUAL economics/adjustment evidence rather than re-deriving revenue from a statement label.
+
+The current conservative cost model lives in `transaction_cost_models` and financial-safety policy. It is not hidden inside merchant pricing logic and must be refreshed as provider invoices/usage become known.
+
+## 6. Revenue timing and fractional entitlement
+
+The exact fee target can exist before processor settlement, but LIVE reporting must be explicit about the basis:
+
+- **entitlement/attribution basis** — exact fee assigned to the protected service event;
+- **cash/processor basis** — whole-cent application-fee cash actually processor-confirmed;
+- **adjustment basis** — later fee refund/credit or other approved correction.
+
+Fractional residuals can accrue in the carry ledger after the relevant successful payment event. They do not become a second transaction's entitlement when later settled.
+
+Company books and external accounting integrations should use actual cash/adjustment evidence according to the approved accounting policy. Product analytics may also show exact entitlement, but must label it as such.
+
+## 7. Record PDFs
+
+The canonical structured transaction record remains authoritative. PDFs are rendered views.
 
 Customer flow:
 
-1. Customer holds an unguessable record token.
-2. `GET /api/records/:token` returns the safe public transaction view.
-3. `GET /api/records/:token/pdf` creates or retrieves the PDF automatically.
-4. Each request is written to `transaction_pdf_requests`.
-5. If `TRANSACTION_RECORDS` R2 is configured, generated PDFs are cached by transaction + record version.
-6. A cache miss generates the PDF in the Worker; a cache hit returns the existing version.
-7. No owner/operator action is required.
+1. customer holds a high-entropy record token;
+2. `GET /api/records/:token` returns the safe public view;
+3. `GET /api/records/:token/pdf` creates/retrieves the PDF automatically;
+4. requests are audited;
+5. R2 caches durable rendered artifacts by transaction/record version;
+6. cache misses render in the Worker;
+7. no routine owner action is required.
 
-Operator flow:
+Operator PDF access remains authenticated. Public PDFs must not expose the hidden economics ledger, partner economics, legal-response secrets, provider secrets, or other internal-only data.
 
-`GET /api/transactions/:txId/pdf` requires application authentication and generates the same transaction-record PDF automatically.
+## 8. Security boundaries
 
-The public PDF must not expose the hidden economics ledger.
+- Public payment/record tokens are high entropy.
+- Clerk session identity is independent of webhook authenticity.
+- D1 owns tenant authorization.
+- Stripe webhooks are signature-authenticated.
+- Internal economics are available only through authorized internal surfaces.
+- PDF generation is deterministic from canonical records rather than arbitrary HTML/URL rendering.
+- Immutable/append-oriented evidence is corrected through later events/adjustments, not silent rewrites.
 
-## 5. Security boundaries
+## 9. Cost measurement rule
 
-- Public payment/record tokens are high-entropy and unguessable.
-- Clerk sessions are not required for consumer record access.
-- Clerk identity does not determine Stripe webhook authenticity.
-- D1 owns tenancy/authorization.
-- Stripe webhooks remain signature-authenticated.
-- Internal transaction economics are available only through authenticated internal transaction APIs/console surfaces.
-- PDF generation is deterministic from the canonical record and does not permit arbitrary HTML/URL rendering.
+The economics layer should become more accurate over time, not merely more optimistic.
 
-## 6. Cost measurement rule
+Provider invoices/usage should eventually feed actual cost entries/allocations for Worker CPU/requests, D1, R2, email, authentication, observability, refunds/credits, partner share, and support burden.
 
-The economics layer should get more accurate over time, not merely more optimistic.
+Until a number is supported by actual metering/invoice allocation, store it as `ESTIMATED`.
 
-Provider invoices/usage should eventually feed actual cost entries for:
+## 10. Canonical consistency rule
 
-- Worker request/CPU usage
-- D1 reads/writes/storage
-- R2 operations/storage
-- Resend messages
-- PDF cache/storage operations
-- authentication expense allocation
-- monitoring/observability
-- refunds/credits
-- partner revenue share
-- support expense allocation where useful
+`ops/system-contract.json`, pricing/protection migrations, runtime economics, statements, financial safety, books, tax summaries, and merchant-facing legal disclosures must describe compatible facts.
 
-Until an amount is supported by actual metering or an invoice allocation, store it as `ESTIMATED`.
+`npm run system:coherence` exists specifically to stop drift between those layers before it reaches LIVE.
