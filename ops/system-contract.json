@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "contract_id": "BUILTEGRITY-SYSTEM-V1",
   "release_target": "TX-LIVE-0001",
   "release_rule": "Live money requires system coherence, owner independence, production runtime readiness, commercial owner locks, and applicable legal/compliance approvals. A technically working deployment is not permission to process live money.",
@@ -81,8 +81,20 @@
     "verification_status": "NOT_VERIFIED",
     "note": "The connected GitHub App can build and merge through PRs but cannot configure repository administration. main branch protection/ruleset and required CI must be enabled and independently verified before LIVE."
   },
+  "migration_lineage": {
+    "baseline_commit": "a07986c52abfc8e679ccb1dc9ae193a5a6f2854b",
+    "frozen_through_version": 60,
+    "historical_migrations_are_immutable": true,
+    "future_migrations_are_additive_only": true,
+    "future_versions_must_be_unique_and_contiguous": true,
+    "grandfathered_duplicate_versions": {
+      "0038": ["0038_compliance_evidence_and_jurisdiction_catalog.sql", "0038_state_readiness_views.sql"],
+      "0053": ["0053_legal_insert_path_hardening.sql", "0053_resend_dependency_resolution.sql"]
+    },
+    "rule": "Never rename, delete, or edit a migration already frozen in the baseline. Correct historical schema mistakes with a new migration. Duplicate numeric prefixes are forbidden after the frozen lineage."
+  },
   "canonical_sources": {
-    "database_schema": "migrations/*.sql in lexical order",
+    "database_schema": "migrations/*.sql in lexical order, protected by migration-lineage immutability",
     "transaction_vocabulary": "transaction-engine/definitions.json plus this contract",
     "runtime": "worker/src",
     "public_application_assets": "public/",
