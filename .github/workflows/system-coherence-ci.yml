@@ -5,7 +5,7 @@ on:
   push:
     branches:
       - main
-      - system-coherence-hardening-v1
+      - system-coherence-hardening-v2
   workflow_dispatch:
 
 jobs:
@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install runtime dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
@@ -20,11 +22,15 @@ jobs:
       - name: Check coherence-critical JavaScript syntax
         run: |
           node --check scripts/check-system-coherence.mjs
+          node --check scripts/check-migration-lineage.mjs
           node --check worker/src/monthly-statements.js
           node --check worker/src/pricing.js
           node --check worker/src/fee-refund-compliance.js
           node --check worker/src/legal-enforcement.js
           node --check worker/src/legal-incident-autopilot.js
+
+      - name: Freeze historical D1 migration lineage
+        run: npm run db:lineage
 
       - name: Build complete D1 schema from zero
         run: |

@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.2",
   "contract_id": "BUILTEGRITY-SYSTEM-V1",
   "release_target": "TX-LIVE-0001",
   "release_rule": "Live money requires system coherence, owner independence, production runtime readiness, commercial owner locks, and applicable legal/compliance approvals. A technically working deployment is not permission to process live money.",
@@ -30,8 +30,10 @@
     "processor_collection_method": "STRIPE_APPLICATION_FEE",
     "transaction_fee_attribution_precision": "MICROS",
     "processor_collection_precision": "SMALLEST_CURRENCY_UNIT",
-    "carry_rule": "A transaction's exact fee entitlement is attributed in micros. Only whole cents are placed on a Stripe application fee. A residual smaller than one cent accrues to the merchant carry ledger and may be collected on a later successful protected payment. Later carry settlement is cash collection of prior fee entitlement, not new fee entitlement for the later transaction.",
-    "protection_rule": "PROTECTED requires controlled Builtegrity route, successful payment history, and processor-confirmed gross application fee exactly matching the locked whole-cent fee plus any valid reserved carry collected on that payment."
+    "carry_rule": "A transaction's exact fee entitlement is attributed in micros only after the transaction becomes PROTECTED. Only whole cents are placed on a Stripe application fee. A residual smaller than one cent from a PROTECTED transaction accrues to the merchant carry ledger and may be reserved before a later checkout. Reserved prior carry is SETTLED only when that later payment itself becomes PROTECTED; a fee-exception reservation remains releasable. Later carry settlement is cash collection of prior fee entitlement, not new fee entitlement for the later transaction.",
+    "protection_rule": "PROTECTED requires the Builtegrity-controlled route, required customer jurisdiction attestation and pre-checkout legal-gate evidence, successful payment history, and processor-confirmed gross application fee exactly matching the locked whole-cent current-transaction fee plus any valid reserved prior carry collected on that payment.",
+    "processor_truth_rule": "Real processor payment/fee facts must still be recorded even if a legal or protection prerequisite is missing. Missing pre-checkout legal evidence blocks PROTECTED promotion and routes the record to review; it must not cause truthful Stripe webhook data to be rejected or discarded.",
+    "entitlement_vs_cash_rule": "Exact transaction-fee entitlement belongs to the originating PROTECTED transaction in micros. Processor application-fee cash is a separate whole-cent fact and may include prior carry settlement. Cash-basis books may reconcile the latter without re-attributing prior carry as new entitlement."
   },
   "commercial_decisions": {
     "pricing": {
@@ -81,8 +83,20 @@
     "verification_status": "NOT_VERIFIED",
     "note": "The connected GitHub App can build and merge through PRs but cannot configure repository administration. main branch protection/ruleset and required CI must be enabled and independently verified before LIVE."
   },
+  "migration_lineage": {
+    "baseline_commit": "a07986c52abfc8e679ccb1dc9ae193a5a6f2854b",
+    "frozen_through_version": 60,
+    "historical_migrations_are_immutable": true,
+    "future_migrations_are_additive_only": true,
+    "future_versions_must_be_unique_and_contiguous": true,
+    "grandfathered_duplicate_versions": {
+      "0038": ["0038_compliance_evidence_and_jurisdiction_catalog.sql", "0038_state_readiness_views.sql"],
+      "0053": ["0053_legal_insert_path_hardening.sql", "0053_resend_dependency_resolution.sql"]
+    },
+    "rule": "Never rename, delete, or edit a migration already frozen in the baseline. Correct historical schema mistakes with a new migration. Duplicate numeric prefixes are forbidden after the frozen lineage."
+  },
   "canonical_sources": {
-    "database_schema": "migrations/*.sql in lexical order",
+    "database_schema": "migrations/*.sql in lexical order, protected by migration-lineage immutability",
     "transaction_vocabulary": "transaction-engine/definitions.json plus this contract",
     "runtime": "worker/src",
     "public_application_assets": "public/",

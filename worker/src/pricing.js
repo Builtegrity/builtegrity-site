@@ -37,8 +37,9 @@ export function calculateAmountBandFee(amountCents, rule, band) {
   if (!Number.isSafeInteger(feeMicros) || feeMicros < 0) throw new Error('Calculated pricing exceeds safe integer precision');
   if (!uncapped) feeMicros = Math.min(feeMicros, maximumCents * MICROS_PER_CENT);
 
-  // Never round the merchant upward. Stripe receives whole cents; the successful-payment
-  // residual is carried forward exactly and can be settled on a later protected payment.
+  // Never round the merchant upward. Stripe receives whole cents. A residual becomes
+  // economically entitled only after the transaction reaches PROTECTED; it can then be
+  // carried forward exactly and collected on a later PROTECTED payment.
   const processorCents = Math.min(amount, Math.floor(feeMicros / MICROS_PER_CENT));
   const residualMicros = Math.max(0, feeMicros - (processorCents * MICROS_PER_CENT));
 
@@ -155,11 +156,19 @@ export async function reserveAvailableFeeCarry(env, transactionId) {
     const tx = await env.DB.prepare(`
       SELECT id, merchant_id, currency, amount_cents, pricing_calculated_cents,
              pricing_carry_reserved_cents, pricing_carry_settled_cents,
-             stripe_checkout_session_id, payment_at
+             pricing_carry_released_at, pricing_carry_settlement_confirmed_at,
+             stripe_checkout_session_id, payment_at, record_classification
       FROM transactions WHERE id = ?
     `).bind(transactionId).first();
     if (!tx) throw statusError('Transaction not found while reserving fee carry', 404);
-    if (tx.payment_at || tx.stripe_checkout_session_id || Number(tx.pricing_carry_settled_cents || 0) > 0) return tx;
+    if (
+      tx.payment_at ||
+      tx.stripe_checkout_session_id ||
+      tx.pricing_carry_released_at ||
+      tx.pricing_carry_settlement_confirmed_at ||
+      tx.record_classification === 'PROTECTED' ||
+      Number(tx.pricing_carry_settled_cents || 0) > 0
+    ) return tx;
     if (Number(tx.pricing_carry_reserved_cents || 0) > 0) return tx;
 
     const balance = await env.DB.prepare(`
@@ -175,8 +184,14 @@ export async function reserveAvailableFeeCarry(env, transactionId) {
       await env.DB.prepare(`
         UPDATE transactions
            SET pricing_carry_reserved_cents = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE id = ? AND payment_at IS NULL AND stripe_checkout_session_id IS NULL
-           AND pricing_carry_reserved_cents = 0 AND pricing_carry_settled_cents = 0
+         WHERE id = ?
+           AND payment_at IS NULL
+           AND stripe_checkout_session_id IS NULL
+           AND pricing_carry_released_at IS NULL
+           AND pricing_carry_settlement_confirmed_at IS NULL
+           AND record_classification <> 'PROTECTED'
+           AND pricing_carry_reserved_cents = 0
+           AND pricing_carry_settled_cents = 0
       `).bind(reserveCents, transactionId).run();
       return await env.DB.prepare(`SELECT * FROM transactions WHERE id = ?`).bind(transactionId).first();
     } catch (error) {
@@ -188,19 +203,44 @@ export async function reserveAvailableFeeCarry(env, transactionId) {
 
 export async function releaseFeeCarryReservation(env, transactionId, reason = 'abandoned checkout') {
   const tx = await env.DB.prepare(`
-    SELECT id, payment_at, pricing_carry_reserved_cents, pricing_carry_settled_cents
+    SELECT id, payment_at, record_classification,
+           pricing_carry_reserved_cents, pricing_carry_settled_cents,
+           pricing_carry_released_at, pricing_carry_settlement_confirmed_at
     FROM transactions WHERE id = ?
   `).bind(transactionId).first();
-  if (!tx || tx.payment_at || Number(tx.pricing_carry_settled_cents || 0) > 0 || Number(tx.pricing_carry_reserved_cents || 0) <= 0) {
+
+  const reservedCents = Number(tx?.pricing_carry_reserved_cents || 0);
+  const settledCents = Number(tx?.pricing_carry_settled_cents || 0);
+  const canReleaseAfterPayment = Boolean(tx?.payment_at) && tx?.record_classification === 'FEE_EXCEPTION';
+  const canReleaseBeforePayment = !tx?.payment_at;
+
+  if (
+    !tx ||
+    reservedCents <= 0 ||
+    settledCents > 0 ||
+    tx.pricing_carry_released_at ||
+    tx.pricing_carry_settlement_confirmed_at ||
+    tx.record_classification === 'PROTECTED' ||
+    (!canReleaseBeforePayment && !canReleaseAfterPayment)
+  ) {
     return { released: false };
   }
-  await env.DB.prepare(`
+
+  const result = await env.DB.prepare(`
     UPDATE transactions
        SET pricing_carry_reserved_cents = 0,
            pricing_carry_released_at = CURRENT_TIMESTAMP,
            updated_at = CURRENT_TIMESTAMP
-     WHERE id = ? AND payment_at IS NULL AND pricing_carry_settled_cents = 0
+     WHERE id = ?
+       AND pricing_carry_reserved_cents > 0
+       AND pricing_carry_settled_cents = 0
+       AND pricing_carry_released_at IS NULL
+       AND pricing_carry_settlement_confirmed_at IS NULL
+       AND record_classification <> 'PROTECTED'
+       AND (payment_at IS NULL OR record_classification = 'FEE_EXCEPTION')
   `).bind(transactionId).run();
+
+  if (Number(result.meta?.changes || 0) === 0) return { released: false };
   return { released: true, transaction_id: transactionId, reason };
 }
 
