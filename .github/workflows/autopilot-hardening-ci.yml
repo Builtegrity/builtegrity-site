@@ -22,7 +22,7 @@ jobs:
           node --check worker/src/stripe.js
           node --check worker/src/webhooks.js
 
-      - name: Build full schema from zero
+      - name: Build full schema from zero and establish synthetic legal clearance
         run: |
           rm -f /tmp/builtegrity-autopilot.db
           for file in $(find migrations -maxdepth 1 -type f -name '*.sql' | sort); do
@@ -30,15 +30,40 @@ jobs:
             sqlite3 /tmp/builtegrity-autopilot.db < "$file"
           done
           sqlite3 /tmp/builtegrity-autopilot.db < transaction-engine/seed-tx-0001.sql
+          sqlite3 /tmp/builtegrity-autopilot.db < transaction-engine/ci-legal-clearance.sql
           sqlite3 /tmp/builtegrity-autopilot.db "PRAGMA foreign_key_check;" > /tmp/fk.txt
           test ! -s /tmp/fk.txt
+          test "$(sqlite3 /tmp/builtegrity-autopilot.db "SELECT state FROM platform_legal_readiness;")" = "READY"
+
+      - name: Verify legal insert paths are fail closed
+        run: |
+          test "$(sqlite3 /tmp/builtegrity-autopilot.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('transactions_checkout_gate_requires_customer_state_pack_insert','transactions_checkout_requires_customer_attestation_insert','transactions_checkout_session_requires_customer_state_pack_insert','transactions_protected_requires_checkout_legal_gate_insert');")" = "4"
+          if sqlite3 /tmp/builtegrity-autopilot.db "
+            INSERT INTO transactions (
+              id,purchase_id,merchant_id,customer_id,transaction_type,description,amount_cents,currency,
+              terms_version,terms_snapshot,integrity_fee_earned_cents,bg_fee_earned_cents,
+              fee_collection_method,payment_access_token,record_classification,payment_at,
+              stripe_application_fee_id,application_fee_gross_confirmed_cents,
+              pricing_version_id,pricing_percentage_bps,pricing_minimum_cents,pricing_maximum_cents,
+              pricing_calculated_cents,pricing_locked_at
+            ) VALUES (
+              'TX-ILLEGAL-INSERT','PUR-0001','MER-0001','CUST-0001','PAYMENT','Illegal insert test',99,'USD',
+              'TERMS-001','Illegal insert test',1,1,
+              'STRIPE_APPLICATION_FEE','illegal-insert-token','PROTECTED',CURRENT_TIMESTAMP,
+              'fee_illegal_insert',1,
+              'BG_STANDARD_V1',10,0,9007199254740991,1,CURRENT_TIMESTAMP
+            );" 2>/tmp/legal-insert-block.txt; then
+            echo 'Expected direct PROTECTED insert without jurisdiction evidence to fail'
+            exit 1
+          fi
+          grep -Eq 'PROTECTED insert requires|PROTECTED requires' /tmp/legal-insert-block.txt
 
       - name: Verify exactly one protection classifier survives
         run: |
           test "$(sqlite3 /tmp/builtegrity-autopilot.db "SELECT promotion_triggers||':'||exception_triggers||':'||history_guards FROM protection_classifier_inventory;")" = "1:1:1"
           test "$(sqlite3 /tmp/builtegrity-autopilot.db "SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name IN ('transactions_confirm_protected_after_historical_truth','transactions_flag_fee_exception_after_historical_truth','transactions_protected_requires_confirmed_history_insert','transactions_protected_requires_confirmed_history_update');")" = "0"
 
-      - name: Verify earned carry can settle without breaking PROTECTED
+      - name: Verify earned carry can settle through legal gates without breaking PROTECTED
         run: |
           sqlite3 /tmp/builtegrity-autopilot.db "
             INSERT INTO transactions (
@@ -53,6 +78,14 @@ jobs:
               1,'STRIPE_APPLICATION_FEE','carry-ci-token',
               'BG_STANDARD_V1',10,0,9007199254740991,NULL,1,CURRENT_TIMESTAMP
             );
+
+            UPDATE transactions
+               SET customer_attested_country_code='US',
+                   customer_attested_state_code='RI',
+                   customer_attested_postal_code='02886',
+                   customer_attested_at=CURRENT_TIMESTAMP,
+                   checkout_legal_gate_at=CURRENT_TIMESTAMP
+             WHERE id='TX-CARRY-CI';
 
             INSERT INTO merchant_fee_carry
               (merchant_id,currency,available_micros,lifetime_accrued_micros,updated_at)
@@ -148,6 +181,7 @@ jobs:
           test "$(sqlite3 /tmp/builtegrity-autopilot.db "SELECT COUNT(*) FROM resolution_providers WHERE code='STRIPE' AND support_url='https://support.stripe.com/' AND dashboard_url='https://dashboard.stripe.com/';")" = "1"
           test "$(sqlite3 /tmp/builtegrity-autopilot.db "SELECT COUNT(*) FROM resolution_providers WHERE code='CLERK' AND status_url='https://status.clerk.com/' AND support_url='https://clerk.com/contact/support';")" = "1"
           test "$(sqlite3 /tmp/builtegrity-autopilot.db "SELECT COUNT(*) FROM resolution_providers WHERE code='RESEND' AND support_url='https://resend.com/support';")" = "1"
+          grep -q "'APP_BASE_URL'" worker/src/watchdogs.js
 
       - name: Verify work completion cannot bypass machine verification
         run: |
