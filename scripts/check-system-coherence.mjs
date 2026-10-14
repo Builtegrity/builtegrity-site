@@ -27,6 +27,15 @@ assert(contract.contract_id === 'BUILTEGRITY-SYSTEM-V1', 'canonical system contr
 assert(contract.canonical_sources.database_schema.includes('migrations'), 'ordered migrations must remain the canonical schema');
 assert(!exists('transaction-engine/schema.sql'), 'standalone transaction-engine/schema.sql is forbidden; ordered migrations are authoritative');
 
+const migrationLineage = contract.migration_lineage;
+assert(migrationLineage?.baseline_commit === 'a07986c52abfc8e679ccb1dc9ae193a5a6f2854b', 'migration lineage baseline commit drifted');
+assert(migrationLineage?.frozen_through_version === 60, 'migration frozen-through version drifted');
+assert(migrationLineage?.historical_migrations_are_immutable === true, 'historical migrations must remain immutable');
+assert(migrationLineage?.future_migrations_are_additive_only === true, 'future migrations must remain additive-only');
+assert(migrationLineage?.future_versions_must_be_unique_and_contiguous === true, 'future migration versions must remain unique and contiguous');
+assert(JSON.stringify(migrationLineage?.grandfathered_duplicate_versions?.['0038']) === JSON.stringify(['0038_compliance_evidence_and_jurisdiction_catalog.sql','0038_state_readiness_views.sql']), '0038 legacy migration exception drifted');
+assert(JSON.stringify(migrationLineage?.grandfathered_duplicate_versions?.['0053']) === JSON.stringify(['0053_legal_insert_path_hardening.sql','0053_resend_dependency_resolution.sql']), '0053 legacy migration exception drifted');
+
 const expectedLifecycle = contract.transaction_state_axes.lifecycle;
 const expectedIntegrity = contract.transaction_state_axes.integrity;
 const expectedRecord = contract.transaction_state_axes.record_classification;
