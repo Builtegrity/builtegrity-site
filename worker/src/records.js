@@ -2,17 +2,23 @@ import { getTransaction } from './db.js';
 import { serveTransactionPdf } from './pdf.js';
 import { handleResendStatementWebhook } from './resend-statement-webhooks.js';
 import { handleMerchantComplianceRoute } from './merchant-compliance-routes.js';
+import { handleLegalInboxWebhook } from './legal-inbox.js';
 
 export async function handlePublicRecordRoute(request, env) {
-  // This gateway runs before the owner/admin API gate. Merchant compliance endpoints are
-  // not public: they authenticate an ordinary Clerk merchant session and tenant membership.
+  // This gateway runs before the owner/admin API gate. The legal inbox is public only in the
+  // network sense: its authority comes from a verified Resend webhook signature, never from
+  // email sender text. Merchant compliance endpoints authenticate their own Clerk tenant session.
+  const url = new URL(request.url);
+  if (url.pathname === '/api/webhooks/legal-inbox' && request.method === 'POST') {
+    return handleLegalInboxWebhook(request, env);
+  }
+
   const merchantComplianceResponse = await handleMerchantComplianceRoute(request, env);
   if (merchantComplianceResponse) return merchantComplianceResponse;
 
   const resendWebhookResponse = await handleResendStatementWebhook(request, env);
   if (resendWebhookResponse) return resendWebhookResponse;
 
-  const url = new URL(request.url);
   const match = url.pathname.match(/^\/api\/records\/([^/]+)(\/pdf)?$/);
   if (!match || request.method !== 'GET') return null;
 
