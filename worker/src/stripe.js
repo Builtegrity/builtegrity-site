@@ -1,4 +1,5 @@
 import { assertMerchantLegalReadyForLiveAction } from './legal-enforcement.js';
+import { reserveAvailableFeeCarry } from './pricing.js';
 
 function requireSecret(env, name) {
   const value = env[name];
@@ -69,8 +70,20 @@ export async function createTrackedCheckout(env, tx) {
     throw new Error('Builtegrity V1 supports USD checkout only');
   }
 
+  // Settle only whole cents that were already earned as fractional carry by prior successful
+  // protected payments. Reservation is atomic in D1 and is released automatically by the
+  // resolution autopilot if the checkout is abandoned for more than 24 hours.
+  const reserved = await reserveAvailableFeeCarry(env, tx.id);
+  const effectiveTx = { ...tx, ...(reserved || {}) };
+  const currentTransactionFeeCents = Number(effectiveTx.integrity_fee_earned_cents || 0);
+  const priorEarnedCarryCents = Number(effectiveTx.pricing_carry_reserved_cents || 0);
+  const applicationFeeCents = currentTransactionFeeCents + priorEarnedCarryCents;
+  if (applicationFeeCents > Number(effectiveTx.amount_cents || 0)) {
+    throw new Error(`Builtegrity application fee exceeds transaction amount for ${effectiveTx.id}`);
+  }
+
   const baseUrl = env.APP_BASE_URL || 'http://localhost:8787';
-  const publicToken = encodeURIComponent(tx.payment_access_token);
+  const publicToken = encodeURIComponent(effectiveTx.payment_access_token);
   const form = {
     mode: 'payment',
     // V1 deliberately permits cards only. Enabling bank debits, wallets, BNPL or other methods
@@ -79,28 +92,34 @@ export async function createTrackedCheckout(env, tx) {
     billing_address_collection: 'required',
     success_url: `${baseUrl}/pay/success/?token=${publicToken}`,
     cancel_url: `${baseUrl}/pay/?token=${publicToken}`,
-    client_reference_id: tx.id,
-    customer_email: tx.customer_email || undefined,
-    'metadata[builtegrity_tx_id]': tx.id,
-    'metadata[builtegrity_purchase_id]': tx.purchase_id,
-    'payment_intent_data[metadata][builtegrity_tx_id]': tx.id,
-    'payment_intent_data[metadata][builtegrity_purchase_id]': tx.purchase_id,
+    client_reference_id: effectiveTx.id,
+    customer_email: effectiveTx.customer_email || undefined,
+    'metadata[builtegrity_tx_id]': effectiveTx.id,
+    'metadata[builtegrity_purchase_id]': effectiveTx.purchase_id,
+    'metadata[builtegrity_pricing_version]': effectiveTx.pricing_version_id || '',
+    'metadata[builtegrity_fee_current_cents]': currentTransactionFeeCents,
+    'metadata[builtegrity_fee_carry_cents]': priorEarnedCarryCents,
+    'payment_intent_data[metadata][builtegrity_tx_id]': effectiveTx.id,
+    'payment_intent_data[metadata][builtegrity_purchase_id]': effectiveTx.purchase_id,
+    'payment_intent_data[metadata][builtegrity_pricing_version]': effectiveTx.pricing_version_id || '',
+    'payment_intent_data[metadata][builtegrity_fee_current_cents]': currentTransactionFeeCents,
+    'payment_intent_data[metadata][builtegrity_fee_carry_cents]': priorEarnedCarryCents,
     'line_items[0][quantity]': 1,
-    'line_items[0][price_data][currency]': String(tx.currency || 'USD').toLowerCase(),
-    'line_items[0][price_data][unit_amount]': Number(tx.amount_cents),
-    'line_items[0][price_data][product_data][name]': tx.description,
+    'line_items[0][price_data][currency]': String(effectiveTx.currency || 'USD').toLowerCase(),
+    'line_items[0][price_data][unit_amount]': Number(effectiveTx.amount_cents),
+    'line_items[0][price_data][product_data][name]': effectiveTx.description,
   };
 
   if (
-    tx.fee_collection_method === 'STRIPE_APPLICATION_FEE' &&
-    Number(tx.integrity_fee_earned_cents) > 0
+    effectiveTx.fee_collection_method === 'STRIPE_APPLICATION_FEE' &&
+    applicationFeeCents > 0
   ) {
-    form['payment_intent_data[application_fee_amount]'] = Number(tx.integrity_fee_earned_cents);
+    form['payment_intent_data[application_fee_amount]'] = applicationFeeCents;
   }
 
   return stripeRequest(env, '/v1/checkout/sessions', {
     method: 'POST',
-    accountId: tx.processor_account_id,
+    accountId: effectiveTx.processor_account_id,
     form,
   });
 }
