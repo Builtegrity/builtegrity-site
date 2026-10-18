@@ -33,6 +33,24 @@ export function validateHelpRequest(body) {
 }
 export async function handleMerchantHelpRoute(request,env){
  const url=new URL(request.url);
+ if(url.pathname==='/api/merchant/home'){
+   if(request.method!=='GET')return response({error:'Method not allowed'},405);
+   const principal=await authenticateClerkSession(request,env);
+   if(!principal?.sub)return response({error:'Sign in required'},401);
+   const memberships=await env.DB.prepare(`
+     SELECT m.id,m.name,a.role,
+       (SELECT COUNT(*) FROM transactions t WHERE t.merchant_id=m.id) AS transaction_count,
+       (SELECT COUNT(*) FROM merchant_custom_field_definitions d
+         WHERE d.merchant_id=m.id AND d.active=1) AS custom_field_count
+     FROM merchant_access a JOIN merchants m ON m.id=a.merchant_id
+     WHERE a.external_user_id=? AND a.status='ACTIVE'
+     ORDER BY m.name LIMIT 100
+   `).bind(principal.sub).all();
+   return response({merchants:memberships.results||[],
+     sections:['transactions','customers','integrations','help'],
+     authenticated:true});
+ }
+
  if(url.pathname!=='/api/merchant/help')return null;
  if(!['POST','GET'].includes(request.method))return response({error:'Unsupported request method'},405);
  if(request.method==='POST')requireSameOrigin(request);
