@@ -205,12 +205,22 @@ export async function createMerchantSyncSource(env,merchantId,userId,title,kind,
    hash=await sha256Hex(token);
  }
  await env.DB.prepare(`INSERT INTO merchant_custom_sync_sources
-  (id,merchant_id,title,source_kind,key_hash,created_by) VALUES(?,?,?,?,?,?)`)
-  .bind(id,merchantId,title,kind,hash,userId).run();
- return {id,title,kind,token_once:token};
+  (id,merchant_id,title,source_kind,key_hash,created_by,expected_interval_minutes) VALUES(?,?,?,?,?,?,?)`)
+  .bind(id,merchantId,title,kind,hash,userId,expectedIntervalMinutes).run();
+ return {id,title,kind,token_once:token,expected_interval_minutes:expectedIntervalMinutes};
 }
 export async function listMerchantSyncSources(env,merchantId){
- const x=await env.DB.prepare(`SELECT id,title,source_kind,status,last_success_at,last_error,created_at
+ const x=await env.DB.prepare(`SELECT id,title,source_kind,status,last_success_at,last_error,created_at,
+ expected_interval_minutes,
+ CASE
+   WHEN status<>'ACTIVE' THEN 'NOT_CONNECTED'
+   WHEN last_error IS NOT NULL THEN 'NEEDS_ATTENTION'
+   WHEN source_kind='FILE' THEN 'MANUAL_IMPORT'
+   WHEN last_success_at IS NULL THEN 'AWAITING_FIRST_UPDATE'
+   WHEN expected_interval_minutes IS NULL THEN 'EVENT_DRIVEN'
+   WHEN datetime(last_success_at)<datetime('now','-'||(expected_interval_minutes*2)||' minutes')
+      THEN 'LATE'
+   ELSE 'CURRENT' END AS sync_health
  FROM merchant_custom_sync_sources WHERE merchant_id=? ORDER BY created_at DESC LIMIT 50`)
  .bind(merchantId).all();
  return x.results||[];
