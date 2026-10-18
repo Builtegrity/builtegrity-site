@@ -1,27 +1,35 @@
-const table=document.querySelector('#transactionList');
-const status=document.querySelector('#status');
-function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
-function fmt(amount,currency){try{return new Intl.NumberFormat('en-US',{style:'currency',currency:currency||'USD'}).format(Number(amount||0)/100);}catch{return (Number(amount||0)/100).toFixed(2);}}
-async function reload(){
- table.innerHTML='<tr><td colspan="6">Loading…</td></tr>';
- try{
-   const response=await fetch('/api/merchant/transactions',{credentials:'same-origin',cache:'no-store'});
-   if(response.status===401){location.assign('/login/?return_to=%2Fmerchant%2F');return;}
-   const result=await response.json();
-   if(!response.ok)throw Error(result.error||'Unable to fetch merchant records');
-   const transactions=result.transactions||[];
-   status.textContent=transactions.length+' authorized transaction(s). Click a row or choose Open PDF.';
-   table.innerHTML=transactions.length?transactions.map(t=>{
-     const u='/api/merchant/transactions/'+encodeURIComponent(t.id)+'/pdf?view=1';
-     return '<tr data-pdf="'+esc(u)+'" style="cursor:pointer"><td><strong>'+esc(t.id)+
-       '</strong></td><td>'+esc(t.merchant_name)+'</td><td>'+esc(t.processor)+
-       '</td><td>'+fmt(t.amount_cents,t.currency)+'</td><td>'+esc(t.integrity_status)+
-       '</td><td><a href="'+esc(u)+'" target="_blank" rel="noopener">Open PDF</a></td></tr>';
-   }).join(''):'<tr><td colspan="6">No authorized transactions found.</td></tr>';
-   for(const row of table.querySelectorAll('tr[data-pdf]')){
-     row.addEventListener('click',event=>{if(event.target.closest('a'))return;window.open(row.dataset.pdf,'_blank','noopener');});
-   }
- }catch(e){status.textContent=e.message;table.innerHTML='<tr><td colspan="6">Unable to load records.</td></tr>';}
+const $=id=>document.querySelector(id);
+const merchant=$('#merchant');
+let businesses=[];
+function show(){
+ const found=businesses.find(x=>x.id===merchant.value);
+ if(!found)return;
+ $('#txCount').textContent=Number(found.total_transactions||0).toLocaleString();
+ $('#attentionCount').textContent=Number(found.attention_transactions||0).toLocaleString();
+ $('#fieldCount').textContent=Number(found.custom_fields||0).toLocaleString();
+ $('#access').textContent=found.name+' · '+found.role+
+  ' access · '+Number(found.data_sources||0)+' active data sources.';
+ // Every linked destination uses authenticated server-side membership checks.
+ // Do not leak a merchant ID into a public URL or assume role access.
 }
-document.querySelector('#reload').addEventListener('click',reload);
-reload();
+async function start(){
+ try{
+  const response=await fetch('/api/merchant/home',{credentials:'same-origin',cache:'no-store'});
+  if(response.status===401){location.assign('/login/?return_to=%2Fmerchant%2F');return;}
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok)throw Error(data.error||'Unable to access merchant account');
+  businesses=data.merchants||[];
+  merchant.replaceChildren();
+  if(!businesses.length)throw Error('No authorized merchant account is connected to this sign-in yet.');
+  for(const m of businesses){
+   const option=document.createElement('option');option.value=m.id;option.textContent=m.name;
+   merchant.append(option);
+  }
+  merchant.addEventListener('change',show);show();
+ }catch(e){
+  merchant.replaceChildren();
+  const option=document.createElement('option');option.textContent='Account not available';merchant.append(option);
+  $('#access').textContent=e.message;
+ }
+}
+start();
