@@ -33,9 +33,17 @@ export async function handleMerchantCustomRoute(request,env){
    const source=await verifyMerchantSyncToken(env,external[1],token);
    if(!source)return json({error:'Invalid or revoked source key'},401);
    const body=await readBoundedJson(request);
-   const result=await ingestMerchantCustomFields(env,source.merchant_id,source.id,
-     body.delivery_id,body.records);
-   return json(result);
+   try{
+     const result=await ingestMerchantCustomFields(env,source.merchant_id,source.id,
+       body.delivery_id,body.records);
+     return json(result);
+   }catch(error){
+     await env.DB.prepare(`UPDATE merchant_custom_sync_sources
+        SET last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND merchant_id=?`)
+        .bind(String(error?.message||error).slice(0,220),source.id,source.merchant_id)
+        .run().catch(()=>{});
+     throw error;
+   }
  }
  if(!path.startsWith('/api/merchant/custom/'))return null;
  if(!['GET','POST'].includes(method))return json({error:'Method not allowed'},405);
