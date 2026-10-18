@@ -30,7 +30,8 @@ const env={DB:{prepare:s=>{
    all:async()=>({results:sql(value,true)}),
    run:async()=>{sql(value);return {success:true}}};
  };
- return {...bind(),bind};
+ return {bind,first:async()=>bind().first(),all:async()=>bind().all(),
+  run:async()=>bind().run()};
 }}};
 sql("INSERT INTO transaction_financial_adjustments"+
  "(id,transaction_id,merchant_id,processor,adjustment_type,direction,"+
