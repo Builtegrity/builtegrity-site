@@ -41,7 +41,16 @@ export async function handlePlaidWebhook(request,env,ctx) {
     WHERE item_id=? AND status IN('CONNECTED','REAUTH_REQUIRED') LIMIT 1`)
      .bind(message.item_id).first();
  if(!row)return new Response('Accepted',{status:202});
- if(message.webhook_type==='ITEM'&&
+ if(message.webhook_type==='ITEM'&&message.webhook_code==='LOGIN_REPAIRED'){
+   await env.DB.prepare(`UPDATE merchant_bank_connections SET status='CONNECTED',
+     last_error=NULL,last_sync_at=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .bind(row.id).run();
+   await env.DB.prepare(`UPDATE merchant_setup_notices SET notice_state='RESOLVED'
+     WHERE merchant_id=(SELECT merchant_id FROM merchant_bank_connections WHERE id=?)
+       AND notice_key=?`).bind(row.id,'BANK_REAUTH:'+row.id).run();
+   if(ctx?.waitUntil)ctx.waitUntil(syncBankConnection(env,row.id).catch(e=>
+     console.error('Bank self-heal refresh failed',row.id,String(e.message))));
+ }else if(message.webhook_type==='ITEM'&&
    ['ERROR','PENDING_DISCONNECT','PENDING_EXPIRATION'].includes(message.webhook_code)){
     await env.DB.prepare(`UPDATE merchant_bank_connections SET status='REAUTH_REQUIRED',
       last_error=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
