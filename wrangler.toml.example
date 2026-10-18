@@ -107,6 +107,16 @@ CUSTOM_SYNC_ENABLED = "false"
 MERCHANT_SETUP_EMAILS_ENABLED = "false"
 MERCHANT_SETUP_EMAIL_FROM = "Builtegrity Setup <hello@builtegrity.com>"
 
+# Optional one-transaction accountless merchant links. Opt-in must be recorded
+# during onboarding; sending only works with a verified Resend domain.
+MERCHANT_TRANSACTION_EMAILS_ENABLED = "false"
+MERCHANT_RECORD_EMAIL_FROM = "Builtegrity Records <REPLACE_WITH_VERIFIED_SENDER>"
+# Clerk hosted sign-up URL must be configured; never claim a business just
+# because someone registered, and keep CLERK_SECRET_KEY as a Worker secret.
+CLERK_SIGN_UP_URL = "REPLACE_WITH_HOSTED_CLERK_SIGN_UP_URL"
+# Merchant images/docs stored in a PRIVATE R2 bucket after consent + privacy review.
+MERCHANT_MEDIA_ENABLED = "false"
+
 # Merchant Help form saves every authorized request to D1 before email.
 # Enable only after the help mailbox and verified Resend sender are configured.
 MERCHANT_HELP_EMAILS_ENABLED = "false"
