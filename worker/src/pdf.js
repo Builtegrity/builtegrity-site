@@ -28,7 +28,7 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
       }
     }
 
-    const bytes = buildTransactionPdf(tx);
+    const bytes = buildTransactionPdf(tx, { audience: requestedByType === 'CUSTOMER_TOKEN' ? 'customer' : 'merchant' });
 
     if (env.TRANSACTION_RECORDS) {
       await env.TRANSACTION_RECORDS.put(objectKey, bytes, {
