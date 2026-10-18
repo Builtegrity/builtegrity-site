@@ -22,6 +22,35 @@ BEGIN SELECT RAISE(ABORT,'Protected transactions must collect Builtegrity revenu
 -- Square and Stripe share historical protection semantics, while retaining independent
 -- processor proofs and fee receipt IDs. This replaces only post-0062 classifier guards;
 -- frozen migrations are never rewritten.
+
+-- Legacy merchant integration_mode describes the Stripe adapter, not every transaction.
+-- A merchant with Stripe Connect can also create an independent Square transaction.
+DROP TRIGGER IF EXISTS transactions_require_stripe_application_fee_on_insert;
+CREATE TRIGGER transactions_require_stripe_application_fee_on_insert
+BEFORE INSERT ON transactions
+WHEN NEW.processor='STRIPE'
+AND EXISTS(SELECT 1 FROM merchants m WHERE m.id=NEW.merchant_id AND m.integration_mode='STRIPE_CONNECT')
+AND COALESCE(NEW.fee_collection_method,'')<>'STRIPE_APPLICATION_FEE'
+BEGIN SELECT RAISE(ABORT,'STRIPE_CONNECT transactions must collect the Builtegrity fee from merchant proceeds via STRIPE_APPLICATION_FEE'); END;
+
+DROP TRIGGER IF EXISTS transactions_require_stripe_application_fee_on_update;
+CREATE TRIGGER transactions_require_stripe_application_fee_on_update
+BEFORE UPDATE OF fee_collection_method,merchant_id,processor ON transactions
+WHEN NEW.processor='STRIPE'
+AND EXISTS(SELECT 1 FROM merchants m WHERE m.id=NEW.merchant_id AND m.integration_mode='STRIPE_CONNECT')
+AND COALESCE(NEW.fee_collection_method,'')<>'STRIPE_APPLICATION_FEE'
+BEGIN SELECT RAISE(ABORT,'STRIPE_CONNECT transactions must collect the Builtegrity fee from merchant proceeds via STRIPE_APPLICATION_FEE'); END;
+
+DROP TRIGGER IF EXISTS merchants_require_compatible_fee_collection;
+CREATE TRIGGER merchants_require_compatible_fee_collection
+BEFORE UPDATE OF integration_mode ON merchants
+WHEN NEW.integration_mode='STRIPE_CONNECT'
+AND EXISTS(
+ SELECT 1 FROM transactions t WHERE t.merchant_id=NEW.id
+ AND t.processor='STRIPE' AND COALESCE(t.fee_collection_method,'')<>'STRIPE_APPLICATION_FEE'
+)
+BEGIN SELECT RAISE(ABORT,'Merchant cannot use STRIPE_CONNECT while Stripe transactions use a non-application-fee method'); END;
+
 CREATE TABLE IF NOT EXISTS square_refund_facts (
  refund_id TEXT PRIMARY KEY,
  transaction_id TEXT NOT NULL REFERENCES transactions(id),
