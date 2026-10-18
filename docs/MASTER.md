@@ -147,6 +147,7 @@ See `docs/provider-procurement-standard.md` before requesting quotes or enabling
 | --- | --- | ---: | --- |
 | [Brand System](../docs/brand-system.md) | REFERENCE | No | Current launch-shell brand reference. |
 | [Comparison Model](../docs/comparison-model.md) | REFERENCE | No | Product comparison reference; non-canonical business logic. |
+| [Merchant Self-Service Integrations & Help](../docs/merchant-self-service-fields-help.md) | RUNBOOK | No | Automatic custom field update sources, customer grouping, bank consent guidance and self-service Help request lifecycle. |
 
 ### Provider Setup
 
