@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Your integration setup · Builtegrity</title>
+<link rel="stylesheet" href="/styles.css"><style>
+.setup{max-width:840px;margin:auto;padding:35px 20px 90px}
+.setup h1{font-size:clamp(35px,6vw,55px)}
+.setup-card{background:white;padding:22px;border:1px solid #d8e2ec;border-radius:17px;margin:15px 0}
+.setup-card h2{font-size:21px;margin:5px 0 10px}
+.setup-card p{color:#54667e;font-size:14px;line-height:1.55}
+.setup-good{color:#208755;font-weight:700}
+.setup-warn{color:#ae6128;font-weight:700}
+.setup-muted{font-size:13px;color:#69778d}
+.setup select{border:1px solid #ccd7e4;border-radius:10px;padding:12px;width:100%;background:white}
+.setup-links{display:flex;gap:10px;flex-wrap:wrap}
+</style></head><body><main class="setup">
+<p class="eyebrow">BUILTEGRITY · SELF-SERVICE ONBOARDING</p>
+<h1>Finish your integration</h1>
+<p class="lede">Builtegrity checks your settings automatically. You'll only be prompted when your permission, bank selection, or data-source configuration needs attention—no appointments, emails to support, or exchange of passwords.</p>
+<section class="setup-card">
+<label for="merchantSetup"><strong>Your business</strong></label>
+<select id="merchantSetup" aria-label="Select business"></select>
+<p id="setupStatus" role="status">Checking merchant access…</p>
+</section>
+<section class="setup-card">
+<h2>1. Payment processor</h2>
+<p id="processorHelp">Stripe or Square handles your payments; Builtegrity reads events and builds a transaction record. A successful payment does not by itself prove a payout.</p>
+<p class="setup-muted">Connect the processor through the authorized integration. Do not provide passwords or card numbers.</p>
+<a href="/merchant/transactions/" class="button secondary">Open transaction integrity</a>
+</section>
+<section class="setup-card">
+<h2>2. Optional independent bank evidence</h2>
+<p id="bankHelp" role="status">Checking your bank settings…</p>
+<ul id="bankNotices"></ul>
+<p><strong>Bank data limitations:</strong> the bank may report transactions hours or days after the processor's payout event; a pending deposit is not a posted deposit; posted does not mean irreversible settlement. Some bank permissions periodically require you to approve access again. Builtegrity cannot renew that permission for you.</p>
+<p><strong>No connection? No misleading bank claims.</strong> Bank arrival and posting details are omitted from your PDF unless your approved connection provides verified evidence.</p>
+<a href="/merchant/bank/" class="button secondary">Connect, select or reconnect bank</a>
+</section>
+<section class="setup-card">
+<h2>3. Customer data and custom line items</h2>
+<p id="customHelp">Configure your own labels, group customers and record histories, and connect software that sends your additional facts to Builtegrity.</p>
+<p>Start with a customer reference and an invoice/payment reference in your system. Connect these to Builtegrity's customer and TX IDs. Only matched references can be imported—unmatched records are rejected, not guessed.</p>
+<p><strong>Ongoing automation:</strong> your existing software must send new records via a configured API, webhook or supported app connector. CSV/JSON is a one-time import unless your system automates future uploads. Arbitrary third-party applications and databases are not connected automatically.</p>
+<a href="/merchant/integrations/" class="button secondary">Configure custom fields & data sources</a>
+</section>
+<section class="setup-card">
+<h2>4. No daily maintenance</h2>
+<p>After setup, Builtegrity automatically receives available processor and optional data-source updates, checks integrity, and refreshes the PDF when opened. The merchant only needs to act if a bank demands renewed consent, a source key is revoked, or their connected service fails. When this happens, the dashboard tells them which permission to fix and links to the exact setting.</p>
+<p class="setup-muted">Processor publication, webhook arrival, bank reporting, and Builtegrity processing are different timestamps; none guarantees an exact universal delivery time.</p>
+<div class="setup-links"><a href="/merchant/transactions/" class="button">View payment journeys</a></div>
+</section>
+</main><script type="module" src="/merchant/setup/app.js"></script></body></html>
