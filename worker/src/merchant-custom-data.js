@@ -42,7 +42,8 @@ export function normalizeMerchantFieldValue(value,type){
 }
 export async function listMerchantFieldDefinitions(env,merchantId){
  const result=await env.DB.prepare(`
-  SELECT field_key,label,group_title,record_scope,value_type,visible_in_pdf,active,created_at
+  SELECT field_key,label,group_title,record_scope,value_type,visible_in_pdf,active,created_at,
+    update_mode,preferred_source_id
   FROM merchant_custom_field_definitions WHERE merchant_id=?
   ORDER BY record_scope,group_title,label LIMIT 150
  `).bind(merchantId).all();
@@ -62,6 +63,54 @@ export async function defineMerchantField(env,merchantId,userId,raw){
     x.record_scope,x.value_type,x.visible_in_pdf,userId).run();
  return x;
 }
+export async function setMerchantFieldSyncMode(env,merchantId,fieldKey,mode,sourceId=null){
+ mode=String(mode||'').toUpperCase();
+ if(!['MANUAL','AUTO'].includes(mode))throw err('Choose Automatic or Manual');
+ const field=await env.DB.prepare(`SELECT field_key FROM merchant_custom_field_definitions
+  WHERE merchant_id=? AND field_key=? AND active=1`).bind(merchantId,fieldKey).first();
+ if(!field)throw err('Active merchant field not found',404);
+ if(mode==='AUTO'){
+   const source=await env.DB.prepare(`SELECT id,source_kind,status
+    FROM merchant_custom_sync_sources WHERE merchant_id=? AND id=? AND status='ACTIVE'`)
+     .bind(merchantId,sourceId).first();
+   if(!source||source.source_kind==='FILE')
+     throw err('Automatic updates need an active webhook, app or database push source',409);
+ }else sourceId=null;
+ await env.DB.prepare(`UPDATE merchant_custom_field_definitions SET
+  update_mode=?,preferred_source_id=?,updated_at=CURRENT_TIMESTAMP
+  WHERE merchant_id=? AND field_key=?`).bind(mode,sourceId,merchantId,fieldKey).run();
+ return {field_key:fieldKey,update_mode:mode,source_id:sourceId,
+  guidance:mode==='AUTO'?'Your connected system must send new field values with a matching merchant reference. Changes appear once received.':'Use manual entry or a file import when needed.'};
+}
+
+export async function merchantCustomSyncHealth(env,merchantId){
+ const result=await env.DB.prepare(`
+  SELECT d.field_key,d.label,d.record_scope,d.update_mode,d.preferred_source_id,
+    s.title AS source_title,s.source_kind,s.status AS source_status,
+    s.last_success_at,s.last_heartbeat_at,s.last_error,
+    (SELECT MAX(v.observed_at) FROM merchant_custom_field_observations v
+      WHERE v.merchant_id=d.merchant_id AND v.field_key=d.field_key) AS last_value_seen_at
+  FROM merchant_custom_field_definitions d
+  LEFT JOIN merchant_custom_sync_sources s ON s.id=d.preferred_source_id
+    AND s.merchant_id=d.merchant_id
+  WHERE d.merchant_id=? AND d.active=1
+  ORDER BY d.group_title,d.label LIMIT 100
+ `).bind(merchantId).all();
+ return (result.results||[]).map(x=>({
+  ...x,sync_health:x.update_mode==='MANUAL'?'MANUAL':
+   x.source_status!=='ACTIVE'?'ACTION_REQUIRED':
+   x.last_error?'SOURCE_ERROR':
+   x.last_success_at||x.last_heartbeat_at?'CONNECTED':'AWAITING_FIRST_DELIVERY',
+  // A field with no change in weeks is not automatically stale: the business may
+  // legitimately have had no changes. Source heartbeat can establish liveness.
+  explanation:x.update_mode==='MANUAL'?'You update this field when needed.':
+    x.source_status!=='ACTIVE'?'Reconnect or replace this source in Integrations.':
+    x.last_error?'Your sender reported an error; review the delivery format or reference.':
+    x.last_success_at||x.last_heartbeat_at?'Source activity recorded. Values update whenever the source supplies new facts.':
+    'Waiting for first signed source delivery or heartbeat.'
+ }));
+}
+
 export async function disableMerchantField(env,merchantId,key){
  await env.DB.prepare(`UPDATE merchant_custom_field_definitions SET active=0,
    updated_at=CURRENT_TIMESTAMP WHERE merchant_id=? AND field_key=?`).bind(merchantId,key).run();
@@ -127,6 +176,15 @@ export async function ingestMerchantCustomFields(env,merchantId,sourceId,deliver
   for(const [key,raw] of entries){
    const def=byKey.get(key);
    if(!def||def.record_scope!==target.scope)throw err('Unregistered field or scope mismatch: '+key,422);
+   if(def.update_mode==='AUTO'&&def.preferred_source_id!==sourceId)
+     throw err('Field '+key+' belongs to another automatic source. Change its source under Integrations.',409);
+   if(def.update_mode==='MANUAL'){
+     const preferred=await env.DB.prepare(`SELECT source_kind FROM merchant_custom_sync_sources
+      WHERE id=? AND merchant_id=?`).bind(sourceId,merchantId).first();
+     // Existing unconfigured integrations are supported; the UI labels them as not yet
+     // formally bound to this field until the owner selects Automatic.
+     if(!preferred)throw err('Source not authorized for merchant',403);
+   }
    const value=normalizeMerchantFieldValue(raw,def.value_type);
    statements.push(env.DB.prepare(`INSERT OR IGNORE INTO merchant_custom_field_observations
     (id,merchant_id,field_key,record_scope,record_id,value_text,source_id,source_event_id)
