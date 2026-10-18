@@ -61,7 +61,7 @@ const square={refund_id:'refund_1000',transaction_id:'TX-0001',merchant_id:'MER-
 const squareLines=refundPdfLines(square,fakeOriginal).join('\n');
 assert(squareLines.includes('NOT A COMPLETED REFUND'));
 assert(squareLines.includes('Square payment ID: payment_555'));
-assert(squareLines.includes('65.00 USD')===false,'Amount is 65.00, not 6500 dollars');
+assert(!squareLines.includes('6500.00 USD'),'Refund cents must not be treated as dollars');
 assert(squareLines.includes('Refund amount: 65.00 USD'));
 const stranger=await handleMerchantRefundPdf(new Request('https://builtegrity.com/api/merchant/refunds/ADJ-REFUND-0001/pdf'),env);
 assert.equal(stranger.status,401,'Accountless viewers cannot fetch a refund PDF');
