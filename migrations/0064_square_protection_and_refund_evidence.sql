@@ -80,7 +80,7 @@ AND (NEW.record_classification<>'PROTECTED'
  OR COALESCE(NEW.processor_order_id,'')<>COALESCE(OLD.processor_order_id,'')
  OR COALESCE(NEW.processor_checkout_id,'')<>COALESCE(OLD.processor_checkout_id,'')
  OR NEW.processor<>OLD.processor OR COALESCE(NEW.fee_collection_method,'')<>COALESCE(OLD.fee_collection_method,''))
-BEGIN SELECT RAISE(ABORT,'confirmed protection processor evidence is immutable'); END;
+BEGIN SELECT RAISE(ABORT,'confirmed protection history is immutable; processor evidence cannot be rewritten'); END;
 
 -- One canonical classifier (the existing inventory keeps this name).
 DROP TRIGGER IF EXISTS transactions_confirm_protected_after_processor_truth;
