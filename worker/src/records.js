@@ -1,6 +1,8 @@
 import { handleMerchantBankRoute } from './bank-routes.js';
 import { payoutBankEvidence } from './bank-evidence.js';
 import { getTransaction } from './db.js';
+import { merchantFieldContext } from './merchant-custom-data.js';
+import { handleMerchantCustomRoute } from './merchant-custom-routes.js';
 import { getTransactionGraph } from './transaction-intelligence.js';
 import { serveTransactionPdf } from './pdf.js';
 import { authenticateClerkSession } from './clerk-auth.js';
