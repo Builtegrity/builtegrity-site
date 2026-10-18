@@ -5,6 +5,7 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import { observedPlaidCredit,encryptBankToken,decryptBankToken,payoutBankEvidence } from '../worker/src/bank-evidence.js';
 import { transactionPdfLines } from '../worker/src/pdf-evidence.js';
+import { verifyPlaidWebhook } from '../worker/src/plaid-webhooks.js';
 
 const credit=observedPlaidCredit({transaction_id:'bank-txn-1',account_id:'bank-account-1',
   amount:-1298.44,iso_currency_code:'USD',name:'STRIPE TRANSFER',date:'2026-10-18',pending:false});
@@ -27,6 +28,35 @@ assert(withBank.includes('BANK_POSTED')&&withBank.includes('1298.44 USD'));
 const customer=transactionPdfLines({...tx,bank_evidence:{status:'BANK_POSTED'}},
  {audience:'customer'}).join('\n');
 assert(!customer.includes('BANK_POSTED'),'No merchant bank evidence in customer copy');
+
+// Plaid event authenticity: genuine ES256 signature, near-current issuance and exact raw body.
+const signPair=await crypto.subtle.generateKey({name:'ECDSA',namedCurve:'P-256'},
+  true,['sign','verify']);
+const jwk=await crypto.subtle.exportKey('jwk',signPair.publicKey);
+const rawWebhook=JSON.stringify({item_id:'item_sandbox',webhook_type:'TRANSACTIONS',
+  webhook_code:'SYNC_UPDATES_AVAILABLE'});
+const hex=[...new Uint8Array(await crypto.subtle.digest('SHA-256',
+  new TextEncoder().encode(rawWebhook)))].map(v=>v.toString(16).padStart(2,'0')).join('');
+const encodeUrl=x=>Buffer.from(x).toString('base64url');
+const header=encodeUrl(JSON.stringify({alg:'ES256',kid:'jwk-sandbox',typ:'JWT'}));
+const payload=encodeUrl(JSON.stringify({iat:Math.floor(Date.now()/1000),request_body_sha256:hex}));
+const input=header+'.'+payload;
+const signature=await crypto.subtle.sign({name:'ECDSA',hash:'SHA-256'},signPair.privateKey,
+  new TextEncoder().encode(input));
+const jwt=input+'.'+Buffer.from(signature).toString('base64url');
+const originalFetch=globalThis.fetch;
+globalThis.fetch=async()=>new Response(JSON.stringify({key:{...jwk,kid:'jwk-sandbox',
+ alg:'ES256',use:'sig',expired_at:null}}),{status:200,
+ headers:{'content-type':'application/json'}});
+const plaidEnv={BANK_SYNC_ENABLED:'true',PLAID_CLIENT_ID:'test-client',
+  PLAID_SECRET:'sandbox-secret',PLAID_ENV:'sandbox'};
+try{
+ assert.equal(await verifyPlaidWebhook(plaidEnv,rawWebhook,jwt),true,'Valid signed webhook');
+ assert.equal(await verifyPlaidWebhook(plaidEnv,rawWebhook+' ',jwt),false,
+   'Tampered raw body must fail');
+ assert.equal(await verifyPlaidWebhook(plaidEnv,rawWebhook,jwt+'broken'),false,
+   'Tampered signature must fail');
+}finally{globalThis.fetch=originalFetch;}
 
 const db=join(mkdtempSync(join(tmpdir(),'builtegrity-bank-proof-')),'proof.db');
 const quote=v=>v===null?'NULL':typeof v==='number'?String(v):
