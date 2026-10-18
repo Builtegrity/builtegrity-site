@@ -60,16 +60,22 @@ export async function dispatchMerchantRecordEmails(env,{limit=8}={}){
  const rows=await env.DB.prepare(`
   SELECT r.transaction_id,r.merchant_id,r.recipient_email,r.email_attempts
   FROM merchant_transaction_email_links r JOIN merchants m ON m.id=r.merchant_id
-  WHERE r.email_state IN('QUEUED','RETRY') AND r.email_attempts<4
+  WHERE (r.email_state IN('QUEUED','RETRY')
+     OR (r.email_state='SENDING' AND datetime(r.next_attempt_at)<=CURRENT_TIMESTAMP))
+   AND r.email_attempts<4
    AND r.revoked_at IS NULL AND m.record_email_opt_in=1
    AND (r.next_attempt_at IS NULL OR datetime(r.next_attempt_at)<=CURRENT_TIMESTAMP)
+   AND NOT EXISTS (SELECT 1 FROM merchant_access a WHERE a.merchant_id=r.merchant_id
+      AND a.status='ACTIVE')
   ORDER BY r.created_at ASC LIMIT ?`).bind(Math.min(8,Math.max(1,limit))).all();
  let sent=0,failed=0;
  for(const row of rows.results||[]){
   // Only one scheduled worker may claim this delivery.
   const claim=await env.DB.prepare(`UPDATE merchant_transaction_email_links
-    SET email_state='SENDING',email_attempts=email_attempts+1
-    WHERE transaction_id=? AND email_state IN('QUEUED','RETRY')
+    SET email_state='SENDING',email_attempts=email_attempts+1,
+      next_attempt_at=datetime('now','+20 minutes')
+    WHERE transaction_id=? AND (email_state IN('QUEUED','RETRY')
+      OR (email_state='SENDING' AND datetime(next_attempt_at)<=CURRENT_TIMESTAMP))
       AND email_attempts<4 AND revoked_at IS NULL RETURNING email_attempts`)
     .bind(row.transaction_id).first();
   if(!claim)continue;
@@ -129,11 +135,14 @@ export async function claimMerchantFromEmailLink(env,row,principal){
    .bind(row.merchant_id).first();
  // Avoid claiming ownership over an organization that already has an owner.
  if(existing)throw fail('Business already has an owner. Ask an authorized owner to invite you.',409);
- await env.DB.prepare(`INSERT INTO merchant_access
+ const claim=await env.DB.prepare(`INSERT INTO merchant_access
   (id,merchant_id,external_user_id,role,status)
-  VALUES(?,?,?,'OWNER','ACTIVE')
-  ON CONFLICT(merchant_id,external_user_id) DO NOTHING`)
-  .bind('MAC-'+crypto.randomUUID(),row.merchant_id,principal.sub).run();
+  SELECT ?,?,?,'OWNER','ACTIVE'
+  WHERE NOT EXISTS(SELECT 1 FROM merchant_access
+    WHERE merchant_id=? AND role='OWNER' AND status='ACTIVE')
+  ON CONFLICT(merchant_id,external_user_id) DO NOTHING RETURNING id`)
+  .bind('MAC-'+crypto.randomUUID(),row.merchant_id,principal.sub,row.merchant_id).first();
+ if(!claim)throw fail('A merchant owner already exists; ask them for an invitation.',409);
  await env.DB.prepare(`UPDATE merchant_transaction_email_links SET
   claimed_by=?,claimed_at=CURRENT_TIMESTAMP,revoked_at=CURRENT_TIMESTAMP
   WHERE transaction_id=? AND claimed_at IS NULL`).bind(principal.sub,row.transaction_id).run();
