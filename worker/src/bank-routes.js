@@ -43,6 +43,8 @@ export async function handleMerchantBankRoute(request,env,ctx) {
    return json({error:'Merchant ID required'},400);
  await requireMerchantMembership(env,principal,merchantId,
    method==='POST'?'OWNER':'VIEWER');
+ if(path==='/api/merchant/bank/notices'&&method==='GET')
+   return json({notices:await merchantSetupNotices(env,merchantId)});
  if(path==='/api/merchant/bank/status'&&method==='GET'){
   const connections=await bankConnectionsForMerchant(env,merchantId);
   return json({enabled:env.BANK_SYNC_ENABLED==='true',merchant_id:merchantId,
