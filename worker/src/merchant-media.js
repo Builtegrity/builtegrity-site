@@ -161,6 +161,20 @@ export async function handleMerchantMediaRoute(request,env){
  const merchantId=String(data.merchant_id||''),type=String(data.target_type||'').toUpperCase(),id=String(data.target_id||'');
  if(!/^MER-[A-Za-z0-9-]+$/.test(merchantId))return json({error:'Merchant ID required'},400);
  await requireMerchantMembership(env,principal,merchantId,request.method==='GET'?'VIEWER':'OWNER');
+ if(path==='/api/merchant/media/choices'&&request.method==='GET'){
+   const category=String(data.target_type||'CUSTOMER').toUpperCase();
+   if(!types.has(category))return json({error:'Choose customers, transactions, or groups'},400);
+   const query=category==='CUSTOMER'?
+      `SELECT id,name AS title,merchant_customer_reference AS subtitle
+       FROM customers WHERE merchant_id=? ORDER BY created_at DESC LIMIT 100`:
+     category==='TRANSACTION'?
+      `SELECT id,description AS title,merchant_payment_reference AS subtitle
+       FROM transactions WHERE merchant_id=? ORDER BY created_at DESC,id DESC LIMIT 100`:
+      `SELECT id,title,group_value AS subtitle
+       FROM merchant_record_groups WHERE merchant_id=? ORDER BY title LIMIT 100`;
+   const result=await env.DB.prepare(query).bind(merchantId).all();
+   return json({records:result.results||[],category});
+ }
  if(path==='/api/merchant/media/groups'&&request.method==='GET')
    return json({groups:await listMerchantGroups(env,merchantId)});
  if(path==='/api/merchant/media/group'&&request.method==='POST')
