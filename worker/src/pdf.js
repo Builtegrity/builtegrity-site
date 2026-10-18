@@ -132,7 +132,7 @@ function wrapLine(value, width) {
     }
   }
   if (current) lines.push(current);
-  return lines;
+  return lines.flatMap(line => line.length > width ? (line.match(new RegExp('.{1,'+width+'}', 'g')) || []) : [line]);
 }
 
 function escapePdf(value) {
