@@ -15,6 +15,7 @@ import { processStripeWebhook } from './webhooks.js';
 import { runSquarePayoutRecovery } from './square-reconciliation.js';
 import { runBankSyncRecovery } from './bank-evidence.js';
 import { runMerchantSetupNotifications } from './merchant-setup-autopilot.js';
+import {handleVanityMerchantDashboard,merchantAdoptionMetrics} from './merchant-dashboard-adoption.js';
 import { deliverMerchantHelpRequests } from './merchant-help.js';
 import {dispatchMerchantRecordEmails} from './merchant-record-links.js';
 import { normalizeProviderEvent, recordProviderReceipt, recordProviderResult, webhookTimingSummary } from './processor-event-delivery.js';
