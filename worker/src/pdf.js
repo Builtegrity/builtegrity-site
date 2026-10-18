@@ -85,6 +85,9 @@ export function buildTransactionPdf(tx, options = {}) {
   push('Consent accepted at', tx.consent_accepted_at || 'n/a');
   push('Consent method', tx.consent_method || 'n/a');
   push('Terms SHA-256', tx.terms_snapshot_sha256 || 'n/a');
+  push('Accepted terms', tx.terms_snapshot || 'n/a');
+  push('Billing state', tx.customer_attested_state_code || 'n/a');
+  push('Legal gate', tx.checkout_legal_gate_at || 'n/a');
   if (tx.refund_policy_snapshot) push('Refund policy', tx.refund_policy_snapshot);
   if (tx.cancellation_policy_snapshot) push('Cancellation policy', tx.cancellation_policy_snapshot);
   lines.push('');
