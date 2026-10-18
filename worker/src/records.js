@@ -79,6 +79,7 @@ export async function handlePublicRecordRoute(request, env, ctx) {
     if(!tx)return json({error:'Transaction not found'},404);
     await requireMerchantMembership(env,principal,tx.merchant_id,'VIEWER');
     const bank=await payoutBankEvidence(env,tx);
+    const deliveries=await transactionEventDeliveries(env,tx.id);
     // Confidential internal details are not exposed; the full PDF remains authorized.
     const milestones={
       created_at:tx.created_at,consent_at:tx.consent_accepted_at,
@@ -103,7 +104,7 @@ export async function handlePublicRecordRoute(request, env, ctx) {
       ...milestones,
       // Intentionally omit bank fields entirely for unlinked or revoked accounts.
       ...(bank?{bank_evidence:bank}:{})
-    },events:(tx.events||[]).map(e=>({
+    },deliveries,events:(tx.events||[]).map(e=>({
       id:e.id,type:e.event_type,occurred_at:e.event_at,source:e.source
     })),exceptions:(tx.exceptions||[]).map(e=>({
       id:e.id,type:e.exception_type,status:e.status,summary:e.summary
@@ -154,10 +155,28 @@ export async function handlePublicRecordRoute(request, env, ctx) {
   return json(publicRecord(tx));
 }
 
+async function transactionEventDeliveries(env,transactionId){
+  const rows=await env.DB.prepare(`
+    SELECT DISTINCT a.provider_event_id,a.processor,a.event_type,
+      a.provider_event_created_at,a.received_at,a.processed_at,a.outcome
+    FROM transaction_events e
+    JOIN processor_event_delivery_audit a ON (
+      e.source_event_id=a.provider_event_id
+      OR e.source_event_id LIKE a.provider_event_id||':%'
+      OR e.source_event_id LIKE 'SQUARE:'||a.provider_event_id||':%'
+    )
+    WHERE e.transaction_id=?
+    ORDER BY a.received_at DESC LIMIT 30
+  `).bind(transactionId).all();
+  return rows.results||[];
+}
+
 async function fullMerchantPdfEvidence(env,tx) {
   const bank=await payoutBankEvidence(env,tx);
-  const graph=await getTransactionGraph(env,tx.id);
-  return {...tx,...(bank?{bank_evidence:bank}:{}),components:graph.visible_components||[],
+  const [graph,deliveries]=await Promise.all([
+    getTransactionGraph(env,tx.id),transactionEventDeliveries(env,tx.id)]);
+  return {...tx,...(bank?{bank_evidence:bank}:{}),deliveries,
+    components:graph.visible_components||[],
     artifacts:graph.artifacts||[],source_objects:graph.source_objects||[]};
 }
 
