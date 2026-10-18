@@ -284,6 +284,7 @@ function renderDetail(tx) {
         </dl>
         <div class="actions">
           ${publicPath ? `<a class="button secondary" target="_blank" rel="noreferrer" href="${publicPath}">Open customer payment page</a>` : ''}
+          <a class="button" target="_blank" rel="noopener" href="/api/transactions/${encodeURIComponent(tx.id)}/pdf?view=1">Open current PDF</a>
         </div>
       </div>
 
