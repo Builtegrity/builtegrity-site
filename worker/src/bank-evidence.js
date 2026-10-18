@@ -254,9 +254,13 @@ export async function reconcileMerchantBankPayouts(env,merchantId) {
     (merchant_id,processor,payout_id,bank_transaction_id,matched_amount_cents,status,bank_posted_at)
    VALUES(?,?,?,?,?,?,?)
    ON CONFLICT(merchant_id,processor,payout_id) DO UPDATE SET
+     bank_transaction_id=excluded.bank_transaction_id,
      status=excluded.status,bank_posted_at=excluded.bank_posted_at,
      updated_at=CURRENT_TIMESTAMP
    WHERE processor_bank_payout_matches.bank_transaction_id=excluded.bank_transaction_id
+      OR EXISTS (SELECT 1 FROM merchant_bank_deposit_observations previous
+        WHERE previous.provider_transaction_id=processor_bank_payout_matches.bank_transaction_id
+          AND previous.removed=1)
   `).bind(merchantId,payout.processor,payout.payout_id,one.provider_transaction_id,
      payout.amount_cents,one.pending?'BANK_PENDING':'BANK_POSTED',one.bank_posted_at).run();
   verified++;
@@ -278,6 +282,10 @@ export async function payoutBankEvidence(env,tx){
     b.bank_transaction_date,b.pending,b.removed,b.display_name
   FROM processor_bank_payout_matches m
   JOIN merchant_bank_deposit_observations b ON b.provider_transaction_id=m.bank_transaction_id
+  JOIN merchant_bank_accounts a ON a.connection_id=b.connection_id
+    AND a.provider_account_id=b.provider_account_id
+    AND a.is_payout_target=1 AND a.status='AVAILABLE'
+  JOIN merchant_bank_connections c ON c.id=a.connection_id AND c.status='CONNECTED'
   WHERE m.merchant_id=? AND m.processor=? AND m.payout_id=?
   AND b.removed=0 AND b.merchant_id=?
  `).bind(tx.merchant_id,tx.processor,payout,tx.merchant_id).first();
