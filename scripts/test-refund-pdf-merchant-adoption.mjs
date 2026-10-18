@@ -22,10 +22,16 @@ for(const name of readdirSync('migrations').filter(x=>x.endsWith('.sql')).sort()
  sql(readFileSync('migrations/'+name,'utf8'));
  if(name.startsWith('0009_'))sql(readFileSync('transaction-engine/seed-tx-0001.sql','utf8'));
 }
-const env={DB:{prepare:s=>({bind(...args){let idx=0;
- const value=s.replace(/\?/g,()=>q(args[idx++]));assert.equal(idx,args.length);
- return {first:async()=>sql(value,true)[0]||null,all:async()=>({results:sql(value,true)}),
-  run:async()=>{sql(value);return {success:true}}};}})}};
+const env={DB:{prepare:s=>{
+ const bind=(...args)=>{let idx=0;
+  const value=s.replace(/\?/g,()=>q(args[idx++]));
+  assert.equal(idx,args.length);
+  return {first:async()=>sql(value,true)[0]||null,
+   all:async()=>({results:sql(value,true)}),
+   run:async()=>{sql(value);return {success:true}}};
+ };
+ return {...bind(),bind};
+}}};
 sql("INSERT INTO transaction_financial_adjustments"+
  "(id,transaction_id,merchant_id,processor,adjustment_type,direction,"+
  "amount_cents,currency,processor_event_id,processor_object_id,adjustment_at)"+
