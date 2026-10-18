@@ -121,9 +121,18 @@ async function importRows(rows){
  if(!Array.isArray(rows)||!rows.length||rows.length>2000)throw Error('Use 1–2000 rows per file.');
  const source_id=$('#fileSource').value;if(!source_id)throw Error('Create a file source first.');
  let applied=0;
- for(let i=0;i<rows.length;i+=25){
+ const chunks=[];
+ for(const row of rows){
+  const entries=Object.entries(row.fields||{});
+  if(!entries.length)throw Error('A row did not contain any custom fields.');
+  for(let i=0;i<entries.length;i+=4){
+   chunks.push({scope:row.scope,external_reference:row.external_reference,
+     fields:Object.fromEntries(entries.slice(i,i+4))});
+  }
+ }
+ for(let i=0;i<chunks.length;i+=6){
   const result=await request('import',{merchant_id:merchantId,source_id,
-   delivery_id:'file-'+crypto.randomUUID(),records:rows.slice(i,i+25)});
+   delivery_id:'file-'+crypto.randomUUID(),records:chunks.slice(i,i+6)});
   applied+=Number(result.applied||0);
   $('#importResult').textContent='Imported '+applied+' field observations so far.';
  }
