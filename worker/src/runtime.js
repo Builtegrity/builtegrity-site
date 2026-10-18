@@ -410,6 +410,7 @@ export default {
       square_payout_recovery: squareRecovery,
       bank_payout_recovery: bankRecovery,
       merchant_self_service_notifications:merchantSetup,
+      merchant_record_email:merchantRecordEmail,
       merchant_help_mail:merchantHelp,
     });
     if(squareRecovery?.errors>0 && ['PILOT','LIVE'].includes(String(env.WATCHDOG_STAGE||'').toUpperCase())) throw new Error('Square payout reconciliation errors require review');
