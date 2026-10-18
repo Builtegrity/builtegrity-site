@@ -134,6 +134,19 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
     lines.push('Bank evidence describes a full processor payout deposit, not a separate bank credit for each card charge.');
     lines.push('Posted means the bank-data provider reports posting; irreversible final settlement is not asserted.');
   }
+  if(merchant) {
+    heading('Processor notification timing');
+    if(!(tx.deliveries||[]).length)
+      lines.push('No matched processor webhook delivery timestamps recorded yet.');
+    for(const d of tx.deliveries||[]){
+      label('Processor event',d.processor+' / '+d.event_type+' / '+d.provider_event_id);
+      label('Provider event created at',d.provider_event_created_at);
+      label('Builtegrity signed webhook received at',d.received_at);
+      label('Builtegrity webhook processing completed at',d.processed_at);
+      label('Processing outcome',d.outcome);
+    }
+    lines.push('Provider event time is not guaranteed publication time. Bank data timestamps are independent.');
+  }
   heading('Event history');
   if(!(tx.events||[]).length)lines.push('No events recorded.');
   for(const event of tx.events||[]){
