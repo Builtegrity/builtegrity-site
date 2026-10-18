@@ -12,7 +12,8 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
 
   try {
     const version = safeVersion([tx.updated_at,tx.events?.length,tx.events?.at(-1)?.id,tx.exceptions?.length,tx.exceptions?.at(-1)?.updated_at].join('_'));
-    const objectKey = `transaction-records/${tx.id}/${version}.pdf`;
+    const audience = requestedByType === 'CUSTOMER_TOKEN' ? 'customer' : 'merchant';
+    const objectKey = `transaction-records/${tx.id}/${audience}/${version}.pdf`;
 
     if (env.TRANSACTION_RECORDS) {
       const cached = await env.TRANSACTION_RECORDS.get(objectKey);
@@ -54,7 +55,7 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
   }
 }
 
-function buildTransactionPdf(tx) {
+export function buildTransactionPdf(tx, options = {}) {
   const lines = [];
   const push = (label, value = '') => lines.push(label ? `${label}: ${display(value)}` : display(value));
 
