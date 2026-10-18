@@ -146,5 +146,8 @@ export async function claimMerchantFromEmailLink(env,row,principal){
  await env.DB.prepare(`UPDATE merchant_transaction_email_links SET
   claimed_by=?,claimed_at=CURRENT_TIMESTAMP,revoked_at=CURRENT_TIMESTAMP
   WHERE transaction_id=? AND claimed_at IS NULL`).bind(principal.sub,row.transaction_id).run();
- return {claimed:true,merchant_id:row.merchant_id,account_url:'/merchant/'};
+ const merchant=await env.DB.prepare('SELECT name FROM merchants WHERE id=?')
+  .bind(row.merchant_id).first();
+ const dashboardUrl=await ensureMerchantDashboardUrl(env,row.merchant_id,merchant?.name||'Merchant');
+ return {claimed:true,merchant_id:row.merchant_id,account_url:dashboardUrl};
 }
