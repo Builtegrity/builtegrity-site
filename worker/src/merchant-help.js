@@ -34,6 +34,34 @@ export function validateHelpRequest(body) {
 }
 export async function handleMerchantHelpRoute(request,env){
  const url=new URL(request.url);
+ if(url.pathname==='/api/merchant/appearance'){
+   if(!['GET','PUT'].includes(request.method))return response({error:'Method not allowed'},405);
+   if(request.method==='PUT')requireSameOrigin(request);
+   const principal=await authenticateClerkSession(request,env);
+   if(!principal?.sub||principal.claims?.act)return response({error:'Merchant sign-in required'},401);
+   let body={};
+   if(request.method==='PUT'){
+     if(Number(request.headers.get('content-length')||0)>2048)return response({error:'Request too large'},413);
+     const raw=await request.text();
+     if(new TextEncoder().encode(raw).byteLength>2048)return response({error:'Request too large'},413);
+     try{body=JSON.parse(raw);}catch{return response({error:'Valid JSON required'},400);}
+   }
+   const merchantId=request.method==='GET'?url.searchParams.get('merchant_id'):body.merchant_id;
+   if(!/^MER-[A-Za-z0-9-]+$/.test(String(merchantId||'')))return response({error:'Choose a merchant account'},400);
+   await requireMerchantMembership(env,principal,merchantId,request.method==='PUT'?'ADMIN':'VIEWER');
+   const templates=['builtegrity','slate','ocean','forest','sand','plum'];
+   if(request.method==='PUT'){
+     if(!templates.includes(body.template))return response({error:'Select a supported template'},400);
+     await env.DB.prepare(`INSERT INTO merchant_dashboard_appearance(merchant_id,template,updated_by,updated_at)
+        VALUES(?,?,?,CURRENT_TIMESTAMP) ON CONFLICT(merchant_id) DO UPDATE SET
+        template=excluded.template,updated_by=excluded.updated_by,updated_at=CURRENT_TIMESTAMP`)
+       .bind(merchantId,body.template,principal.sub).run();
+   }
+   const current=await env.DB.prepare(`SELECT template,updated_at FROM merchant_dashboard_appearance WHERE merchant_id=?`)
+     .bind(merchantId).first();
+   return response({merchant_id:merchantId,template:current?.template||'builtegrity',
+     templates,updated_at:current?.updated_at||null});
+ }
  if(url.pathname==='/api/merchant/home'){
    if(request.method!=='GET')return response({error:'Method not allowed'},405);
    const principal=await authenticateClerkSession(request,env);
@@ -48,6 +76,9 @@ export async function handleMerchantHelpRoute(request,env){
      ORDER BY m.name LIMIT 100
    `).bind(principal.sub).all();
    const routed=await merchantDashboardUrls(env,memberships.results||[]);
+   const appearance=await env.DB.prepare('SELECT merchant_id,template FROM merchant_dashboard_appearance WHERE merchant_id IN (SELECT merchant_id FROM merchant_access WHERE external_user_id=? AND status=\'ACTIVE\')').bind(principal.sub).all();
+   const selected=new Map((appearance.results||[]).map(row=>[row.merchant_id,row.template]));
+   for(const merchant of routed)merchant.template=selected.get(merchant.id)||'builtegrity';
    return response({merchants:routed,
      sections:['transactions','customers','integrations','help'],
      authenticated:true});

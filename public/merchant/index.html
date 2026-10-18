@@ -17,7 +17,37 @@
 .profile-summary{margin:20px 0;display:flex;gap:18px;flex-wrap:wrap;color:#53647d}
 .profile-summary span{background:#eaf0f8;padding:9px 15px;border-radius:12px}
 @media(max-width:640px){.profile-shell{padding:26px 16px 65px}.profile-cards{grid-template-columns:1fr}.profile-card{min-height:130px;padding:22px}}
-</style></head><body>
+
+/* Merchant-owned dashboard appearance; financial status semantics remain unchanged. */
+body[data-merchant-theme]{background:var(--theme-bg)!important;color:var(--theme-text)!important}
+body[data-merchant-theme] .profile-shell{color:var(--theme-text)}
+body[data-merchant-theme] .profile-eyebrow{color:var(--theme-accent)}
+body[data-merchant-theme] .profile-heading{color:var(--theme-text)}
+body[data-merchant-theme] .profile-lede{color:var(--theme-muted)}
+body[data-merchant-theme] .profile-card{background:var(--theme-surface);border-color:var(--theme-border);color:var(--theme-text);box-shadow:0 8px 24px rgba(0,0,0,.055)}
+body[data-merchant-theme] .profile-card span{color:var(--theme-muted)}
+body[data-merchant-theme] .profile-card b,body[data-merchant-theme] a{color:var(--theme-accent)}
+body[data-merchant-theme] .profile-choice,body[data-merchant-theme] .profile-summary span,body[data-merchant-theme] .appearance-panel{background:var(--theme-surface);color:var(--theme-text);border:1px solid var(--theme-border)}
+body[data-merchant-theme] .profile-choice select,body[data-merchant-theme] .appearance-panel select{background:var(--theme-surface);color:var(--theme-text);border:1px solid var(--theme-border)}
+body[data-merchant-theme] .profile-card:hover,body[data-merchant-theme] .profile-card:focus-visible{outline:3px solid var(--theme-accent);outline-offset:2px}
+body[data-merchant-theme="builtegrity"]{--theme-bg:#0c1411;--theme-surface:#16251d;--theme-text:#f3fff1;--theme-muted:#c6d8cb;--theme-accent:#b9ff54;--theme-border:#395440}
+body[data-merchant-theme="slate"]{--theme-bg:#f3f6fa;--theme-surface:#fff;--theme-text:#162437;--theme-muted:#506078;--theme-accent:#2759a5;--theme-border:#cdd9e6}
+body[data-merchant-theme="ocean"]{--theme-bg:#eaf5f9;--theme-surface:#fff;--theme-text:#102f40;--theme-muted:#436477;--theme-accent:#006985;--theme-border:#b6dce6}
+body[data-merchant-theme="forest"]{--theme-bg:#f0f6ed;--theme-surface:#fff;--theme-text:#1c3326;--theme-muted:#4e6754;--theme-accent:#27683d;--theme-border:#c7dfcd}
+body[data-merchant-theme="sand"]{--theme-bg:#faf4e9;--theme-surface:#fffaf4;--theme-text:#413020;--theme-muted:#705d49;--theme-accent:#875319;--theme-border:#e5d4bc}
+body[data-merchant-theme="plum"]{--theme-bg:#f6f0fa;--theme-surface:#fff;--theme-text:#35213e;--theme-muted:#66516e;--theme-accent:#74328e;--theme-border:#e3d1e9}
+.appearance-panel{padding:20px;border-radius:16px;margin:18px 0}
+.appearance-panel h2{margin:0 0 8px;font-size:22px}
+.appearance-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-top:12px}
+.appearance-panel select{padding:10px 12px;border-radius:9px;min-width:200px;font:inherit}
+.appearance-panel button{background:var(--theme-accent);color:var(--theme-bg);border:1px solid var(--theme-border);border-radius:9px;padding:10px 16px;font:inherit;font-weight:700;cursor:pointer}
+.appearance-panel button:disabled{opacity:.6;cursor:not-allowed}
+.appearance-preview{display:flex;gap:8px;margin:14px 0}
+.appearance-preview span{display:block;height:22px;width:38px;border-radius:6px}
+.appearance-preview .color-bg{background:var(--theme-bg);border:1px solid var(--theme-border)}
+.appearance-preview .color-surface{background:var(--theme-surface);border:1px solid var(--theme-border)}
+.appearance-preview .color-accent{background:var(--theme-accent);border:1px solid var(--theme-border)}
+</style></head><body data-merchant-theme="slate">
 <main class="profile-shell">
 <p class="profile-eyebrow">Builtegrity · Your business</p>
 <h1 class="profile-heading">My Builtegrity</h1>
@@ -31,6 +61,22 @@
 <a id="merchantDashboardLink" href="/merchant/">Open my business dashboard</a>
 <span style="font-size:13px"> · This URL is just a convenient name, not a login credential.</span></p>
 <div id="profileSummary" class="profile-summary"></div>
+<section class="appearance-panel" aria-labelledby="appearanceTitle">
+<h2 id="appearanceTitle">Customize your dashboard</h2>
+<p class="profile-lede">Choose a built-in look for your business. Preview it instantly and save it for every team member. Payment records, security and PDFs are unchanged.</p>
+<label for="themeSelect"><strong>Dashboard template</strong></label>
+<div class="appearance-actions">
+<select id="themeSelect">
+<option value="builtegrity">Builtegrity Classic · Neon & dark</option>
+<option value="slate">Slate · Professional</option>
+<option value="ocean">Ocean · Calm blue</option>
+<option value="forest">Forest · Natural green</option>
+<option value="sand">Sand · Warm neutral</option>
+<option value="plum">Plum · Modern purple</option>
+</select><button type="button" id="saveTheme">Save business theme</button></div>
+<div class="appearance-preview" aria-hidden="true"><span class="color-bg"></span><span class="color-surface"></span><span class="color-accent"></span></div>
+<p id="themeStatus" class="profile-lede" role="status" aria-live="polite">Select a business to customize its dashboard.</p>
+</section>
 <p><a id="dashboardLink" href="/merchant/">Open my dedicated dashboard URL ↗</a></p>
 <nav class="profile-cards" aria-label="Merchant tools">
 <a class="profile-card" href="/merchant/transactions/"><strong>↗ Transactions & refunds</strong>
