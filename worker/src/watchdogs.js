@@ -152,6 +152,7 @@ export async function runWatchdogs(env, options = {}) {
     await checkConfiguration(env, counters);
     await checkWebhookReceipts(env, counters);
     await checkTransactionState(env, counters);
+    await checkIntegrityFreshness(env, counters);
     await checkMerchantState(env, counters);
 
     if (kind === 'DEEP' || kind === 'MANUAL') {
@@ -297,6 +298,25 @@ async function checkWebhookReceipts(env, counters) {
     const receipt = await env.DB.prepare(`SELECT status FROM stripe_webhook_receipts WHERE event_id = ?`).bind(alert.subject_id).first();
     if (receipt?.status === 'PROCESSED') await resolveAlert(env, alert.alert_key);
   }
+}
+
+async function checkIntegrityFreshness(env,counters) {
+  counters.checks+=1;
+  const row=await env.DB.prepare(`
+    SELECT COUNT(*) AS overdue FROM transactions t
+    LEFT JOIN transaction_integrity_verifications v ON v.transaction_id=t.id
+    WHERE datetime(t.created_at)<=datetime('now','-10 minutes')
+      AND (v.verified_at IS NULL OR datetime(v.verified_at)<datetime('now','-10 minutes')
+           OR v.last_error IS NOT NULL)
+  `).first();
+  const overdue=Number(row?.overdue||0);
+  const key='watchdog:integrity-verification-overdue';
+  if(overdue>0){
+    await setAlert(env,{key,category:'WATCHDOG',
+      severity:watchdogStage(env)==='LIVE'?'CRITICAL':'ERROR',
+      subjectType:'SERVICE',subjectId:'INTEGRITY_VERIFIER',
+      message:`${overdue} transaction(s) have no successful local-evidence integrity verification in over 10 minutes; increase capacity or investigate stalled checks.`});
+  }else await resolveAlert(env,key);
 }
 
 async function checkTransactionState(env, counters) {

@@ -202,8 +202,8 @@ export async function recomputeIntegrity(env, transactionId) {
        SET integrity_status = ?,
            exception_status = ?,
            updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?
-  `).bind(integrityStatus, exceptionStatus, transactionId).run();
+     WHERE id = ? AND (integrity_status <> ? OR exception_status <> ?)
+  `).bind(integrityStatus, exceptionStatus, transactionId,integrityStatus,exceptionStatus).run();
 
   return { integrityStatus, exceptionStatus };
 }

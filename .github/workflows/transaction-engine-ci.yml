@@ -70,7 +70,7 @@ jobs:
       - name: Guard watchdog coverage
         run: |
           grep -q 'WATCHDOG_STAGE = "PREVIEW"' wrangler.toml.example
-          grep -q 'crons = \["\*/15 \* \* \* \*", "17 13 \* \* \*"\]' wrangler.toml.example
+          grep -q 'crons = \["\*/2 \* \* \* \*", "\*/10 \* \* \* \*", "17 13 \* \* \*"\]' wrangler.toml.example
           grep -q 'async scheduled' worker/src/runtime.js
           grep -q '/api/health/ready' worker/src/runtime.js
           grep -q '/api/watchdogs/status' worker/src/runtime.js
