@@ -168,7 +168,7 @@ function pdfResponse(bytes, filename, cacheStatus, viewInline=false) {
     status: 200,
     headers: {
       'content-type': 'application/pdf',
-      'content-disposition': `attachment; filename="${filename}"`,
+      'content-disposition': `${viewInline ? 'inline' : 'attachment'}; filename="${filename}"`,
       'cache-control': 'private, no-store',
       'x-builtegrity-pdf-cache': cacheStatus,
       'x-content-type-options': 'nosniff',
