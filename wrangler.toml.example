@@ -82,6 +82,7 @@ SQUARE_ENV = "sandbox"
 SQUARE_APP_ID = "REPLACE_SQUARE_SANDBOX_APP_ID"
 SQUARE_PAYMENT_LINKS_ENABLED = "false"
 SQUARE_LIVE_ENABLED = "false"
+SQUARE_RECONCILIATION_ENABLED = "false"  # Enable after verified Square Sandbox payout tests
 SQUARE_WEBHOOK_NOTIFICATION_URL = "https://builtegrity.com/api/webhooks/square"
 # Keep SQUARE_APP_SECRET, SQUARE_WEBHOOK_SIGNATURE_KEY and
 # SQUARE_TOKEN_ENCRYPTION_KEY_B64 in Cloudflare Worker secrets.
