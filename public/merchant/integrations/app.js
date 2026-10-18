@@ -83,7 +83,9 @@ async function refresh(){
   for(const source of sources){
    const item=node('div');item.className='setup-item';
    item.append(node('strong',source.title),node('div',source.source_kind+' · '+source.status+
-     ' · '+(source.last_success_at||'No data received yet')));
+     ' · Last field update: '+(source.last_success_at||'No data received')+
+     ' · Last heartbeat: '+(source.last_heartbeat_at||'Not received')+
+     (source.last_error?' · Action needed: '+source.last_error:'')));
    if(source.source_kind==='FILE'&&source.status==='ACTIVE')option(fileList,source.id,source.title);
    if(source.source_kind!=='FILE'&&source.status==='ACTIVE'){
      const endpoint=node('code','POST '+location.origin+'/api/sync/merchant-fields/'+source.id);
