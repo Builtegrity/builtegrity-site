@@ -389,6 +389,7 @@ export default {
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
     const squareRecovery = kind === 'DEEP' ? await runSquarePayoutRecovery(env) : null;
     const bankRecovery = await runBankSyncRecovery(env);
+    const merchantSetup = await runMerchantSetupNotifications(env);
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const statements = await runMonthlyStatementPipeline(env);
     const taxDocuments = await runTaxDocumentPipeline(env);
