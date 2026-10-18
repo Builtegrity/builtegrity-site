@@ -130,9 +130,9 @@ async function projectSquarePayment(env,event) {
       UPDATE transactions SET processor_payment_id=COALESCE(processor_payment_id,?),
        payment_status='COMPLETED',payment_at=COALESCE(payment_at,?),
        customer_paid_cents=?,processor_app_fee_confirmed_cents=?,
-       integrity_fee_collected_cents=?,updated_at=CURRENT_TIMESTAMP
+       updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND processor='SQUARE'
-    `).bind(p.id,p.created_at||new Date().toISOString(),total,confirmed,confirmed,tx.id).run();
+    `).bind(p.id,p.created_at||new Date().toISOString(),total,confirmed,tx.id).run();
     await advanceLifecycle(env,tx.id,'PAID');
     if(confirmed!==Number(tx.processor_app_fee_requested_cents)){
       await openException(env,tx.id,'SQUARE_FEE_MISMATCH','Square application fee does not match the locked checkout amount');
