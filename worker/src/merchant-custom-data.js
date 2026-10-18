@@ -188,6 +188,13 @@ export async function createMerchantSyncSource(env,merchantId,userId,title,kind,
  title=String(title||'').trim();
  kind=String(kind||'').toUpperCase();
  if(title.length<1||title.length>90||!kindSet.has(kind))throw err('Source title or kind invalid');
+ if(kind==='FILE')expectedIntervalMinutes=null;
+ else if(expectedIntervalMinutes!=null){
+   const minutes=Number(expectedIntervalMinutes);
+   if(!Number.isInteger(minutes)||minutes<5||minutes>10080)
+     throw err('Custom feed interval must be between 5 minutes and 7 days');
+   expectedIntervalMinutes=minutes;
+ }
  const count=await env.DB.prepare(`SELECT COUNT(*) AS n FROM merchant_custom_sync_sources
    WHERE merchant_id=? AND status='ACTIVE'`).bind(merchantId).first();
  if(Number(count?.n)>=15)throw err('15 active source limit reached',409);
