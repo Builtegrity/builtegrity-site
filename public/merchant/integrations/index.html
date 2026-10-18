@@ -61,6 +61,23 @@
 <option value="APP_PUSH">Third-party app-to-HTTPS automation (ongoing)</option></select></label>
 </div><div class="setup-actions"><button type="button" id="createSource">Create source</button></div>
 <div id="oneTimeToken" class="setup-status" hidden aria-live="polite"></div>
+<p class="setup-help">For an automated feed, send a stable event ID and one or more customer/transaction references matching those already in your own system.</p>
+<pre class="setup-secret" aria-label="Example JSON event">{
+  "delivery_id": "RR-ERP-EVENT-0042",
+  "records": [
+    {
+      "scope": "CUSTOMER",
+      "external_reference": "RR-HOA-001",
+      "fields": { "hoa_community": "West Bay HOA" }
+    },
+    {
+      "scope": "TRANSACTION",
+      "external_reference": "RR-HOA-2026-10",
+      "fields": { "cart_count": 60 }
+    }
+  ]
+}</pre>
+<p class="setup-help">This is an example only: first create both custom field keys, and use your actual customer and payment references. Duplicate delivery IDs are recognized and not reapplied.</p>
 <h3>Connected sources</h3><div id="sourceList" class="setup-items">Loading…</div>
 </section>
 <section class="setup-panel" id="importFiles">
@@ -87,7 +104,7 @@
 </section>
 <section class="setup-panel">
 <h2>Understand your source data</h2>
-<p class="setup-help">**Merchant-provided fields are descriptions, not independent payment verification.** Stripe/Square supply authoritative payment facts; bank-posted evidence requires a separate authorized bank connection. Updates arrive when the connected provider sends them, with possible delays, outages, and renewed authorization. Your payment history remains available if an optional integration disconnects.</p>
+<p class="setup-help"><strong>Merchant-provided fields are descriptions, not independent payment verification.</strong> Stripe/Square supply authoritative payment facts; bank-posted evidence requires a separate authorized bank connection. Updates arrive when the connected provider sends them, with possible delays, outages, and renewed authorization. Your payment history remains available if an optional integration disconnects.</p>
 <a class="button secondary" href="/merchant/bank/">Manage optional bank connection and permissions</a>
 </section>
 </main><script type="module" src="/merchant/integrations/app.js"></script></body></html>
