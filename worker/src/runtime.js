@@ -13,6 +13,7 @@ import {
 } from './square-oauth.js';
 import { processStripeWebhook } from './webhooks.js';
 import { runSquarePayoutRecovery } from './square-reconciliation.js';
+import { runBankSyncRecovery } from './bank-evidence.js';
 import { normalizeProviderEvent, recordProviderReceipt, recordProviderResult, webhookTimingSummary } from './processor-event-delivery.js';
 import { verifyIntegritySnapshotBatch } from './integrity-verifier.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
@@ -66,7 +67,7 @@ export default {
 
       // Customer transaction records use unguessable Builtegrity-owned tokens.
       // They deliberately do not depend on Clerk users or Clerk Organizations.
-      const publicRecordResponse = await handlePublicRecordRoute(request, env);
+      const publicRecordResponse = await handlePublicRecordRoute(request, env, ctx);
       if (publicRecordResponse) return publicRecordResponse;
 
       if (isAdminSurface(path) && !isAdminHost(url, env)) {
@@ -386,6 +387,7 @@ export default {
     // Independent 10-minute watchdog (plus daily deep checks) monitors verification lag.
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
     const squareRecovery = kind === 'DEEP' ? await runSquarePayoutRecovery(env) : null;
+    const bankRecovery = await runBankSyncRecovery(env);
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const statements = await runMonthlyStatementPipeline(env);
     const taxDocuments = await runTaxDocumentPipeline(env);
@@ -400,6 +402,7 @@ export default {
       tax_workpapers: taxWorkpapers,
       case_routing: routing,
       square_payout_recovery: squareRecovery,
+      bank_payout_recovery: bankRecovery,
     });
     if(squareRecovery?.errors>0 && ['PILOT','LIVE'].includes(String(env.WATCHDOG_STAGE||'').toUpperCase())) throw new Error('Square payout reconciliation errors require review');
     if (result.status === 'FAIL' || financial.state === 'RED' || statements.generated.failed > 0 || statements.delivered.failed > 0 || taxDocuments.delivered.failed > 0) {

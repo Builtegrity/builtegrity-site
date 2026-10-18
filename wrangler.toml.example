@@ -88,6 +88,16 @@ SQUARE_WEBHOOK_NOTIFICATION_URL = "https://builtegrity.com/api/webhooks/square"
 # Keep SQUARE_APP_SECRET, SQUARE_WEBHOOK_SIGNATURE_KEY and
 # SQUARE_TOKEN_ENCRYPTION_KEY_B64 in Cloudflare Worker secrets.
 
+# Optional merchant bank data connector. Gated until Plaid production pricing,
+# data-retention terms, OAuth redirect, encryption and sandbox tests are approved.
+# Bank arrival/posted details are omitted unless the merchant explicitly connects a bank.
+BANK_SYNC_ENABLED = "false"
+PLAID_ENV = "sandbox"
+PLAID_WEBHOOK_URL = "https://builtegrity.com/api/webhooks/plaid"
+PLAID_REDIRECT_URI = "https://builtegrity.com/merchant/bank/"
+# Keep PLAID_CLIENT_ID, PLAID_SECRET and BANK_TOKEN_ENCRYPTION_KEY_B64 as Worker secrets.
+# Plaid Transactions may create a subscription charge per connected Item.
+
 # Public abuse protection. The site key is browser-safe; the secret key remains a Worker secret.
 # Siteverify responses must report one of these hostnames before a public mutation is accepted.
 TURNSTILE_SITE_KEY = "REPLACE_TURNSTILE_SITE_KEY"

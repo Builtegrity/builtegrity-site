@@ -34,6 +34,7 @@ export async function getTransaction(env, txId) {
       m.processor_account_id,
       m.integration_mode,
       c.name AS customer_name,
+      c.merchant_customer_reference,
       c.email AS customer_email,
       ptn.name AS partner_name,
       ptn.partner_type

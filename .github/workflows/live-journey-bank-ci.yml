@@ -1,0 +1,44 @@
+name: Live Journey and Bank Evidence CI
+on:
+  pull_request:
+    paths:
+      - 'worker/src/bank-*.js'
+      - 'worker/src/plaid-webhooks.js'
+      - 'worker/src/records.js'
+      - 'worker/src/runtime.js'
+      - 'worker/src/pdf-evidence.js'
+      - 'worker/src/square.js'
+      - 'worker/src/index.js'
+      - 'public/merchant/**'
+      - 'migrations/0068*'
+      - 'scripts/test-bank-journey.mjs'
+      - '.github/workflows/live-journey-bank-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  bank-proof:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate Worker and merchant browser JavaScript
+        run: |
+          node --check worker/src/bank-evidence.js
+          node --check worker/src/plaid-webhooks.js
+          node --check worker/src/bank-routes.js
+          node --check worker/src/records.js
+          node --check worker/src/runtime.js
+          node --check worker/src/square.js
+          node --check worker/src/index.js
+          node --check public/merchant/transactions/app.js
+          node --check public/merchant/bank/app.js
+      - name: Test merchant/bank consent and PDF visibility
+        run: node scripts/test-bank-journey.mjs
+      - name: Test existing Stripe/Square migration and payout safety
+        run: node scripts/test-dual-processor-schema.mjs
+      - name: Validate frozen migration chain
+        run: npm run db:lineage

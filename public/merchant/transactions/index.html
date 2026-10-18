@@ -18,6 +18,43 @@
     .integrity-panel td{vertical-align:middle}
     .integrity-panel tr[data-pdf]{cursor:pointer}
     @media(max-width:620px){.integrity-tabs button{flex:1}.record-action a{font-size:13px;padding:8px}}
+    /* Live transaction journey */
+    .journey-status{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:space-between;margin:8px 0 22px}
+    .journey-cards{display:grid;gap:12px}
+    .journey-card{border:1px solid #d9e0ec;border-radius:18px;background:white;overflow:hidden;box-shadow:0 8px 25px #15243c0d}
+    .journey-card[data-active="true"]{border:1px solid #6486c5;box-shadow:0 0 0 3px #6e99e518}
+    .journey-card>summary{cursor:pointer;list-style:none;display:flex;justify-content:space-between;gap:16px;align-items:center;padding:18px}
+    .journey-card>summary::-webkit-details-marker{display:none}
+    .journey-main{min-width:0;display:grid;gap:6px}
+    .journey-title{display:flex;align-items:center;gap:9px;font-weight:750;font-size:17px;flex-wrap:wrap}
+    .journey-sub{font-size:13px;color:#5d6d82;overflow-wrap:anywhere}
+    .journey-side{display:flex;align-items:center;gap:12px;flex-shrink:0}
+    .journey-amount{font-weight:750}
+    .journey-chip{font-size:12px;border-radius:99px;padding:6px 10px;background:#edf2f8;color:#35435a}
+    .journey-chip.accounted{background:#dff4e7;color:#246344}
+    .journey-chip.attention{background:#ffe7dd;color:#a13d22}
+    .journey-chip.running{background:#e4edff;color:#26549a}
+    .journey-chip.running:before{content:'●';margin-right:5px;animation:breathe 1.8s infinite}
+    @keyframes breathe{50%{opacity:.25}}
+    .journey-open{font-size:15px;color:#687893;transition:transform .2s}
+    details[open] .journey-open{transform:rotate(180deg)}
+    .journey-expanded{padding:0 22px 24px;border-top:1px solid #edf1f7}
+    .journey-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:18px 0}
+    .journey-pdf{display:inline-flex;gap:7px;align-items:center;text-decoration:none;font-weight:650;padding:8px 12px;border:1px solid #cbd5e1;border-radius:10px;color:#233553}
+    .journey-track{list-style:none;margin:0;padding:0 0 0 18px;border-left:2px solid #cad5e6}
+    .journey-step{position:relative;padding:0 0 20px 18px;display:grid;gap:5px}
+    .journey-step:before{content:'';position:absolute;width:13px;height:13px;left:-26px;top:2px;border-radius:50%;background:#bdc9d9;border:3px solid white;box-shadow:0 0 0 1px #bdc9d9}
+    .journey-step.done:before{background:#35a46a;box-shadow:0 0 0 1px #35a46a}
+    .journey-step.waiting:before{background:#5c85dd;box-shadow:0 0 0 1px #5c85dd;animation:breathe 1.8s infinite}
+    .journey-step.error:before{background:#d75e45;box-shadow:0 0 0 1px #d75e45}
+    .journey-step strong{font-size:15px}.journey-step small{color:#6b788b;line-height:1.5}
+    .journey-evidence{padding:14px;border-radius:12px;background:#f2f5fa;display:grid;gap:8px;color:#42536a;font-size:13px;overflow-wrap:anywhere}
+    .journey-bank{border-top:1px solid #e5eaf1;padding-top:12px;margin-top:12px}
+    .journey-event{display:grid;grid-template-columns:auto 1fr;gap:12px;padding:8px 0;border-bottom:1px solid #e8eef5;font-size:12px}
+    .journey-event span:first-child{color:#728095;font-variant-numeric:tabular-nums}
+    @media(max-width:660px){.journey-card>summary{padding:14px;align-items:flex-start}
+      .journey-side{display:grid;gap:6px;justify-items:end}.journey-title{font-size:15px}
+      .journey-expanded{padding:0 14px 16px}.journey-amount{font-size:14px}}
   </style>
 </head>
 <body><main class="shell">
@@ -30,15 +67,18 @@
   </div>
   <div class="toolbar">
     <p class="integrity-meta" id="status" role="status" aria-live="polite">Checking merchant access…</p>
-    <button type="button" id="refresh">Refresh history</button>
+    <div class="actions">
+      <a class="button secondary" href="/merchant/bank/">Manage linked bank</a>
+      <button type="button" id="refresh">Refresh history</button>
+    </div>
   </div>
-  <section id="panel-transactions" class="integrity-panel panel" role="tabpanel" aria-labelledby="tab-transactions">
-    <h2>Transaction history</h2>
-    <p class="muted">Select a transaction to open the latest printable PDF. Download a copy at any time.</p>
-    <div class="table-wrap"><table>
-      <thead><tr><th>Transaction</th><th>Merchant</th><th>Processor</th><th>Amount</th><th>Lifecycle</th><th>Integrity</th><th>Verified</th><th>Record</th></tr></thead>
-      <tbody id="transactions"><tr><td colspan="8">Loading transactions…</td></tr></tbody>
-    </table></div>
+  <section id="panel-transactions" class="integrity-panel" role="tabpanel" aria-labelledby="tab-transactions">
+    <div class="journey-status">
+      <div><h2>Live transaction journey</h2>
+        <p class="integrity-meta">Newest first. Active payments are highlighted. Expand any record to follow each verified step.</p></div>
+      <span class="journey-chip running">Refreshing every 15 seconds while visible</span>
+    </div>
+    <div id="transactions" class="journey-cards" aria-live="polite"><p>Loading verified transaction evidence…</p></div>
   </section>
   <section id="panel-refunds" class="integrity-panel panel" role="tabpanel" aria-labelledby="tab-refunds" hidden>
     <h2>Refund history</h2>

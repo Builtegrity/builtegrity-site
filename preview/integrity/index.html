@@ -1,48 +1,93 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>Transaction Integrity Preview · Builtegrity</title>
+<meta name="robots" content="noindex"><title>Live Transaction Integrity Demo · Builtegrity</title>
 <link rel="stylesheet" href="/styles.css">
 <style>
-  .tabset{display:flex;gap:10px;margin:22px 0 18px}
-  .tabset button{font:inherit;background:#e8ebf1;color:#141c2e;border:1px solid #cbd5e1;padding:12px 21px;border-radius:12px;cursor:pointer}
-  .tabset button[aria-selected="true"]{background:#141c2e;border-color:#141c2e;color:#fff}
-  .preview-tab[hidden]{display:none}.table-wrap{overflow-x:auto}
-  .preview-tab table{min-width:610px;width:100%;border-collapse:collapse}
-  .preview-tab td,.preview-tab th{padding:12px 10px;border-bottom:1px solid #e2e8f0;text-align:left}
-  .demo-note{font-size:14px;color:#64748b}
+.demo-shell{max-width:1060px;margin:auto;padding:36px 22px 100px}
+.demo-heading{font-size:clamp(35px,5vw,55px);letter-spacing:-.045em;margin:8px 0}
+.demo-intro{max-width:800px;color:#677487;font-size:18px;line-height:1.55}
+.demo-warning{background:#eef2f9;border:1px solid #dce5f0;padding:14px 18px;border-radius:12px;margin:20px 0;font-size:14px;line-height:1.6}
+.demo-tabs{display:flex;gap:9px;margin:30px 0 22px}
+.demo-tabs button{padding:12px 23px;background:#f3f5f9;border:1px solid #d5dce7;border-radius:12px;color:#263449;font-weight:700;cursor:pointer}
+.demo-tabs button[aria-selected=true]{background:#121b2e;color:white}
+.demo-card{background:white;border:1px solid #dbe2ef;border-radius:18px;overflow:hidden;margin:12px 0;box-shadow:0 6px 25px #0819320e}
+.demo-card.active{border:1px solid #7a9cdd;box-shadow:0 0 0 3px #7a9cdd15}
+.demo-card>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:20px;cursor:pointer}
+.demo-card>summary::-webkit-details-marker{display:none}
+.demo-card h3{font-size:17px;margin:0}
+.demo-card small{font-size:12px;color:#6b778d;display:block;margin-top:8px}
+.demo-price{font-weight:750;font-size:18px;white-space:nowrap}
+.demo-tag{display:inline-flex;align-items:center;font-size:12px;font-weight:700;border-radius:99px;padding:6px 10px;margin-top:8px;background:#e8efff;color:#315faa}
+.demo-tag.finished{background:#e1f7e8;color:#266642}
+.demo-tag.processing:before{content:'●';margin-right:6px;animation:blink 1.6s infinite}
+@keyframes blink{50%{opacity:.23}}
+.demo-panel{padding:20px 25px;border-top:1px solid #edf0f5}
+.demo-meta{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px}
+.demo-pdf{border:1px solid #cbd6e6;border-radius:10px;padding:8px 12px;font-size:13px;color:#394961}
+.demo-steps{list-style:none;margin:20px 0 6px 12px;padding-left:20px;border-left:2px solid #d1dce9}
+.demo-steps li{position:relative;padding:0 0 22px 22px;font-size:15px}
+.demo-steps li:before{content:'';position:absolute;left:-29px;top:3px;width:13px;height:13px;border-radius:100%;background:#b7c4d6;border:3px solid white;box-shadow:0 0 0 1px #b7c4d6}
+.demo-steps li.done:before{background:#31a76a;box-shadow:0 0 0 1px #31a76a}
+.demo-steps li.waiting:before{background:#4d82d3;box-shadow:0 0 0 1px #4d82d3;animation:blink 1.6s infinite}
+.demo-steps li small{display:block;margin-top:4px;color:#718095;font-size:12px}
+.demo-event{background:#f5f7fb;padding:12px 15px;border-radius:12px;color:#596d88;font-size:13px;line-height:1.8}
+.demo-table{width:100%;border-collapse:collapse;min-width:570px}
+.demo-table td,.demo-table th{text-align:left;padding:12px 10px;border-bottom:1px solid #e4e9f1}
+.demo-table td{font-size:14px}
+@media(max-width:600px){.demo-shell{padding:28px 15px 70px}.demo-card>summary{padding:15px}.demo-panel{padding:16px}.demo-price{font-size:14px}.demo-tabs button{flex:1}}
 </style></head>
-<body><main class="shell">
-<p class="eyebrow">BUILTEGRITY · FICTIONAL DEMONSTRATION</p>
-<h1>Transaction integrity</h1>
-<p class="lede">One place for agreements, payments, refunds, and payout evidence across Stripe and Square.</p>
-<div class="notice"><strong>Preview only.</strong> All transactions, HOA information, refund references and statuses shown here are fictional. The actual merchant portal requires sign-in and Cloudflare deployment.</div>
-<div class="tabset" role="tablist" aria-label="Transaction integrity history">
- <button id="transactions-tab" role="tab" aria-controls="transactions-panel" aria-selected="true" type="button">Transactions</button>
- <button id="refunds-tab" role="tab" aria-controls="refunds-panel" aria-selected="false" type="button" tabindex="-1">Refunds</button>
+<body><main class="demo-shell">
+<p class="eyebrow">BUILTEGRITY · PRODUCT PREVIEW</p>
+<h1 class="demo-heading">Transaction integrity</h1>
+<p class="demo-intro">Watch each payment move from customer agreement to processor confirmation and payout. When a merchant authorizes a bank, Builtegrity can also display separately verified bank deposit evidence.</p>
+<div class="demo-warning"><strong>Fictional interactive preview.</strong> No real payment, bank connection, or webhook is operating here. A live merchant account will show actual events from Stripe, Square, and any independently connected bank feed. Statuses refresh automatically after deployment.</div>
+<div class="demo-tabs" role="tablist" aria-label="Transaction integrity histories">
+<button id="transactions-tab" role="tab" aria-controls="transactions-panel" aria-selected="true">Transactions</button>
+<button id="refunds-tab" role="tab" aria-controls="refunds-panel" aria-selected="false">Refunds</button></div>
+<div id="transactions-panel" role="tabpanel" aria-labelledby="transactions-tab">
+<h2>Live transaction journey</h2>
+<p class="muted">Newest transactions at the top. Select any completed transaction to expand its history.</p>
+<details class="demo-card active" open>
+<summary><div><h3>HOA October service · Receptacle Rollers</h3><small>TX-DEMO-003 · Square · 30 homes / 60 carts</small><span class="demo-tag processing">Processing</span></div><span class="demo-price">$1,300.00&nbsp;⌄</span></summary>
+<div class="demo-panel">
+<div class="demo-meta"><div><strong>Merchant invoice: RR-HOA-2026-10</strong><small>External reference connects the business's invoice to Builtegrity's transaction ID.</small></div><span class="demo-pdf">▣ PDF (signed-in merchant portal)</span></div>
+<ol class="demo-steps">
+<li class="done"><strong>Transaction created</strong><small>Merchant record and invoice reference stored</small></li>
+<li class="done"><strong>Customer accepted service terms</strong><small>Agreement snapshot and acceptance timestamp captured</small></li>
+<li class="done"><strong>Square confirmed payment</strong><small>Processor payment ID and money amount verified</small></li>
+<li class="done"><strong>Application fee confirmed</strong><small>Requested and reported application fees reconciled</small></li>
+<li class="waiting"><strong>Square payout</strong><small>Waiting for matching processor payout entries</small></li>
+<li><strong>Bank deposit independently observed</strong><small>Shown only after the merchant connects a supported bank account</small></li>
+<li><strong>Bank deposit posted</strong><small>No bank arrival is asserted without independent bank evidence</small></li>
+</ol>
+<div class="demo-event">Processor event created · illustrative timestamp<br>Builtegrity webhook received · separately recorded<br>Builtegrity processing completed · separately recorded<br>Integrity checked locally · latest available evidence</div>
+</div></details>
+<details class="demo-card">
+<summary><div><h3>HOA September service · Receptacle Rollers</h3><small>TX-DEMO-002 · Stripe · Invoice RR-HOA-2026-09</small><span class="demo-tag finished">Accounted for</span></div><span class="demo-price">$1,300.00&nbsp;⌄</span></summary>
+<div class="demo-panel"><div class="demo-meta"><strong>All required payment and payout evidence recorded</strong><span class="demo-pdf">▣ PDF (signed-in portal)</span></div>
+<ol class="demo-steps">
+<li class="done">Transaction and terms stored<small>Recorded merchant reference</small></li><li class="done">Customer agreement confirmed</li>
+<li class="done">Stripe payment verified</li><li class="done">Application fee verified</li>
+<li class="done">Stripe payout reported paid</li><li class="done">Bank deposit posted<small>Hypothetical linked bank matching the whole payout batch</small></li>
+<li class="done">Integrity accounted for</li></ol>
+<div class="demo-event">Posted bank evidence is independent of the Stripe payout status. This preview does not prove irreversible final settlement.</div></div></details>
+<details class="demo-card">
+<summary><div><h3>HOA August service · Receptacle Rollers</h3><small>TX-DEMO-001 · Square · Invoice RR-HOA-2026-08</small><span class="demo-tag finished">Accounted for</span></div><span class="demo-price">$1,300.00&nbsp;⌄</span></summary>
+<div class="demo-panel"><p>The earlier processor journey is preserved and expandable. In this example, no bank was connected, so the bank-deposit steps and any bank-arrival claims are omitted.</p>
+<ol class="demo-steps"><li class="done">Transaction and accepted terms</li><li class="done">Square payment verified</li><li class="done">Application fee confirmed</li><li class="done">Square payout reported paid</li><li class="done">Integrity accounted for</li></ol></div></details>
 </div>
-<section id="transactions-panel" role="tabpanel" aria-labelledby="transactions-tab" class="panel preview-tab">
-<h2>Transaction history</h2>
-<p class="demo-note">Merchant: Receptacle Rollers · Fictional Warwick HOA · 30 homes / 60 carts</p>
-<div class="table-wrap"><table><thead><tr><th>Transaction</th><th>Processor</th><th>Amount</th><th>Integrity</th><th>Document</th></tr></thead>
-<tbody><tr><td>TX-DEMO-RR-STRIPE-0001</td><td>Stripe</td><td>$1,300.00</td><td><strong>ACCOUNTED</strong></td><td>Test PDF available in chat</td></tr>
-<tr><td>TX-DEMO-RR-SQUARE-0001</td><td>Square</td><td>$1,300.00</td><td><strong>ACCOUNTED</strong></td><td>Test PDF available in chat</td></tr></tbody></table></div>
-<p class="demo-note">In the real portal, clicking a transaction opens its latest access-controlled PDF, with download and print options.</p>
-</section>
-<section id="refunds-panel" role="tabpanel" aria-labelledby="refunds-tab" class="panel preview-tab" hidden>
-<h2>Refund history</h2>
-<p class="demo-note">Additional simulated refund examples for the same merchant; these did not occur in the two sample PDF lifecycles.</p>
-<div class="table-wrap"><table><thead><tr><th>Refund</th><th>Associated transaction</th><th>Processor</th><th>Amount</th><th>Status</th></tr></thead>
-<tbody><tr><td>SQ-REF-DEMO-001</td><td>TX-DEMO-RR-SQUARE-0001</td><td>Square</td><td>$120.00</td><td>PENDING</td></tr>
-<tr><td>ST-REF-DEMO-001</td><td>TX-DEMO-RR-STRIPE-0001</td><td>Stripe</td><td>$65.00</td><td>COMPLETED</td></tr></tbody></table></div>
-<p class="demo-note">In production this tab reads processor-verified Square refund IDs and completed Stripe refund adjustments, with a link to each updated transaction PDF.</p>
-</section>
-<div class="actions"><a class="button secondary" href="/">Back to homepage</a><a class="button secondary" href="/preview/console/">Transaction console preview</a></div>
-<p class="demo-note">Builtegrity listens for processor webhooks; history updates after events are verified and stored. The dashboard's automatic refresh doesn't guarantee processor publication or delivery times.</p>
-</main>
+<div id="refunds-panel" role="tabpanel" aria-labelledby="refunds-tab" hidden>
+<h2>Refund history</h2><p>Independent sample refund entries, unrelated to the completed examples above.</p>
+<div style="overflow-x:auto"><table class="demo-table"><thead><tr><th>Refund</th><th>Processor</th><th>Amount</th><th>Status</th></tr></thead><tbody>
+<tr><td>REF-DEMO-SQ-001</td><td>Square</td><td>$120</td><td>Pending</td></tr>
+<tr><td>REF-DEMO-ST-001</td><td>Stripe</td><td>$65</td><td>Completed</td></tr>
+</tbody></table></div></div>
+<div class="actions"><a class="button secondary" href="/">Return home</a></div>
 <script>
-const tabs=[document.getElementById('transactions-tab'),document.getElementById('refunds-tab')];
-const panels=[document.getElementById('transactions-panel'),document.getElementById('refunds-panel')];
-for(let i=0;i<2;i++){tabs[i].addEventListener('click',()=>{
-  for(let j=0;j<2;j++){tabs[j].setAttribute('aria-selected',String(i===j));tabs[j].tabIndex=i===j?0:-1;panels[j].hidden=i!==j;}
-});}
-</script></body></html>
+const tabs=[document.querySelector('#transactions-tab'),document.querySelector('#refunds-tab')];
+const panels=[document.querySelector('#transactions-panel'),document.querySelector('#refunds-panel')];
+tabs.forEach((button,index)=>button.addEventListener('click',()=>{
+ tabs.forEach((x,i)=>{x.setAttribute('aria-selected',String(i===index));panels[i].hidden=i!==index;});
+}));
+</script>
+</main></body></html>

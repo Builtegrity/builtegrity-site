@@ -39,3 +39,9 @@ TURNSTILE_SECRET_KEY=REPLACE_ME
 # Optional local-only portability fallback if deliberately setting AUTH_PROVIDER=OWNER_SESSION:
 # OWNER_PASSWORD=replace-with-a-strong-owner-password
 # OWNER_SESSION_SECRET=replace-with-a-long-random-session-secret
+
+# Optional read-only bank deposit feed: do not expose these secrets in the browser.
+# Keep BANK_SYNC_ENABLED=false until bank Sandbox and privacy review are complete.
+PLAID_CLIENT_ID=REPLACE_PLAID_CLIENT_ID
+PLAID_SECRET=REPLACE_PLAID_SANDBOX_SECRET
+BANK_TOKEN_ENCRYPTION_KEY_B64=REPLACE_BASE64_OF_32_RANDOM_BYTES

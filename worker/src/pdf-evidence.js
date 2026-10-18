@@ -22,6 +22,8 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
   heading('Transaction identity and statuses');
   fields([['Transaction ID','id'],['Merchant','merchant_name'],['Customer','customer_name'],
     ['Purchase reference','merchant_reference'],['Purchase ID','purchase_id'],
+    ['Merchant receipt reference','merchant_payment_reference'],
+    ['Merchant customer reference','merchant_customer_reference'],
     ['Description','description'],['Type','transaction_type'],['Processor','processor'],
     ['Lifecycle status','lifecycle_status'],['Integrity status','integrity_status'],
     ['Record classification','record_classification'],['Exception status','exception_status'],
@@ -112,6 +114,38 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
       }
     }
     lines.push('Binary attachments are referenced by evidence records but are not embedded in this PDF.');
+  }
+  // No merchant-authorized active bank feed => no bank-arrival claims or section.
+  if(merchant&&tx.bank_evidence){
+    heading('Optional connected bank deposit evidence');
+    label('Bank verification status',tx.bank_evidence.status);
+    label('Independent bank credit matching',
+      tx.bank_evidence.verified===true?'Posted bank credit matched to payout batch':
+        'Not independently confirmed as a posted deposit');
+    if(tx.bank_evidence.bank_transaction_date)
+      label('Bank transaction date',tx.bank_evidence.bank_transaction_date);
+    if(tx.bank_evidence.bank_posted_at)
+      label('Bank reported posting date',tx.bank_evidence.bank_posted_at);
+    if(tx.bank_evidence.matched_payout_amount_cents!==undefined)
+      label('Matched complete payout batch amount',
+        money(tx.bank_evidence.matched_payout_amount_cents,tx.currency));
+    if(tx.bank_evidence.evidence_source)
+      label('Bank data source',tx.bank_evidence.evidence_source);
+    lines.push('Bank evidence describes a full processor payout deposit, not a separate bank credit for each card charge.');
+    lines.push('Posted means the bank-data provider reports posting; irreversible final settlement is not asserted.');
+  }
+  if(merchant) {
+    heading('Processor notification timing');
+    if(!(tx.deliveries||[]).length)
+      lines.push('No matched processor webhook delivery timestamps recorded yet.');
+    for(const d of tx.deliveries||[]){
+      label('Processor event',d.processor+' / '+d.event_type+' / '+d.provider_event_id);
+      label('Provider event created at',d.provider_event_created_at);
+      label('Builtegrity signed webhook received at',d.received_at);
+      label('Builtegrity webhook processing completed at',d.processed_at);
+      label('Processing outcome',d.outcome);
+    }
+    lines.push('Provider event time is not guaranteed publication time. Bank data timestamps are independent.');
   }
   heading('Event history');
   if(!(tx.events||[]).length)lines.push('No events recorded.');

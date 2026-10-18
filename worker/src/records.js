@@ -1,3 +1,5 @@
+import { handleMerchantBankRoute } from './bank-routes.js';
+import { payoutBankEvidence } from './bank-evidence.js';
 import { getTransaction } from './db.js';
 import { getTransactionGraph } from './transaction-intelligence.js';
 import { serveTransactionPdf } from './pdf.js';
@@ -8,11 +10,13 @@ import { handleMerchantComplianceRoute } from './merchant-compliance-routes.js';
 import { handleLegalInboxWebhook } from './legal-inbox.js';
 import { handleLegalProviderWebhook } from './legal-provider-webhooks.js';
 
-export async function handlePublicRecordRoute(request, env) {
+export async function handlePublicRecordRoute(request, env, ctx) {
   // This gateway runs before the owner/admin API gate. Legal/provider webhooks are public only in
   // the network sense: each has its own cryptographic signature/secret boundary. Email/provider
   // content remains untrusted evidence and can never inherit operator privileges.
   const url = new URL(request.url);
+  const bankResponse=await handleMerchantBankRoute(request,env,ctx);
+  if(bankResponse)return bankResponse;
   if (url.pathname === '/api/webhooks/legal-inbox' && request.method === 'POST') {
     return handleLegalInboxWebhook(request, env);
   }
@@ -67,6 +71,47 @@ export async function handlePublicRecordRoute(request, env) {
     return json({refunds:result.results||[],limit:100,read_only:true});
   }
 
+  const timelineMatch=url.pathname.match(/^\/api\/merchant\/transactions\/(TX-[A-Za-z0-9-]+)\/journey$/);
+  if(timelineMatch&&request.method==='GET'){
+    const principal=await authenticateClerkSession(request,env);
+    if(!principal?.sub)return json({error:'Sign in required'},401);
+    const tx=await getTransaction(env,timelineMatch[1]);
+    if(!tx)return json({error:'Transaction not found'},404);
+    await requireMerchantMembership(env,principal,tx.merchant_id,'VIEWER');
+    const bank=await payoutBankEvidence(env,tx);
+    const deliveries=await transactionEventDeliveries(env,tx.id);
+    // Confidential internal details are not exposed; the full PDF remains authorized.
+    const milestones={
+      created_at:tx.created_at,consent_at:tx.consent_accepted_at,
+      checkout_at:tx.stripe_checkout_session_id||tx.processor_checkout_id?
+        tx.checkout_legal_gate_at:null,
+      payment_at:tx.payment_at,
+      fee_verified_at:tx.protection_confirmed_at,
+      payout_expected_at:tx.expected_payout_arrival,
+      payout_reported_at:tx.processor_payout_status?.toLowerCase()==='paid'
+        ?tx.last_reconciled_at:null,
+      integrity_verified_at:tx.integrity_verified_at
+    };
+    return json({transaction:{
+      id:tx.id,merchant_name:tx.merchant_name,customer_name:tx.customer_name,
+      merchant_reference:tx.merchant_reference,
+      merchant_payment_reference:tx.merchant_payment_reference,
+      customer_reference:tx.merchant_customer_reference||tx.customer_id,
+      processor:tx.processor,amount_cents:tx.amount_cents,currency:tx.currency,
+      lifecycle_status:tx.lifecycle_status,integrity_status:tx.integrity_status,
+      exception_status:tx.exception_status,record_classification:tx.record_classification,
+      processor_payout_status:tx.processor_payout_status,
+      payout_id:tx.processor==='SQUARE'?tx.processor_payout_id:tx.stripe_payout_id,
+      external_reference:tx.merchant_reference,
+      ...milestones,
+      // Intentionally omit bank fields entirely for unlinked or revoked accounts.
+      ...(bank?{bank_evidence:bank}:{})
+    },deliveries,events:(tx.events||[]).map(e=>({
+      id:e.id,type:e.event_type,occurred_at:e.event_at,source:e.source
+    })),exceptions:(tx.exceptions||[]).map(e=>({
+      id:e.id,type:e.exception_type,status:e.status,summary:e.summary
+    }))});
+  }
   const merchantPdf = url.pathname.match(/^\/api\/merchant\/transactions\/(TX-[A-Za-z0-9-]+)\/pdf$/);
   const merchantList = url.pathname === '/api/merchant/transactions';
   if((merchantPdf||merchantList)&&request.method==='GET'){
@@ -83,7 +128,7 @@ export async function handlePublicRecordRoute(request, env) {
       SELECT t.id,t.merchant_id,t.processor,t.amount_cents,t.currency,
         t.lifecycle_status,t.integrity_status,t.exception_status,t.payment_at,t.created_at,
         v.verified_at AS integrity_verified_at,
-        m.name AS merchant_name,p.merchant_reference
+        m.name AS merchant_name,p.merchant_reference,t.merchant_payment_reference
       FROM transactions t
       LEFT JOIN transaction_integrity_verifications v ON v.transaction_id=t.id
       JOIN merchant_access a ON a.merchant_id=t.merchant_id
@@ -112,9 +157,28 @@ export async function handlePublicRecordRoute(request, env) {
   return json(publicRecord(tx));
 }
 
+async function transactionEventDeliveries(env,transactionId){
+  const rows=await env.DB.prepare(`
+    SELECT DISTINCT a.provider_event_id,a.processor,a.event_type,
+      a.provider_event_created_at,a.received_at,a.processed_at,a.outcome
+    FROM transaction_events e
+    JOIN processor_event_delivery_audit a ON (
+      e.source_event_id=a.provider_event_id
+      OR e.source_event_id LIKE a.provider_event_id||':%'
+      OR e.source_event_id LIKE 'SQUARE:'||a.provider_event_id||':%'
+    )
+    WHERE e.transaction_id=?
+    ORDER BY a.received_at DESC LIMIT 30
+  `).bind(transactionId).all();
+  return rows.results||[];
+}
+
 async function fullMerchantPdfEvidence(env,tx) {
-  const graph=await getTransactionGraph(env,tx.id);
-  return {...tx,components:graph.visible_components||[],
+  const bank=await payoutBankEvidence(env,tx);
+  const [graph,deliveries]=await Promise.all([
+    getTransactionGraph(env,tx.id),transactionEventDeliveries(env,tx.id)]);
+  return {...tx,...(bank?{bank_evidence:bank}:{}),deliveries,
+    components:graph.visible_components||[],
     artifacts:graph.artifacts||[],source_objects:graph.source_objects||[]};
 }
 

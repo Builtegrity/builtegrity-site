@@ -16,7 +16,7 @@ for(const s of ['Transaction integrity','Transactions','Refunds','panel-transact
 const ui=readFileSync('public/merchant/transactions/app.js','utf8');
 assert.match(ui,/\/api\/merchant\/refunds/);
 assert.match(ui,/\/api\/merchant\/transactions/);
-assert.match(ui,/30000/);
+assert.match(ui,/(15000|30000)/,'Dashboard must refresh without manual work');
 const records=readFileSync('worker/src/records.js','utf8');
 const begin=records.indexOf('SELECT refund_id, transaction_id, merchant_id,merchant_name,processor,');
 const end=records.indexOf(String.fromCharCode(96)+').bind(principal.sub,principal.sub).all()',begin);
