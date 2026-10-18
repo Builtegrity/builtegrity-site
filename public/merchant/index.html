@@ -1,9 +1,69 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><meta http-equiv="refresh" content="0;url=/merchant/transactions/">
-<title>Merchant records | Builtegrity</title><link rel="stylesheet" href="/styles.css"></head>
-<body><main class="shell narrow"><p class="eyebrow">Builtegrity · Merchant records</p>
-<h1>Open your transaction history</h1>
-<p class="lede">Access to transaction records requires your authorized merchant sign-in.</p>
-<p><a class="button" href="/merchant/transactions/">Open merchant transactions</a></p>
-</main></body></html>
+<meta name="robots" content="noindex"><title>My Builtegrity Account</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+.profile{max-width:1060px;margin:auto;padding:36px 22px 90px}
+.profile h1{font-size:clamp(36px,6vw,58px);margin:6px 0}
+.profile-intro{color:#596982;font-size:18px;line-height:1.5;max-width:730px}
+.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:24px 0}
+.profile-card{background:#fff;border:1px solid #d8e0ed;border-radius:18px;padding:24px;display:grid;gap:11px;text-decoration:none;color:#19283e;min-height:177px}
+.profile-card:hover,.profile-card:focus-visible{border-color:#7795c3;box-shadow:0 7px 26px #152a3c18}
+.profile-icon{font-size:30px;line-height:1}
+.profile-card strong{font-size:20px}
+.profile-card span{font-size:15px;line-height:1.5;color:#5d6b81}
+.profile-banner{border-radius:15px;background:#eef3fa;padding:16px;margin:24px 0}
+.profile-stats{display:flex;gap:12px;flex-wrap:wrap}
+.profile-stat{border-radius:12px;padding:13px 18px;background:#fff;border:1px solid #d9e2ee;min-width:165px}
+.profile-stat strong{font-size:24px;display:block}
+.profile-stat span{color:#627187;font-size:13px}
+.profile select{width:100%;max-width:520px;border:1px solid #cbd5e1;border-radius:10px;padding:13px;font-size:16px;background:white;color:#18253c}
+.profile-step{margin-top:25px;padding:17px;border-left:4px solid #417ab0;background:#f4f7fa;line-height:1.55}
+.profile-mini{font-size:13px;color:#627187}
+@media(max-width:680px){.profile-grid{grid-template-columns:1fr}.profile{padding:25px 14px 70px}.profile-card{min-height:140px;padding:19px}}
+</style></head><body>
+<main class="profile">
+<p class="eyebrow">BUILTEGRITY · MY ACCOUNT</p>
+<h1>Welcome to your business</h1>
+<p class="profile-intro">Everything you need is right here. Track a payment, open a customer group, check a connection, or get help—no technical dashboard required.</p>
+<section class="profile-banner" aria-label="Your business">
+  <label for="merchant"><strong>My business</strong></label>
+  <div style="margin-top:10px"><select id="merchant"><option>Loading your authorized businesses…</option></select></div>
+  <p class="profile-mini" id="access" role="status">Verifying your account…</p>
+  <div class="profile-stats">
+    <div class="profile-stat"><strong id="txCount">—</strong><span>Transactions tracked</span></div>
+    <div class="profile-stat"><strong id="attentionCount">—</strong><span>Need attention</span></div>
+    <div class="profile-stat"><strong id="fieldCount">—</strong><span>Custom fields</span></div>
+  </div>
+</section>
+<section class="profile-grid" aria-label="Account navigation">
+<a class="profile-card" href="/merchant/transactions/">
+ <span class="profile-icon" aria-hidden="true">↗</span>
+ <strong>My transactions</strong>
+ <span>Live payment journeys, refunds, payout progress and downloadable PDFs.</span>
+ <span class="profile-mini">1 click →</span>
+</a>
+<a class="profile-card" href="/merchant/integrations/#groupCustomers">
+ <span class="profile-icon" aria-hidden="true">▦</span>
+ <strong>My customers & groups</strong>
+ <span>Find customers by HOA, property, route, or any field you have defined.</span>
+ <span class="profile-mini">1 click →</span>
+</a>
+<a class="profile-card" href="/merchant/setup/">
+ <span class="profile-icon" aria-hidden="true">⚙</span>
+ <strong>My connections</strong>
+ <span>Finish setup, check custom-field updates, or renew a bank permission yourself.</span>
+ <span class="profile-mini">1 click →</span>
+</a>
+<a class="profile-card" href="/merchant/help/">
+ <span class="profile-icon" aria-hidden="true">?</span>
+ <strong>Help & requests</strong>
+ <span>Understand setup steps, send a software integration request, and track tickets.</span>
+ <span class="profile-mini">1 click →</span>
+</a>
+</section>
+<div class="profile-step">
+<strong>How Builtegrity stays up to date:</strong> Stripe and Square report their own transactions. Custom fields refresh when your connected business software sends updates. Optional bank records refresh as the bank-data provider makes them available. You will be shown a direct action if your permission expires or a connection needs your help.
+</div>
+<p class="profile-mini">Bank deposit posted is distinct from processor payout paid. Neither means irreversible final settlement. If no bank is authorized, bank confirmation is not displayed.</p>
+</main><script type="module" src="/merchant/app.js"></script></body></html>
