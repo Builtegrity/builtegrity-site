@@ -1,0 +1,42 @@
+name: Merchant Self-Service Auto Fields and Help CI
+on:
+  pull_request:
+    paths:
+      - 'migrations/0070*'
+      - 'worker/src/merchant-custom-data.js'
+      - 'worker/src/merchant-custom-routes.js'
+      - 'worker/src/merchant-help.js'
+      - 'worker/src/merchant-home.js'
+      - 'worker/src/records.js'
+      - 'worker/src/runtime.js'
+      - 'public/merchant/**'
+      - 'scripts/test-merchant-self-service-automation.mjs'
+      - '.github/workflows/merchant-self-service-automation-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  tenant-safe-automation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate Worker API and account UI scripts
+        run: |
+          node --check worker/src/merchant-custom-data.js
+          node --check worker/src/merchant-custom-routes.js
+          node --check worker/src/merchant-help.js
+          node --check worker/src/merchant-home.js
+          node --check worker/src/records.js
+          node --check worker/src/runtime.js
+          node --check public/merchant/app.js
+          node --check public/merchant/help/app.js
+          node --check public/merchant/integrations/app.js
+          node --check scripts/test-merchant-self-service-automation.mjs
+      - name: Tenant isolation, source binding, help delivery and profile tests
+        run: node scripts/test-merchant-self-service-automation.mjs
+      - name: Validate SQL migration history
+        run: npm run db:lineage
