@@ -90,6 +90,29 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
       if(item.details)label('Details',JSON.stringify(safeJson(item.details)));
     }
   }
+  if(merchant){
+    const sections=[
+      ['Tracked transaction components',tx.components||[],
+        ['id','component_type_code','source_system','source_key','amount_cents','currency',
+         'raw_label','display_label','observed_at','status','confidence_ppm','display_mode']],
+      ['Linked evidence artifacts',tx.artifacts||[],
+        ['id','artifact_type','document_type','source_system','source_ref',
+         'content_sha256','artifact_sha256','observed_at','created_at','status']],
+      ['Related processor/source objects',tx.source_objects||[],
+        ['id','source_system','object_type','external_object_id',
+         'relationship_type','linked_at','status','created_at']]
+    ];
+    for(const [title,items,allowed] of sections){
+      heading(title);
+      if(!items.length)lines.push('No linked records in this category.');
+      for(const item of items){
+        const subset=Object.fromEntries(allowed.filter(k=>item[k]!==undefined).map(k=>[k,item[k]]));
+        if(item.metadata)subset.metadata=item.metadata;
+        label('Linked record',JSON.stringify(safeJson(subset)));
+      }
+    }
+    lines.push('Binary attachments are referenced by evidence records but are not embedded in this PDF.');
+  }
   heading('Event history');
   if(!(tx.events||[]).length)lines.push('No events recorded.');
   for(const event of tx.events||[]){
