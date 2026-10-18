@@ -97,7 +97,12 @@ function buildJourney(card,data){
  const actions=elem('div');actions.append(pdfIcon(tx.id));
  const save=elem('a','journey-pdf','↓ Download');
  save.href=pdfPath(tx.id);save.title='Download the latest transaction PDF';
- actions.append('  ',save);header.append(actions);wrap.append(header);
+ actions.append('  ',save);
+ const change=elem('a','journey-pdf','▣ Customize');
+ change.href='/merchant/media/?target_type=TRANSACTION&target_id='+encodeURIComponent(tx.id);
+ change.title='Edit transaction display title, private notes and attachments';
+ actions.append('  ',change);
+ header.append(actions);wrap.append(header);
  const steps=elem('ol','journey-track');
  const settled=String(tx.processor_payout_status||'').toLowerCase()==='paid';
  const payment=Boolean(tx.payment_at);
