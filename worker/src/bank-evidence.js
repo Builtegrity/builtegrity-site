@@ -85,7 +85,9 @@ export async function connectBank(env,merchantId,userId,publicToken,selectedAcco
  await env.DB.batch(tasks);
  // Don't terminate earlier permissions until new connection is saved and the merchant
  // explicitly selects its correct processor payout destination.
- await syncBankConnection(env,connId);
+ try{await syncBankConnection(env,connId);}catch(e){
+   console.warn('New bank connected; initial transaction history not yet ready',connId,String(e.message));
+ }
  if(selected)await selectPayoutBank(env,merchantId,connId,selected.account_id);
  return {connection_id:connId,accounts:eligible.map(a=>({id:a.account_id,name:a.name,mask:a.mask})),
    selected_account_id:selected?.account_id||null,action_required:!selected};
