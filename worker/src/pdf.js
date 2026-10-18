@@ -11,7 +11,7 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
   const requestId = await createPdfRequest(env, tx.id, requestedByType, requestedByRef);
 
   try {
-    const version = safeVersion(tx.updated_at || tx.created_at || new Date().toISOString());
+    const version = safeVersion([tx.updated_at,tx.events?.length,tx.events?.at(-1)?.id,tx.exceptions?.length,tx.exceptions?.at(-1)?.updated_at].join('_'));
     const objectKey = `transaction-records/${tx.id}/${version}.pdf`;
 
     if (env.TRANSACTION_RECORDS) {
