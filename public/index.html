@@ -3,19 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Builtegrity Transaction Engine</title>
+  <meta name="description" content="Builtegrity documents payment agreements and tracks processor payment events through payout. Preview environment.">
+  <title>Builtegrity · Every payment accounted for</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main class="shell narrow">
-    <p class="eyebrow">Builtegrity · V1</p>
-    <h1>Transaction integrity engine</h1>
-    <p class="lede">The original roofing concept is retired. This environment is now dedicated to building and validating the transaction record engine.</p>
+    <p class="eyebrow">Builtegrity · Product preview</p>
+    <h1>Every payment accounted for.</h1>
+    <p class="lede">A transaction-integrity layer for businesses. Record the customer's agreement, follow payment events, and trace processor payouts—all while keeping your existing payment processor.</p>
     <div class="actions">
-      <a class="button" href="/console/">Open transaction console</a>
-      <a class="button secondary" href="/pay/?token=test-tx-0001-token">Open TX-0001 customer test page</a>
+      <a class="button" href="/preview/console/">Preview transaction console</a>
+      <a class="button secondary" href="/preview/payment/">Preview customer payment page</a>
     </div>
-    <p class="muted">Test environment only. No live merchant funds should move until production readiness is completed.</p>
+    <section class="panel" aria-label="Current launch status">
+      <h2>Built around the payment—not in place of your processor.</h2>
+      <p class="muted">Designed for Stripe and Square integrations, with merchant-scoped records, terms acceptance, payment event history, and payout monitoring.</p>
+      <p><strong>Preview only.</strong> These pages use sample data and do not connect to payment accounts. Merchant onboarding and real payments remain disabled until the production application is deployed and approved.</p>
+    </section>
   </main>
 </body>
 </html>

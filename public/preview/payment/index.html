@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Customer payment preview · Builtegrity</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell narrow" style="padding-top:48px">
+    <p class="eyebrow">Transaction record by Builtegrity · Demo</p>
+    <h1>Review your payment</h1>
+    <div class="notice" role="status"><strong>Static demonstration.</strong> This is fictional payment information. No card details are collected and no payment can be submitted from this preview.</div>
+    <section class="panel" style="margin-top:20px">
+      <p class="eyebrow">Example Cabinet Shop (fictional merchant)</p>
+      <h2>Custom cabinet project deposit</h2>
+      <p class="lede" style="font-size:32px;color:#111827;font-weight:800;margin:20px 0">$1,200.00 <span class="muted" style="font-size:14px;font-weight:400">USD</span></p>
+      <dl class="kv">
+        <dt>Transaction</dt><dd>TX-DEMO-0001</dd>
+        <dt>Payment type</dt><dd>One-time deposit</dd>
+        <dt>Payment processor</dt><dd>Stripe or Square (merchant selected)</dd>
+      </dl>
+      <h3 style="margin-top:24px">Terms for this payment</h3>
+      <div class="terms" style="margin-top:12px">This is a sample deposit for a fictional cabinetry project. Actual merchants provide their own terms, refund policies and cancellation policies.</div>
+      <p><strong>Refund policy:</strong> Example only. Merchant-specific rules are displayed and recorded before real checkout.</p>
+      <label class="checkline"><input type="checkbox" disabled><span>I have reviewed and accept the merchant's terms (disabled in demo).</span></label>
+      <label class="checkline"><input type="checkbox" disabled><span>I confirm my billing jurisdiction (disabled in demo).</span></label>
+      <div class="actions"><button disabled type="button">Secure checkout unavailable in preview</button></div>
+    </section>
+    <section class="panel" style="margin-top:18px">
+      <h2>Who does what</h2>
+      <p>The merchant sells the goods or services. The selected processor handles card payment. Builtegrity documents agreement and payment events; it is not the merchant, bank, or payment guarantor.</p>
+    </section>
+    <div class="actions">
+      <a class="button secondary" href="/">Back to Builtegrity</a>
+      <a class="button" href="/preview/console/">Preview transaction console</a>
+    </div>
+  </main>
+</body>
+</html>

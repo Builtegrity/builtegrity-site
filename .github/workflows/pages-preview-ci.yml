@@ -1,0 +1,34 @@
+name: Public Pages Preview Navigation
+on:
+  pull_request:
+    paths:
+      - 'index.html'
+      - 'public/index.html'
+      - 'preview/**'
+      - 'public/preview/**'
+      - 'pay/index.html'
+      - 'console/index.html'
+      - '404.html'
+      - 'scripts/test-pages-preview.mjs'
+      - '.github/workflows/pages-preview-ci.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'public/index.html'
+      - 'preview/**'
+      - 'public/preview/**'
+      - 'pay/index.html'
+      - 'console/index.html'
+      - '404.html'
+      - 'scripts/test-pages-preview.mjs'
+      - '.github/workflows/pages-preview-ci.yml'
+jobs:
+  preview-links:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/test-pages-preview.mjs
