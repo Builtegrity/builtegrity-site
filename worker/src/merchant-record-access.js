@@ -1,8 +1,7 @@
-import {lookupMerchantRecordToken,accountlessTransactionProjection,
+import {lookupMerchantRecordToken,accountlessTransactionProjection,sha256,
  claimMerchantFromEmailLink} from './merchant-record-links.js';
 import {getTransaction} from './db.js';
 import {authenticateClerkSession} from './clerk-auth.js';
-import {serveTransactionPdf} from './pdf.js';
 const json=(obj,status=200)=>new Response(JSON.stringify(obj),{status,headers:{
  'content-type':'application/json','cache-control':'no-store','referrer-policy':'no-referrer',
  'x-content-type-options':'nosniff'}});
@@ -22,14 +21,17 @@ export async function handleMerchantEmailAccess(request,env){
  const tx=await getTransaction(env,row.transaction_id);
  if(!tx||tx.merchant_id!==row.merchant_id)return fail('Transaction unavailable',404);
  if(path==='/api/merchant/record-link/read'){
+  await env.DB.prepare(`UPDATE merchant_transaction_email_links
+   SET opened_at=COALESCE(opened_at,CURRENT_TIMESTAMP),open_count=open_count+1
+   WHERE transaction_id=? AND token_sha256=? AND revoked_at IS NULL`)
+    .bind(row.transaction_id,await sha256(token)).run();
   return json({record:accountlessTransactionProjection(tx),
     accountless:true,expires_at:row.expires_at,
     included:'This read-only link shows only the named transaction. It excludes bank evidence, private merchant notes, customer files and other transactions.',
     signup_url:'/signup/'});
  }
  if(path==='/api/merchant/record-link/pdf'){
-  return serveTransactionPdf(env,tx,{type:'CUSTOMER_TOKEN',
-    ref:'MERCHANT_LINK:'+row.transaction_id,view:false});
+  return fail('A verified merchant account is required to download or share any PDF. Sign in to your dashboard.',403);
  }
  if(path==='/api/merchant/record-link/claim'){
   const principal=await authenticateClerkSession(request,env);
