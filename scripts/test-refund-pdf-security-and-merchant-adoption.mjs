@@ -23,14 +23,17 @@ for(const name of readdirSync('migrations').filter(p=>p.endsWith('.sql')).sort()
  if(name.startsWith('0009_'))
   sqlRun(readFileSync('transaction-engine/seed-tx-0001.sql','utf8'));
 }
-const db={prepare:sql=>({bind(...args){
- let index=0;
- const rendered=sql.replace(/\?/g,()=>literal(args[index++]));
- assert.equal(index,args.length,'Query binds must match SQL placeholders');
- return {first:async()=>sqlRun(rendered,true)[0]||null,
-  all:async()=>({results:sqlRun(rendered,true)}),
-  run:async()=>{sqlRun(rendered);return {success:true}}};
-}})};
+const db={prepare:sql=>{
+ const statement=rendered=>({first:async()=>sqlRun(rendered,true)[0]||null,
+   all:async()=>({results:sqlRun(rendered,true)}),
+   run:async()=>{sqlRun(rendered);return {success:true}}});
+ return {...statement(sql),bind(...args){
+   let index=0;
+   const rendered=sql.replace(/\?/g,()=>literal(args[index++]));
+   assert.equal(index,args.length,'Query binds must match SQL placeholders');
+   return statement(rendered);
+ }};
+}};
 const env={DB:db,APP_BASE_URL:'https://builtegrity.com'};
 sqlRun("INSERT INTO transaction_financial_adjustments"+
  "(id,transaction_id,merchant_id,processor,adjustment_type,direction,amount_cents,currency,"+
