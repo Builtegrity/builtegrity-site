@@ -3,7 +3,7 @@
 export const SQUARE_SCOPES = Object.freeze([
   'MERCHANT_PROFILE_READ', 'PAYMENTS_READ', 'PAYMENTS_WRITE',
   'PAYMENTS_WRITE_ADDITIONAL_RECIPIENTS', 'ORDERS_READ', 'ORDERS_WRITE',
-  'PAYOUTS_READ', 'SETTLEMENTS_READ'
+  'PAYOUTS_READ'
 ]);
 export function squareBase(env) {
   return String(env.SQUARE_ENV || 'sandbox').toLowerCase()==='production'
