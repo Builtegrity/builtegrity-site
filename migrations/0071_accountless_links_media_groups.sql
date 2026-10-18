@@ -69,3 +69,6 @@ CREATE INDEX IF NOT EXISTS idx_record_media_target
 -- Email issuance requires documented opt-in obtained during merchant onboarding.
 ALTER TABLE merchants ADD COLUMN record_email_opt_in INTEGER NOT NULL DEFAULT 0
  CHECK(record_email_opt_in IN(0,1));
+
+ALTER TABLE merchants ADD COLUMN record_email_consent_reference TEXT;
+ALTER TABLE merchants ADD COLUMN record_email_consent_at TEXT;
