@@ -124,3 +124,101 @@ $('#saveManual').addEventListener('click',async()=>{
   message('Saved '+result+' custom field observation(s).');
  }catch(e){message(e.message);}
 });
+function parseCsv(text){
+ const rows=[];let cells=[],value='',quoted=false;
+ for(let i=0;i<text.length;i++){
+  const c=text[i];
+  if(c==='"'){
+   if(quoted&&text[i+1]==='"'){value+='"';i++;}
+   else quoted=!quoted;
+  }else if(c===','&&!quoted){cells.push(value);value='';}
+  else if((c==='\r'||c==='\n')&&!quoted){
+   if(c==='\r'&&text[i+1]==='\n')i++;
+   cells.push(value);if(cells.some(v=>v.trim()))rows.push(cells);
+   cells=[];value='';
+  }else value+=c;
+ }
+ if(quoted)throw Error('CSV has an unclosed quoted value');
+ cells.push(value);if(cells.some(v=>v.trim()))rows.push(cells);
+ if(rows.length<2)throw Error('CSV requires headers and data');
+ const headers=rows.shift().map(x=>x.trim());
+ if(!headers.includes('scope')||!headers.includes('external_reference'))
+  throw Error('CSV requires scope and external_reference columns');
+ return rows.map((values,i)=>{
+  const record={scope:'',external_reference:'',fields:{}};
+  for(let k=0;k<headers.length;k++){
+   if(headers[k]==='scope'||headers[k]==='external_reference')
+     record[headers[k]]=(values[k]||'').trim();
+   else if(values[k]?.trim())record.fields[headers[k]]=values[k].trim();
+  }
+  if(!Object.keys(record.fields).length)throw Error('No values in CSV row '+(i+2));
+  return record;
+ });
+}
+$('#importFile').addEventListener('click',async()=>{
+ const f=$('#fileUpload').files?.[0];
+ if(!f){$('#importResult').textContent='Choose a file.';return;}
+ if(f.size>250000){$('#importResult').textContent='File too large: split the CSV/JSON into files below 250 KB.';return;}
+ try{
+  const txt=await f.text();let records;
+  if(f.name.toLowerCase().endsWith('.csv'))records=parseCsv(txt);
+  else if(f.name.toLowerCase().endsWith('.json')){
+   const data=JSON.parse(txt);records=Array.isArray(data)?data:data.records;
+  }else throw Error('Only CSV and JSON are supported');
+  const count=await importRows(records);
+  $('#importResult').textContent='Imported '+count+' values. The latest revision appears in the timeline and merchant PDF.';
+ }catch(e){$('#importResult').textContent='Stopped: '+e.message+
+  '. Previously accepted batches remain stored. Correct unmatched references before retrying.';}
+});
+$('#exampleFile').addEventListener('click',()=>{
+ const content='scope,external_reference,hoa_community\r\nCUSTOMER,EXAMPLE-HOA-001,West Bay Community\r\n';
+ const file=new Blob([content],{type:'text/csv'});
+ const a=document.createElement('a');a.href=URL.createObjectURL(file);
+ a.download='builtegrity-example.csv';a.click();
+ setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+ message('Template downloaded. Create the hoa_community field first and use your real customer reference.');
+});
+$('#loadGroups').addEventListener('click',async()=>{
+ try{
+  const field=$('#groupField').value;
+  if(!field)throw Error('Choose a customer field');
+  const grouped=await request(query('groups?field_key='+encodeURIComponent(field)));
+  const parent=$('#groupList');parent.replaceChildren();
+  $('#groupHistory').replaceChildren();
+  for(const item of grouped.groups||[]){
+   const outer=node('div');outer.className='setup-item';
+   const button=node('button',item.group_value+' · '+item.customer_count+' customers · '+
+     item.transaction_count+' transactions');
+   button.className='secondary';button.type='button';
+   button.addEventListener('click',async()=>{
+    try{
+     const history=await request(query('group-history?field_key='+
+       encodeURIComponent(field)+'&value='+encodeURIComponent(item.group_value)));
+     const table=node('table'),head=node('thead'),row=node('tr');
+     for(const title of ['Customer','Customer reference','Payment reference','Amount','Integrity','PDF'])
+       row.append(node('th',title));
+     head.append(row);table.append(head);
+     const body=node('tbody');
+     for(const item of history.records||[]){
+      const line=node('tr');
+      for(const value of [item.name,item.merchant_customer_reference,
+       item.merchant_payment_reference||item.transaction_id,
+       item.transaction_id?(Number(item.amount_cents)/100).toFixed(2)+' '+item.currency:'—',
+       item.integrity_status||'—'])line.append(node('td',value??'—'));
+      const cell=node('td');
+      if(item.transaction_id){
+       const pdf=node('a','Open PDF');
+       pdf.href='/api/merchant/transactions/'+encodeURIComponent(item.transaction_id)+'/pdf?view=1';
+       pdf.target='_blank';pdf.rel='noopener noreferrer';cell.append(pdf);
+      }
+      line.append(cell);body.append(line);
+     }
+     table.append(body);
+     const target=$('#groupHistory');target.replaceChildren();target.append(table);
+    }catch(e){message(e.message);}
+   });outer.append(button);parent.append(outer);
+  }
+  if(!grouped.groups?.length)parent.append(node('p','No customers have a value for this grouping yet.'));
+ }catch(e){message(e.message);}
+});
+setup();
