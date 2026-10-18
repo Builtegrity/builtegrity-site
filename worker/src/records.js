@@ -94,7 +94,9 @@ export async function handlePublicRecordRoute(request, env, ctx) {
     };
     return json({transaction:{
       id:tx.id,merchant_name:tx.merchant_name,customer_name:tx.customer_name,
-      merchant_reference:tx.merchant_reference,customer_reference:tx.customer_id,
+      merchant_reference:tx.merchant_reference,
+      merchant_payment_reference:tx.merchant_payment_reference,
+      customer_reference:tx.merchant_customer_reference||tx.customer_id,
       processor:tx.processor,amount_cents:tx.amount_cents,currency:tx.currency,
       lifecycle_status:tx.lifecycle_status,integrity_status:tx.integrity_status,
       exception_status:tx.exception_status,record_classification:tx.record_classification,
