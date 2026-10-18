@@ -155,6 +155,16 @@ function buildJourney(card,data){
   evidence.append(section);
  }
  wrap.append(evidence);
+ if((data.custom_fields||[]).length){
+  const custom=elem('section','journey-evidence');
+  custom.append(elem('strong','','Merchant-defined customer and transaction details'));
+  for(const item of data.custom_fields){
+    custom.append(elem('div','',''+item.group_title+' / '+item.label+': '+item.value_text+
+      ' ['+item.record_scope+' · '+item.source_id+']'));
+  }
+  custom.append(elem('small','','Supplied by the merchant or its connected source, not the processor.'));
+  wrap.append(custom);
+ }
  if((data.deliveries||[]).length){
   const timings=elem('div','journey-evidence');
   timings.append(elem('strong','','Live processor notification timestamps'));
