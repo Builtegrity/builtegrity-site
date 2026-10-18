@@ -98,6 +98,15 @@ PLAID_REDIRECT_URI = "https://builtegrity.com/merchant/bank/"
 # Keep PLAID_CLIENT_ID, PLAID_SECRET and BANK_TOKEN_ENCRYPTION_KEY_B64 as Worker secrets.
 # Plaid Transactions may create a subscription charge per connected Item.
 
+# Merchant-owned customer/transaction fields and optional outbound data feeds.
+# File imports and field definitions require an authenticated merchant OWNER.
+# Push feeds remain off until validated with a specific merchant sender/adapter.
+CUSTOM_SYNC_ENABLED = "false"
+# Throttled bank-permission and integration health notices are visible in the portal
+# even when email delivery is off. Email delivery must use a verified Resend sender.
+MERCHANT_SETUP_EMAILS_ENABLED = "false"
+MERCHANT_SETUP_EMAIL_FROM = "Builtegrity Setup <hello@builtegrity.com>"
+
 # Public abuse protection. The site key is browser-safe; the secret key remains a Worker secret.
 # Siteverify responses must report one of these hostnames before a public mutation is accepted.
 TURNSTILE_SITE_KEY = "REPLACE_TURNSTILE_SITE_KEY"
