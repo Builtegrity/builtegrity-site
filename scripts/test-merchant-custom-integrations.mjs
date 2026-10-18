@@ -10,6 +10,7 @@ import {
  rotateMerchantSyncSource,revokeMerchantSyncSource
 } from '../worker/src/merchant-custom-data.js';
 import {transactionPdfLines} from '../worker/src/pdf-evidence.js';
+import {merchantSetupNotices,runMerchantSetupNotifications} from '../worker/src/merchant-setup-autopilot.js';
 assert.throws(()=>sanitizeFieldDefinition({field_key:'card_number',label:'Card number',
   record_scope:'CUSTOMER'}),/non-sensitive|credentials/);
 assert.throws(()=>normalizeMerchantFieldValue('NaN','NUMBER'),/finite/);
@@ -94,6 +95,14 @@ assert.equal(await verifyMerchantSyncToken(env,push.id,push.token_once),null);
 assert.equal((await verifyMerchantSyncToken(env,push.id,rotated.token_once))?.id,push.id);
 await revokeMerchantSyncSource(env,'MER-0001',push.id);
 assert.equal(await verifyMerchantSyncToken(env,push.id,rotated.token_once),null);
+
+sqlRun("INSERT INTO merchant_bank_connections(id,merchant_id,item_id,access_token_ciphertext,access_token_iv,status) VALUES('BANK-SELF-SERVICE','MER-0001','plaid-item-example','encrypted','nonce','REAUTH_REQUIRED');");
+const notices=await merchantSetupNotices(env,'MER-0001');
+assert(notices.some(x=>x.code==='BANK_REAUTH'&&x.action_url==='/merchant/bank/'));
+const scheduled=await runMerchantSetupNotifications(env,{limit:10});
+assert.equal(scheduled.action_required,1);
+assert.equal(scheduled.emails_sent,0,'No external mail without explicitly configured delivery');
+assert.equal(sqlRun("SELECT COUNT(*) AS n FROM merchant_setup_notices WHERE merchant_id='MER-0001'",true)[0].n,1);
 
 const route=readFileSync('worker/src/merchant-custom-routes.js','utf8');
 assert.match(route,/requireMerchantMembership/);
