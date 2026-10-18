@@ -29,14 +29,47 @@ async function setup(){
 async function refresh(){
  if(!merchantId)return;
  try{
-  const [a,b]=await Promise.all([request(query('schema')),request(query('sources'))]);
+  const [a,b,h]=await Promise.all([request(query('schema')),request(query('sources')),
+    request(query('health'))]);
   definitions=a.definitions||[];sources=b.sources||[];
+  const health=new Map((h.fields||[]).map(x=>[x.field_key,x]));
   syncEnabled=Boolean(b.live_sync_enabled);
   const fields=$('#fieldList');fields.replaceChildren();
   for(const d of definitions){
    const item=node('div');item.className='setup-item';
    item.append(node('strong',d.label),node('span',' · '+d.field_key+' · '+d.record_scope+' · '+d.group_title));
+   const healthStatus=health.get(d.field_key);
+   const overview=node('p',healthStatus?.sync_health==='CONNECTED'
+     ?'Automatic source connected. Latest data recorded: '+(healthStatus.last_value_seen_at||'No field update received yet')
+     :healthStatus?.sync_health==='AWAITING_FIRST_DELIVERY'
+       ?'Automatic mode selected. Waiting for your software to send the first update.'
+       :healthStatus?.sync_health==='ACTION_REQUIRED'||healthStatus?.sync_health==='SOURCE_ERROR'
+         ?'Source needs attention. Reconnect, correct its delivery or switch to Manual.'
+         :'Manual mode — edit the value here or import a file when needed.');
+   overview.className='setup-help';item.append(overview);
    if(d.active){
+    const controls=node('div');controls.className='setup-actions';
+    const mode=node('select');mode.setAttribute('aria-label','Update mode for '+d.label);
+    option(mode,'MANUAL','Manual updates');
+    option(mode,'AUTO','Automatic from connected source');
+    mode.value=d.update_mode||'MANUAL';
+    const src=node('select');src.setAttribute('aria-label','Source for '+d.label);
+    option(src,'','Select a sending source');
+    for(const x of sources.filter(x=>x.status==='ACTIVE'&&x.source_kind!=='FILE'))
+      option(src,x.id,x.title+' ('+x.source_kind+')');
+    src.value=d.preferred_source_id||'';
+    const refreshControls=()=>{src.disabled=mode.value!=='AUTO';};
+    mode.addEventListener('change',refreshControls);refreshControls();
+    const save=node('button','Save update method');save.type='button';save.className='secondary';
+    save.addEventListener('click',async()=>{
+      try{
+       const result=await request('field/sync',{merchant_id:merchantId,field_key:d.field_key,
+         update_mode:mode.value,source_id:mode.value==='AUTO'?src.value:null});
+       message(result.configuration.guidance);
+       await refresh();
+      }catch(e){message(e.message);}
+    });
+    controls.append(mode,src,save);item.append(controls);
     const btn=node('button','Disable');btn.className='secondary';btn.type='button';
     btn.addEventListener('click',async()=>{
      if(!confirm('Hide this custom field but preserve its history?'))return;
