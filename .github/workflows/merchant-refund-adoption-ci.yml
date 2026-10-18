@@ -1,0 +1,35 @@
+name: Refund PDFs, Merchant Dashboards & Profile Adoption CI
+on:
+  pull_request:
+    paths:
+      - 'migrations/0072*'
+      - 'worker/src/merchant-refund-pdf.js'
+      - 'worker/src/merchant-dashboard-adoption.js'
+      - 'worker/src/merchant-record-access.js'
+      - 'worker/src/merchant-record-links.js'
+      - 'worker/src/records.js'
+      - 'worker/src/pdf.js'
+      - 'worker/src/runtime.js'
+      - 'worker/src/merchant-help.js'
+      - 'public/merchant/**'
+      - 'scripts/test-refund-pdf-merchant-adoption.mjs'
+      - '.github/workflows/merchant-refund-adoption-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  private-refund-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check code syntax
+        run: |
+          for f in worker/src/merchant-refund-pdf.js worker/src/merchant-dashboard-adoption.js worker/src/merchant-record-access.js worker/src/merchant-record-links.js worker/src/records.js worker/src/pdf.js worker/src/runtime.js worker/src/merchant-help.js public/merchant/app.js public/merchant/record/app.js public/merchant/transactions/app.js; do node --check "$f"; done
+      - name: Refund PDF and tenant safety scenario
+        run: node scripts/test-refund-pdf-merchant-adoption.mjs
+      - name: Database migration lineage
+        run: npm run db:lineage
