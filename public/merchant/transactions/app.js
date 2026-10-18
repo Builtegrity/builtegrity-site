@@ -16,14 +16,39 @@ function money(cents,currency){
 }
 function td(row,value){const cell=document.createElement('td');cell.textContent=String(value??'—');row.append(cell);return cell;}
 function pdfPath(id,inline=false){return '/api/merchant/transactions/'+encodeURIComponent(id)+'/pdf'+(inline?'?view=1':'');}
-function pdfLinks(row,id){
+function refundPdfPath(refundId,inline=false){
+ return '/api/merchant/refunds/'+encodeURIComponent(refundId)+'/pdf'+(inline?'?view=1':'');
+}
+function pdfLinks(row,refund){
  const cell=document.createElement('td');
- for(const [label,inline] of [['PDF',true],['Download',false]]){
+ for(const [label,inline] of [['View refund PDF',true],['Download refund PDF',false]]){
   if(cell.childNodes.length)cell.append(' · ');
-  const a=document.createElement('a');a.textContent=label;a.href=pdfPath(id,inline);
-  a.rel='noopener noreferrer';if(inline)a.target='_blank';cell.append(a);
+  const link=document.createElement('a');link.textContent=label;
+  link.href=refundPdfPath(refund.refund_id,inline);
+  link.rel='noopener noreferrer';if(inline)link.target='_blank';
+  cell.append(link);
  }
- row.append(cell);
+ const share=document.createElement('button');share.type='button';share.className='secondary';
+ share.textContent='Share PDF';share.title='Share the current refund PDF securely using your device';
+ share.addEventListener('click',async()=>{
+  try{
+   const response=await fetch(refundPdfPath(refund.refund_id),{credentials:'same-origin',
+    cache:'no-store'});
+   if(!response.ok)throw Error('Sign in to your merchant account to share this refund record.');
+   const blob=await response.blob();
+   const file=new File([blob],'refund-'+refund.refund_id+'.pdf',{type:'application/pdf'});
+   if(navigator.canShare?.({files:[file]})){
+     await navigator.share({files:[file],title:'Builtegrity refund '+refund.refund_id});
+   }else{
+     const url=URL.createObjectURL(blob);
+     const link=document.createElement('a');link.href=url;link.download=file.name;
+     document.body.append(link);link.click();link.remove();
+     setTimeout(()=>URL.revokeObjectURL(url),1500);
+     status.textContent='Refund PDF downloaded. You can attach it to a message.';
+   }
+  }catch(e){if(e?.name!=='AbortError')status.textContent=e.message||'PDF sharing unavailable';}
+ });
+ cell.append('  ',share);row.append(cell);
 }
 async function request(url){
  const response=await fetch(url,{credentials:'same-origin',cache:'no-store'});
@@ -245,7 +270,7 @@ function drawRefunds(items){
     td(row,refund.refund_id);td(row,refund.transaction_id);
     td(row,refund.processor);td(row,money(refund.amount_cents,refund.currency));
     td(row,refund.status);td(row,refund.occurred_at);
-    pdfLinks(row,refund.transaction_id);refunds.append(row);
+    pdfLinks(row,refund);refunds.append(row);
   }
   if(!items.length){const row=document.createElement('tr');const el=td(row,'No recorded refunds yet.');el.colSpan=7;refunds.append(row);}
 }
