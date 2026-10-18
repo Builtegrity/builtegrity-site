@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>My Transactions | Builtegrity</title>
+<link rel="stylesheet" href="/styles.css"></head>
+<body><main class="shell">
+<p class="eyebrow">Builtegrity | Secure merchant records</p>
+<div class="toolbar"><div><h1 style="font-size:clamp(32px,5vw,52px)">My Transactions</h1>
+<p class="lede">Open any transaction to view its latest downloadable PDF record. The receipt is refreshed from the stored evidence each time it is opened.</p></div></div>
+<p id="status" class="muted" role="status">Loading your authorized merchant transactions...</p>
+<div class="actions"><button id="refresh" type="button">Refresh transaction statuses</button>
+<span class="muted">Transaction integrity is locally rechecked on a two-minute schedule after deployment; processor events may arrive later.</span></div>
+<section class="panel table-wrap" aria-label="Your transactions"><table>
+<thead><tr><th>Transaction</th><th>Merchant</th><th>Processor</th><th>Amount</th><th>Lifecycle</th><th>Integrity</th><th>Record</th></tr></thead>
+<tbody id="transactions"></tbody></table></section>
+<p class="muted">These records contain confidential merchant/customer data. Use the signed-in PDF viewer or download the PDF before sharing a copy. No public PDF URL is created for merchant documents.</p>
+</main>
+<script type="module" src="/merchant/transactions/app.js"></script></body></html>
