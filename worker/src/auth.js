@@ -38,6 +38,14 @@ export async function handleAuthRoute(request, env) {
       : json({ authenticated: false }, 401);
   }
 
+  if (url.pathname === '/auth/signup' && request.method === 'GET') {
+    if (provider !== 'CLERK'||!env.CLERK_SIGN_UP_URL)
+      return json({error:'Merchant profile registration has not been configured yet. Payments do not require an account.'},503);
+    const next=safeReturnTo(url.searchParams.get('return_to')||'/merchant/');
+    const hosted=new URL(String(env.CLERK_SIGN_UP_URL));
+    hosted.searchParams.set('redirect_url',new URL(next,url.origin).toString());
+    return Response.redirect(hosted.toString(),302);
+  }
   if (url.pathname === '/auth/login' && request.method === 'GET' && provider === 'CLERK') {
     if (!env.CLERK_SIGN_IN_URL) return json({ error: 'Clerk sign-in URL is not configured' }, 503);
     const returnTo = safeReturnTo(url.searchParams.get('return_to'));
