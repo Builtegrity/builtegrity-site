@@ -16,6 +16,7 @@ import { runSquarePayoutRecovery } from './square-reconciliation.js';
 import { runBankSyncRecovery } from './bank-evidence.js';
 import { runMerchantSetupNotifications } from './merchant-setup-autopilot.js';
 import { deliverMerchantHelpRequests } from './merchant-help.js';
+import {dispatchMerchantRecordEmails} from './merchant-record-links.js';
 import { normalizeProviderEvent, recordProviderReceipt, recordProviderResult, webhookTimingSummary } from './processor-event-delivery.js';
 import { verifyIntegritySnapshotBatch } from './integrity-verifier.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
