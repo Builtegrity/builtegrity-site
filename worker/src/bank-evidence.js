@@ -231,10 +231,15 @@ export async function reconcileMerchantBankPayouts(env,merchantId) {
    WHERE b.merchant_id=? AND a.merchant_id=? AND a.is_payout_target=1
      AND a.status='AVAILABLE' AND b.removed=0 AND b.credit_cents=?
      AND b.currency='USD' AND LOWER(b.display_name) LIKE ?
-     AND (b.bank_transaction_date IS NULL OR
-       date(b.bank_transaction_date)>=date('now','-90 days'))
+     AND b.bank_transaction_date IS NOT NULL
+     AND (
+       (? IS NOT NULL AND date(b.bank_transaction_date)
+          BETWEEN date(?,'-7 days') AND date(?,'+7 days'))
+       OR (? IS NULL AND date(b.bank_transaction_date)>=date('now','-10 days'))
+     )
    LIMIT 3
-  `).bind(merchantId,merchantId,payout.amount_cents,'%'+brand+'%').all();
+  `).bind(merchantId,merchantId,payout.amount_cents,'%'+brand+'%',
+ payout.expected_date,payout.expected_date,payout.expected_date,payout.expected_date).all();
   const available=candidates.results||[];
   if(available.length!==1){if(available.length>1)ambiguous++;continue;}
   const one=available[0];
