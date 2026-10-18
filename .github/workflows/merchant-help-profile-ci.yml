@@ -1,0 +1,28 @@
+name: Merchant self-service CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+jobs:
+  merchant-help:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          node --check worker/src/merchant-help.js
+          node --check worker/src/merchant-custom-data.js
+          node --check worker/src/merchant-custom-routes.js
+          node --check worker/src/index.js
+          node --check worker/src/records.js
+          node --check worker/src/runtime.js
+          node --check public/merchant/app.js
+          node --check public/merchant/help/app.js
+          node --check public/merchant/integrations/app.js
+      - run: node scripts/test-merchant-help-profile.mjs
+      - run: node scripts/test-merchant-custom-integrations.mjs
+      - run: npm run db:lineage
