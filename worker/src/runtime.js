@@ -95,6 +95,13 @@ export default {
         }, readiness.ok ? 200 : 503);
       }
 
+      const vanityResponse=await handleVanityMerchantDashboard(request,env);
+      if(vanityResponse)return vanityResponse;
+      if(path==='/api/operations/merchant-profile-adoption'&&request.method==='GET'){
+        await requireOperator(request,env);
+        return json(await merchantAdoptionMetrics(env));
+      }
+
       // Production webhook entrypoint. Account-level events are routed to merchant self-service;
       // transaction events continue through the transaction engine's idempotent processor.
       if (path === '/api/webhooks/stripe' && request.method === 'POST') {
