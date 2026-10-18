@@ -11,6 +11,9 @@ const base = {
   lifecycle_status:'COMPLETE',integrity_status:'ACCOUNTED',exception_status:'NONE',
   processor_payout_status:'paid',payment_status:'completed',
   integrity_verified_at:'2026-10-18 15:20:00',integrity_fee_earned_cents:145,
+  components:[{id:'COMP-DEMO',component_type_code:'PROCESSOR_FEE',amount_cents:3921,source_system:'STRIPE'}],
+  artifacts:[{id:'ART-DEMO',document_type:'HOA_CONTRACT',content_sha256:'hash-demo',metadata:{description:'sample contract',token:'nope'}}],
+  source_objects:[{id:'SRC-DEMO',source_system:'STRIPE',object_type:'PAYOUT',external_object_id:'fake-demo-payout'}],
   events:[{id:'EVT-D1',event_at:'2026-10-18',event_type:'PAYMENT_CONFIRMED',
     source:'SYSTEM',event_data:{receipt:'test',secret:'never-visible',customer_token:'hide'}}],
   exceptions:[],economics:{ledger:[{id:'ECO-DEMO',entry_kind:'REVENUE',
@@ -34,8 +37,13 @@ for(const processor of ['SQUARE','STRIPE']){
   assert.match(merchant,/Example HOA/);
   assert.match(merchant,/Integrity locally verified at: 2026/);
   assert.match(merchant,/Event evidence/);
+  assert.match(merchant,/COMP-DEMO/);
+  assert.match(merchant,/ART-DEMO/);
+  assert.match(merchant,/SRC-DEMO/);
+  assert.doesNotMatch(customer,/COMP-DEMO|ART-DEMO|SRC-DEMO/);
   assert.match(merchant,/\[REDACTED\]/);
   assert.doesNotMatch(merchant,/never-visible|hide/);
+  assert.doesNotMatch(merchant,/nope/);
   assert.doesNotMatch(customer,/Merchant fees|Event evidence|Economics ledger|Revenue|Fee earned/);
   assert.doesNotMatch(customer,/square-order|pi_demo/);
   assert.equal(customer.includes('Accepted terms snapshot:'),true);
