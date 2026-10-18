@@ -58,7 +58,7 @@ function createCard(tx,openInitially=false){
  const summary=elem('summary');
  const main=elem('div','journey-main');
  const label=elem('div','journey-title');
- label.append(elem('span','',tx.merchant_reference||tx.id));
+ label.append(elem('span','',tx.merchant_payment_reference||tx.merchant_reference||tx.id));
  const chip=elem('span','journey-chip '+(tx.integrity_status==='ACCOUNTED'?'accounted':
     tx.integrity_status==='NEEDS_ATTENTION'?'attention':'running'),
     tx.integrity_status==='ACCOUNTED'?'Accounted for':
