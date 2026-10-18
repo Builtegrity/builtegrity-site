@@ -1,9 +1,42 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><meta http-equiv="refresh" content="0;url=/merchant/transactions/">
-<title>Merchant records | Builtegrity</title><link rel="stylesheet" href="/styles.css"></head>
-<body><main class="shell narrow"><p class="eyebrow">Builtegrity · Merchant records</p>
-<h1>Open your transaction history</h1>
-<p class="lede">Access to transaction records requires your authorized merchant sign-in.</p>
-<p><a class="button" href="/merchant/transactions/">Open merchant transactions</a></p>
-</main></body></html>
+<meta name="robots" content="noindex"><title>My Builtegrity · Merchant Home</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+.profile-shell{max-width:1050px;margin:auto;padding:35px 22px 80px}
+.profile-eyebrow{font-size:13px;letter-spacing:.09em;font-weight:700;color:#64748b;text-transform:uppercase}
+.profile-lede{color:#50627a;line-height:1.65;max-width:730px}
+.profile-heading{font-size:clamp(32px,5vw,54px);margin:9px 0}
+.profile-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin:25px 0}
+.profile-card{padding:25px;min-height:160px;text-decoration:none!important;border:1px solid #d9e2ec;border-radius:18px;background:#fff;display:flex;flex-direction:column;gap:10px;color:#1b2b42}
+.profile-card:hover,.profile-card:focus-visible{outline:3px solid #b9ccef;border-color:#7c9ed1}
+.profile-card strong{font-size:21px}.profile-card span{font-size:14px;line-height:1.5;color:#586b82}
+.profile-card b{font-size:13px;margin-top:auto;color:#285fa8}
+.profile-choice{margin:20px 0;padding:18px;background:#f1f5fa;border-radius:15px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.profile-choice select{min-width:220px;padding:12px;border:1px solid #cad5e3;border-radius:9px;font:inherit;background:white}
+.profile-summary{margin:20px 0;display:flex;gap:18px;flex-wrap:wrap;color:#53647d}
+.profile-summary span{background:#eaf0f8;padding:9px 15px;border-radius:12px}
+@media(max-width:640px){.profile-shell{padding:26px 16px 65px}.profile-cards{grid-template-columns:1fr}.profile-card{min-height:130px;padding:22px}}
+</style></head><body>
+<main class="profile-shell">
+<p class="profile-eyebrow">Builtegrity · Your business</p>
+<h1 class="profile-heading">My Builtegrity</h1>
+<p class="profile-lede">Everything for your payments, customers and integrations—organized in one place. Choose where you want to go; most records are one or two taps away.</p>
+<section class="profile-choice" aria-label="Active business">
+<label for="merchantSelect"><strong>Your business</strong></label>
+<select id="merchantSelect" aria-label="Choose the business you represent"><option>Loading your businesses…</option></select>
+</section>
+<p role="status" id="profileStatus" class="profile-lede">Verifying your account…</p>
+<div id="profileSummary" class="profile-summary"></div>
+<nav class="profile-cards" aria-label="Merchant tools">
+<a class="profile-card" href="/merchant/transactions/"><strong>↗ Transactions & refunds</strong>
+<span>See payments processing, payout progress and their printable transaction records.</span><b>Open transaction integrity →</b></a>
+<a class="profile-card" href="/merchant/integrations/#groupCustomers"><strong>▦ Customers & groups</strong>
+<span>Browse customers by HOA, job, property, route or your own categories and review their transaction histories.</span><b>Open customers →</b></a>
+<a class="profile-card" href="/merchant/setup/"><strong>⚙ Integrations & settings</strong>
+<span>Check your integrations, edit custom fields, upload records or reconnect a bank yourself.</span><b>Manage integrations →</b></a>
+<a class="profile-card" href="/merchant/help/"><strong>ⓘ Help & requests</strong>
+<span>Get plain-language setup answers or request an integration that isn't supported automatically.</span><b>Open help →</b></a>
+</nav>
+<p class="profile-lede">Builtegrity stores processor evidence separately from business details that you or your connected apps provide. An optional bank feed may be delayed and can require you to renew permission.</p>
+</main><script type="module" src="/merchant/app.js"></script></body></html>

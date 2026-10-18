@@ -80,7 +80,7 @@ export async function handleMerchantCustomRoute(request,env){
    if(data.source_kind!=='FILE'&&env.CUSTOM_SYNC_ENABLED!=='true')
      return json({error:'Automated push feeds are not enabled yet'},503);
    const source=await createMerchantSyncSource(env,merchantId,principal.sub,
-     data.title,data.source_kind);
+     data.title,data.source_kind,data.expected_interval_minutes??null);
    return json({source},201);
  }
  if(path==='/api/merchant/custom/source/rotate'&&method==='POST')

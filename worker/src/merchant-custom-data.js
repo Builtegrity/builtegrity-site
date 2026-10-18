@@ -184,10 +184,17 @@ export async function customersInGroup(env,merchantId,key,value){
  `).bind(merchantId,key,merchantId,merchantId,value).all();
  return {...grouped,selected_value:value,records:result.results||[]};
 }
-export async function createMerchantSyncSource(env,merchantId,userId,title,kind){
+export async function createMerchantSyncSource(env,merchantId,userId,title,kind,expectedIntervalMinutes=null){
  title=String(title||'').trim();
  kind=String(kind||'').toUpperCase();
  if(title.length<1||title.length>90||!kindSet.has(kind))throw err('Source title or kind invalid');
+ if(kind==='FILE')expectedIntervalMinutes=null;
+ else if(expectedIntervalMinutes!=null){
+   const minutes=Number(expectedIntervalMinutes);
+   if(!Number.isInteger(minutes)||minutes<5||minutes>10080)
+     throw err('Custom feed interval must be between 5 minutes and 7 days');
+   expectedIntervalMinutes=minutes;
+ }
  const count=await env.DB.prepare(`SELECT COUNT(*) AS n FROM merchant_custom_sync_sources
    WHERE merchant_id=? AND status='ACTIVE'`).bind(merchantId).first();
  if(Number(count?.n)>=15)throw err('15 active source limit reached',409);
@@ -198,12 +205,22 @@ export async function createMerchantSyncSource(env,merchantId,userId,title,kind)
    hash=await sha256Hex(token);
  }
  await env.DB.prepare(`INSERT INTO merchant_custom_sync_sources
-  (id,merchant_id,title,source_kind,key_hash,created_by) VALUES(?,?,?,?,?,?)`)
-  .bind(id,merchantId,title,kind,hash,userId).run();
- return {id,title,kind,token_once:token};
+  (id,merchant_id,title,source_kind,key_hash,created_by,expected_interval_minutes) VALUES(?,?,?,?,?,?,?)`)
+  .bind(id,merchantId,title,kind,hash,userId,expectedIntervalMinutes).run();
+ return {id,title,kind,token_once:token,expected_interval_minutes:expectedIntervalMinutes};
 }
 export async function listMerchantSyncSources(env,merchantId){
- const x=await env.DB.prepare(`SELECT id,title,source_kind,status,last_success_at,last_error,created_at
+ const x=await env.DB.prepare(`SELECT id,title,source_kind,status,last_success_at,last_error,created_at,
+ expected_interval_minutes,
+ CASE
+   WHEN status<>'ACTIVE' THEN 'NOT_CONNECTED'
+   WHEN last_error IS NOT NULL THEN 'NEEDS_ATTENTION'
+   WHEN source_kind='FILE' THEN 'MANUAL_IMPORT'
+   WHEN last_success_at IS NULL THEN 'AWAITING_FIRST_UPDATE'
+   WHEN expected_interval_minutes IS NULL THEN 'EVENT_DRIVEN'
+   WHEN datetime(last_success_at)<datetime('now','-'||(expected_interval_minutes*2)||' minutes')
+      THEN 'LATE'
+   ELSE 'CURRENT' END AS sync_health
  FROM merchant_custom_sync_sources WHERE merchant_id=? ORDER BY created_at DESC LIMIT 50`)
  .bind(merchantId).all();
  return x.results||[];

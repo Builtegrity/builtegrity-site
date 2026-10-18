@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Help & Requests | Builtegrity</title>
+<link rel="stylesheet" href="/styles.css"><style>
+.help-shell{max-width:960px;margin:auto;padding:34px 20px 85px}
+.help-shell h1{font-size:clamp(32px,5vw,52px);margin:12px 0}
+.help-lede{max-width:800px;color:#617088;line-height:1.6}
+.help-grid{display:grid;grid-template-columns:1fr 1fr;gap:13px}
+.help-panel{border:1px solid #dae2ec;background:white;border-radius:17px;padding:23px;margin:18px 0}
+.help-field{display:flex;flex-direction:column;gap:7px;margin:12px 0;font-size:15px;font-weight:650}
+.help-field input,.help-field select,.help-field textarea{font:inherit;font-weight:400;line-height:1.5;padding:12px;border:1px solid #c8d4e1;border-radius:10px;background:white;color:#16263c;width:100%}
+.help-panel textarea{min-height:130px;resize:vertical}
+.help-panel button{font-size:16px;padding:11px 17px;cursor:pointer}
+.help-result{font-size:14px;line-height:1.55;background:#f0f5fb;padding:14px;border-radius:11px}
+.help-shortcuts{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.help-shortcuts a{padding:15px;border:1px solid #d1dce8;border-radius:12px;text-decoration:none;color:#2e4566}
+.help-detail{margin:12px 0;padding:15px;background:#f4f7fa;border-radius:12px}
+.help-detail summary{font-weight:700;cursor:pointer}
+.help-detail p{font-size:14px;color:#556980;line-height:1.6}
+.help-history{padding:12px 0;border-bottom:1px solid #e0e7ee;font-size:14px}
+.help-history small{color:#697a90;display:block;margin-top:5px}
+@media(max-width:650px){.help-shell{padding:22px 14px 60px}.help-grid,.help-shortcuts{grid-template-columns:1fr}}
+</style></head><body><main class="help-shell">
+<p class="eyebrow">BUILTEGRITY · MERCHANT HELP</p>
+<h1>Help & requests</h1>
+<p class="help-lede">Most things can be completed here without speaking to anyone. First try the self-service instructions. If your existing software cannot connect, send a request from this page; Builtegrity keeps a record and forwards it to the help inbox when email delivery is configured.</p>
+<p><a href="/merchant/" class="button secondary">← My Builtegrity</a></p>
+<section class="help-panel">
+<h2>Quick answers</h2>
+<details class="help-detail"><summary>How do custom fields update automatically?</summary>
+<p>Configure a field once, then connect your existing software to the authenticated HTTPS data feed. It must send matching customer or merchant payment references. New values are recorded as they arrive and appear in transaction details and PDFs; updates are not guaranteed to arrive in the exact same second as a processor event.</p>
+<a href="/merchant/integrations/">Open custom fields & data sources →</a></details>
+<details class="help-detail"><summary>My CRM or database doesn't have a Builtegrity connector</summary>
+<p>If it can send a webhook or you can use an outgoing database relay, choose an automated push source. Otherwise import a structured CSV/JSON file or enter a field manually. If none work, choose “Connect an unsupported system” below and identify the software; do not paste passwords, private API keys or banking credentials.</p>
+<a href="/merchant/integrations/">Configure your source →</a></details>
+<details class="help-detail"><summary>My bank asks me to authorize again</summary>
+<p>Only you can renew bank permission. Select Reconnect in your bank settings. Builtegrity's payment monitoring continues, but the bank deposit section will not claim posted deposits until authorized data is available. Bank updates can lag by days; posted does not guarantee irreversible settlement.</p>
+<a href="/merchant/bank/">Open connected-bank settings →</a></details>
+<details class="help-detail"><summary>How do I view or download transaction evidence?</summary>
+<p>From My Builtegrity, choose Transactions & refunds. Open any row to view its live event history, then select the PDF icon for the current printable record. Its recorded information changes as verified processor and connected custom-source evidence arrives.</p>
+<a href="/merchant/transactions/">Open transaction history →</a></details>
+</section>
+<section class="help-panel" id="request">
+<h2>Submit a request</h2>
+<p class="help-lede">For software we can't connect yet, unmatched data, or an issue that cannot be corrected in your settings. The request is saved even if email notification has not been activated.</p>
+<form id="helpForm">
+<div class="help-grid">
+<label class="help-field">Your business<select id="helpMerchant" required><option>Checking merchant access…</option></select></label>
+<label class="help-field">What do you need?<select id="helpTopic" required>
+<option value="CONNECT_SOURCE">Connect a third-party system</option>
+<option value="CUSTOM_FIELDS">Custom fields / customer grouping</option>
+<option value="BANK_ACCESS">Bank permissions or deposit evidence</option>
+<option value="TRANSACTION">Transaction history or PDF</option>
+<option value="BILLING">Fees and billing</option>
+<option value="OTHER">Something else</option>
+</select></label>
+<label class="help-field">System or software involved (optional)
+<input id="helpSystem" placeholder="e.g. Jobber, QuickBooks, custom SQL database" maxlength="100"></label>
+<label class="help-field">Relevant invoice, customer, or TX ID (optional)
+<input id="helpReference" placeholder="e.g. RR-HOA-2026-10 or TX-..." maxlength="120"></label>
+</div>
+<label class="help-field">Short title<input id="helpSubject" required minlength="5" maxlength="140"
+ placeholder="Example: Connect my scheduling database"></label>
+<label class="help-field">What do you want Builtegrity to receive automatically? (optional)
+<input id="helpDesired" maxlength="500" placeholder="Example: route number and cart count after each job"></label>
+<label class="help-field">Explain what isn't working or what you'd like connected
+<textarea id="helpDescription" minlength="20" maxlength="4000" required
+ placeholder="Describe the records you have, which system owns them, and what you want to see in your transactions. Do not include passwords, bank numbers, tokens, or card details."></textarea></label>
+<p class="help-lede">Please do not submit credentials, private files, bank account numbers, or card information. Use the secure custom-field importer for structured customer information.</p>
+<button id="helpSubmit" type="submit">Submit request</button>
+<p id="helpResult" role="status" aria-live="polite" class="help-result">No request submitted yet.</p>
+</form>
+</section>
+<section class="help-panel"><h2>Your request history</h2><p class="help-lede">See which requests have been saved and whether their notification reached the help inbox.</p>
+<button id="refreshRequests" type="button" class="secondary">Refresh my requests</button><div id="helpRequests"></div></section>
+<section class="help-panel"><h2>Prefer to fix it yourself?</h2>
+<div class="help-shortcuts"><a href="/merchant/setup/">Integration checklist →</a>
+<a href="/merchant/integrations/">Import a file or connect a feed →</a>
+<a href="/merchant/bank/">Reconnect a bank →</a>
+<a href="/merchant/transactions/">See live transaction updates →</a></div>
+</section>
+</main><script type="module" src="/merchant/help/app.js"></script></body></html>

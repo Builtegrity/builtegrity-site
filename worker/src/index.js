@@ -17,6 +17,7 @@ import { processStripeWebhook } from './webhooks.js';
 import { createSquareCheckout } from './square.js';
 import { squareConnection } from './square-oauth.js';
 import { priceTransaction } from './pricing.js';
+import { listMerchantFieldDefinitions, normalizeMerchantFieldValue } from './merchant-custom-data.js';
 import { assertMerchantProcessorEconomicsSafe } from './financial-safety.js';
 import { handleCompanyBooksRoute } from './company-books-runtime.js';
 import {
@@ -299,6 +300,26 @@ async function handleCreateTransaction(request, env) {
     return json({ error: 'Merchant legal/compliance clearance is incomplete', reasons: merchantLegal.reasons }, 409);
   }
   const txInput = body.transaction || {};
+  // Merchant-defined transaction context can arrive with payment creation rather
+  // than wait for an unrelated CRM/database event. Payment/pricing facts stay server-owned.
+  const initialCustom=txInput.custom_fields??{};
+  if(!initialCustom||typeof initialCustom!=='object'||Array.isArray(initialCustom))
+    return json({error:'transaction.custom_fields must be an object'},400);
+  const initialEntries=Object.entries(initialCustom);
+  if(initialEntries.length>8)return json({error:'Use no more than 8 custom fields per payment creation'},400);
+  let initialFieldValues=[];
+  if(initialEntries.length){
+    const available=await listMerchantFieldDefinitions(env,merchant.id);
+    const known=new Map(available.filter(f=>f.active===1&&f.record_scope==='TRANSACTION')
+      .map(f=>[f.field_key,f]));
+    try{
+      initialFieldValues=initialEntries.map(([key,value])=>{
+        const definition=known.get(key);
+        if(!definition)throw new Error('Unknown or inactive transaction custom field: '+key);
+        return {key,value:normalizeMerchantFieldValue(value,definition.value_type)};
+      });
+    }catch(error){return json({error:String(error.message||error)},400);}
+  }
   const merchantPaymentReference=txInput.merchant_payment_reference==null?null:
     String(txInput.merchant_payment_reference).trim();
   if(merchantPaymentReference&&
@@ -451,6 +472,14 @@ async function handleCreateTransaction(request, env) {
       (merchant_id,external_system,record_kind,external_record_id,internal_record_id)
       VALUES(?,'MERCHANT_DEFINED','TRANSACTION',?,?)
     `).bind(merchant.id,merchantPaymentReference,txId).run();
+  }
+  if(initialFieldValues.length){
+    await env.DB.batch(initialFieldValues.map(field=>env.DB.prepare(`
+      INSERT INTO merchant_custom_field_observations
+        (id,merchant_id,field_key,record_scope,record_id,value_text,source_id,source_event_id)
+      VALUES(?,?,?,'TRANSACTION',?,?,?,?)
+    `).bind('CFO-'+crypto.randomUUID(),merchant.id,field.key,txId,field.value,
+      'CHECKOUT_CREATE',txId+':initial')));
   }
   await recordEvent(env, txId, 'TX_CREATED', 'BUILTEGRITY', null, {
     purchase_id: purchaseId,

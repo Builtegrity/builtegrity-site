@@ -107,6 +107,14 @@ CUSTOM_SYNC_ENABLED = "false"
 MERCHANT_SETUP_EMAILS_ENABLED = "false"
 MERCHANT_SETUP_EMAIL_FROM = "Builtegrity Setup <hello@builtegrity.com>"
 
+# Merchant Help form saves every authorized request to D1 before email.
+# Enable only after the help mailbox and verified Resend sender are configured.
+MERCHANT_HELP_EMAILS_ENABLED = "false"
+HELP_REQUEST_EMAIL_FROM = "Builtegrity Help <hello@builtegrity.com>"
+HELP_REQUEST_EMAIL_TO = "REPLACE_MONITORED_HELP_ADDRESS"
+# Resend's API key is an encrypted Worker secret; no account staff action for routine setup.
+# Merchant custom data source health is measured independently of processor webhook timing.
+
 # Public abuse protection. The site key is browser-safe; the secret key remains a Worker secret.
 # Siteverify responses must report one of these hostnames before a public mutation is accepted.
 TURNSTILE_SITE_KEY = "REPLACE_TURNSTILE_SITE_KEY"

@@ -58,15 +58,27 @@ export async function merchantSetupNotices(env,merchantId){
       description:'The bank feed has not confirmed new transaction history recently. Builtegrity keeps retrying; no deposit is claimed from stale data.',
       action_url:'/merchant/bank/'});
  }
- const sources=await env.DB.prepare(`SELECT id,title,status,last_error
- FROM merchant_custom_sync_sources WHERE merchant_id=? AND last_error IS NOT NULL
- AND status IN('ACTIVE','ERROR')`)
+ const sources=await env.DB.prepare(`SELECT id,title,status,last_error,last_success_at,
+  expected_interval_minutes,source_kind
+ FROM merchant_custom_sync_sources WHERE merchant_id=?
+  AND status IN('ACTIVE','ERROR')`)
  .bind(merchantId).all();
- for(const source of sources.results||[])notices.push({
-   code:'DATA_SOURCE_ERROR',connection_id:source.id,severity:'WARNING',
-   title:'Custom field feed needs reconnecting: '+source.title,
-   description:'The automated feed reported an error. Recheck its key or sender integration; saved financial events remain unaffected.',
-   action_url:'/merchant/integrations/'});
+ for(const source of sources.results||[]){
+  if(source.last_error)notices.push({
+    code:'DATA_SOURCE_ERROR',connection_id:source.id,severity:'WARNING',
+    title:'Custom field feed needs attention: '+source.title,
+    description:'The outside source reported an import error. Correct its customer/payment references or reconnect its private key; verified payment records are unchanged.',
+    action_url:'/merchant/integrations/'});
+  else if(source.source_kind!=='FILE'&&source.status==='ACTIVE'&&
+    Number(source.expected_interval_minutes)>0&&source.last_success_at){
+    const last=Date.parse(source.last_success_at.replace(' ','T')+'Z');
+    if(Number.isFinite(last)&&Date.now()-last>Number(source.expected_interval_minutes)*120000)
+      notices.push({code:'DATA_SOURCE_DELAYED',connection_id:source.id,severity:'WARNING',
+        title:'Custom field updates are delayed: '+source.title,
+        description:'Builtegrity has not received updates within twice the expected interval. Your payment history still updates independently. Check your external sender.',
+        action_url:'/merchant/integrations/'});
+  }
+ }
  return notices;
 }
 export async function runMerchantSetupNotifications(env,{limit=20}={}){
