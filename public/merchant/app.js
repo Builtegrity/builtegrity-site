@@ -21,6 +21,8 @@ async function load(){
    const x=list.find(item=>item.id===business.value);
    if(!x)return;
    status.textContent=x.name+' · '+x.role+' access';
+   const vanity=document.querySelector('#dashboardLink');
+   if(vanity)vanity.href=x.dashboard_url||'/merchant/';
    const link=document.querySelector('#merchantDashboardLink');
    if(link){
      link.href=x.dashboard_url||'/merchant/';
