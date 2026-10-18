@@ -206,7 +206,7 @@ export default {
       const operatorPdfMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)\/pdf$/);
       if (operatorPdfMatch && request.method === 'GET') {
         const principal = await requireOperator(request, env);
-        return serveOperatorTransactionPdf(env, operatorPdfMatch[1], principal);
+        return serveOperatorTransactionPdf(env, operatorPdfMatch[1], principal, { view: url.searchParams.get('view') === '1' });
       }
 
       if (path === '/api/statements' && request.method === 'GET') {
