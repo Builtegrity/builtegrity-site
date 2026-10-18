@@ -1,3 +1,4 @@
+import { transactionPdfLines } from './pdf-evidence.js';
 import {
   completePdfRequest,
   createPdfRequest,
@@ -11,9 +12,11 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
   const requestId = await createPdfRequest(env, tx.id, requestedByType, requestedByRef);
 
   try {
-    const version = safeVersion([tx.updated_at,tx.events?.length,tx.events?.at(-1)?.id,tx.exceptions?.length,tx.exceptions?.at(-1)?.updated_at].join('_'));
     const audience = requestedByType === 'CUSTOMER_TOKEN' ? 'customer' : 'merchant';
-    const objectKey = `transaction-records/${tx.id}/${audience}/${version}.pdf`;
+    const bytes = buildTransactionPdf(tx,{audience});
+    const digest=await crypto.subtle.digest('SHA-256',bytes);
+    const version=Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join('');
+    const objectKey=`transaction-records/${tx.id}/${audience}/${version}.pdf`;
 
     if (env.TRANSACTION_RECORDS) {
       const cached = await env.TRANSACTION_RECORDS.get(objectKey);
@@ -28,8 +31,6 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
         return pdfResponse(bytes, `${tx.id}-transaction-record.pdf`, 'HIT',requester.view===true);
       }
     }
-
-    const bytes = buildTransactionPdf(tx, { audience: requestedByType === 'CUSTOMER_TOKEN' ? 'customer' : 'merchant' });
 
     if (env.TRANSACTION_RECORDS) {
       await env.TRANSACTION_RECORDS.put(objectKey, bytes, {
@@ -55,105 +56,8 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
   }
 }
 
-export function buildTransactionPdf(tx, options = {}) {
-  const lines = [];
-  const push = (label, value = '') => lines.push(label ? `${label}: ${display(value)}` : display(value));
-
-  lines.push('BUILTEGRITY TRANSACTION RECORD');
-  lines.push('Every payment accounted for.');
-  lines.push('');
-  push('Transaction', tx.id);
-  push('Merchant', tx.merchant_name);
-  push('Customer', tx.customer_name);
-  push('Purchase reference', tx.merchant_reference || tx.purchase_id);
-  push('Description', tx.description || tx.purchase_description);
-  push('Amount', formatMoney(tx.amount_cents, tx.currency));
-  push('Lifecycle', tx.lifecycle_status);
-  push('Integrity status', tx.integrity_status);
-  push('Record classification', tx.record_classification || 'PENDING_PROTECTED');
-  push('Exception status', tx.exception_status);
-  push('Processor', tx.processor);
-  push('Last status change', tx.integrity_last_changed_at || tx.updated_at);
-  push('Payment status', tx.payment_status || 'pending');
-  push('Payout status', tx.processor_payout_status || 'pending');
-  push('Created', tx.created_at);
-  push('Last updated', tx.updated_at);
-  lines.push('');
-  lines.push('CONSENT AND TERMS');
-  push('Terms version', tx.terms_version || 'n/a');
-  push('Consent accepted', Number(tx.consent_accepted) === 1 ? 'yes' : 'no');
-  push('Consent accepted at', tx.consent_accepted_at || 'n/a');
-  push('Consent method', tx.consent_method || 'n/a');
-  push('Terms SHA-256', tx.terms_snapshot_sha256 || 'n/a');
-  push('Accepted terms', tx.terms_snapshot || 'n/a');
-  push('Billing state', tx.customer_attested_state_code || 'n/a');
-  push('Legal gate', tx.checkout_legal_gate_at || 'n/a');
-  if (tx.refund_policy_snapshot) push('Refund policy', tx.refund_policy_snapshot);
-  if (tx.cancellation_policy_snapshot) push('Cancellation policy', tx.cancellation_policy_snapshot);
-  lines.push('');
-  lines.push('PROCESSOR TRACE');
-  push('Processor', tx.processor);
-  if(tx.processor==='SQUARE'){
-    push('Square checkout',tx.processor_checkout_id||'pending');
-    push('Square order',tx.processor_order_id||'pending');
-    push('Square payment',tx.processor_payment_id||'pending');
-    push('Square payout',tx.processor_payout_id||'pending');
-  }else{
-    push('Payment intent',tx.stripe_payment_intent_id||'pending');
-    push('Stripe charge',tx.stripe_charge_id||'pending');
-    push('Stripe balance entry',tx.stripe_balance_transaction_id||'pending');
-    push('Stripe application fee',tx.stripe_application_fee_id||'pending');
-    push('Stripe payout',tx.stripe_payout_id||'pending');
-  }
-  push('Paid at',tx.payment_at||'pending');
-  push('Expected payout',tx.expected_payout_arrival||'pending');
-  push('Payout reconciled',Number(tx.payout_accounted)===1?'yes':'no');
-  lines.push('');
-  if(options.audience!=='customer'){
-    lines.push('MERCHANT FINANCIAL EVIDENCE');
-    for(const [name,field] of [
-      ['Amount paid','customer_paid_cents'],['Builtegrity fee earned','integrity_fee_earned_cents'],
-      ['Gross fee confirmed','application_fee_gross_confirmed_cents'],
-      ['Collected fee cash','integrity_fee_collected_cents'],
-      ['Square fee requested','processor_app_fee_requested_cents'],
-      ['Square fee reported','processor_app_fee_confirmed_cents'],
-      ['Fee refunds','application_fee_refunded_cents'],
-      ['Customer refunds','refunded_cents'],['Processor fees','processor_fee_cents'],
-      ['Expected merchant net','expected_merchant_net_cents'],
-      ['Actual merchant net','actual_merchant_net_cents'],
-      ['Payout contribution','transaction_payout_contribution_cents'],
-      ['Payout batch','payout_batch_total_cents'],
-      ['Last reconciled','last_reconciled_at'],
-      ['Fee collection method','fee_collection_method'],
-      ['Protection confirmed','protection_confirmed_at'],
-      ['Protection exception','protection_failure_reason'],
-    ]) push(name,tx[field]??'n/a');
-    lines.push('');
-    lines.push('EXCEPTION HISTORY');
-    if(!(tx.exceptions||[]).length)lines.push('No exceptions recorded.');
-    for(const ex of tx.exceptions||[]){
-      push('Exception', [ex.id,ex.exception_type,ex.status,ex.opened_at].join(' | '));
-      push('Explanation',ex.summary||'n/a');
-      push('Resolution',ex.resolution||'unresolved');
-    }
-    lines.push('');
-    lines.push('FINANCIAL LEDGER');
-    for(const e of (tx.economics?.ledger||[]).filter(e=>!String(e.category||'').startsWith('PDF_'))){
-      push('Entry',[e.id,e.entry_kind,e.category,e.amount_micros,e.basis].join(' | '));
-    }
-  }
-  lines.push('');
-  lines.push('EVENT HISTORY');
-
-  for (const event of tx.events || []) {
-    lines.push(`${display(event.event_at)}  ${display(event.event_type)}  [${display(event.source)}]`);
-  }
-
-  lines.push('');
-  lines.push('This PDF is a rendered copy of Builtegrity\'s canonical transaction record.');
-  lines.push('The canonical structured record and immutable event history remain authoritative.');
-
-  return createSimplePdf(lines);
+export function buildTransactionPdf(tx,options={}) {
+  return createSimplePdf(transactionPdfLines(tx,options));
 }
 
 function createSimplePdf(lines) {
