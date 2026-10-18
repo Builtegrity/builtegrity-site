@@ -1,3 +1,4 @@
+import { merchantDashboardUrls } from './merchant-dashboard-adoption.js';
 import { authenticateClerkSession } from './clerk-auth.js';
 import { requireMerchantMembership } from './authorization.js';
 
