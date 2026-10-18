@@ -1,0 +1,28 @@
+name: Processor Webhook Timing CI
+on:
+  pull_request:
+    paths:
+      - 'worker/src/processor-event-delivery.js'
+      - 'worker/src/runtime.js'
+      - 'migrations/0067_processor_event_delivery_audit.sql'
+      - 'scripts/test-processor-event-delivery.mjs'
+      - '.github/workflows/processor-webhook-timing-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  delivery-observability:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          node --check worker/src/runtime.js
+          node --check worker/src/processor-event-delivery.js
+      - name: Verify processor event and webhook timestamps
+        run: node scripts/test-processor-event-delivery.mjs
+      - name: Verify frozen SQL migration lineage
+        run: npm run db:lineage
