@@ -107,6 +107,10 @@ export async function ingestMerchantCustomFields(env,merchantId,sourceId,deliver
    throw err('Provide between 1 and 50 records per batch');
  if(!deliveryId||typeof deliveryId!=='string'||deliveryId.length>128)
    throw err('Provide a stable delivery_id of 1–128 characters');
+ const minute=await env.DB.prepare(`SELECT COUNT(*) AS n
+  FROM merchant_custom_sync_deliveries WHERE source_id=?
+   AND datetime(received_at)>=datetime('now','-1 minute')`).bind(sourceId).first();
+ if(Number(minute?.n)>120)throw err('Too many delivery attempts; retry later',429);
  const existing=await env.DB.prepare(`SELECT result_count FROM merchant_custom_sync_deliveries
    WHERE source_id=? AND delivery_id=?`).bind(sourceId,deliveryId).first();
  if(existing)return {duplicate:true,applied:Number(existing.result_count)||0};
