@@ -23,7 +23,7 @@ jobs:
       - run: npm ci
       - name: Syntax check Worker modules
         run: |
-          for f in worker/src/*.js public/pay/*.js; do node --check "$f"; done
+          for f in worker/src/*.js public/pay/*.js public/console/*.js; do node --check "$f"; done
       - name: Test Square OAuth, signatures, and fail-closed payment controls
         run: node --test scripts/test-dual-processors.mjs
       - name: Verify migration lineage
