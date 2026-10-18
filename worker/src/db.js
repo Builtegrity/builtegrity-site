@@ -180,13 +180,13 @@ export async function recomputeIntegrity(env, transactionId) {
   `).bind(transactionId).first();
 
   const hasOpenExceptions = Number(open?.count || 0) > 0;
+  const processorTrace = tx.processor === 'SQUARE'
+    ? Boolean(tx.processor_checkout_id && tx.processor_order_id && tx.processor_payment_id && tx.processor_payout_id)
+    : Boolean(tx.stripe_payment_intent_id && tx.stripe_charge_id && tx.stripe_balance_transaction_id && tx.stripe_payout_id);
   const fullyAccounted =
     tx.lifecycle_status === 'COMPLETE' &&
     Number(tx.consent_accepted) === 1 &&
-    Boolean(tx.stripe_payment_intent_id) &&
-    Boolean(tx.stripe_charge_id) &&
-    Boolean(tx.stripe_balance_transaction_id) &&
-    Boolean(tx.stripe_payout_id) &&
+    processorTrace &&
     Number(tx.payout_accounted) === 1 &&
     String(tx.processor_payout_status || '').toLowerCase() === 'paid';
 

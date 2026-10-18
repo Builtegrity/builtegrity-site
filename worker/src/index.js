@@ -14,6 +14,8 @@ import {
   verifyStripeSignature,
 } from './stripe.js';
 import { processStripeWebhook } from './webhooks.js';
+import { createSquareCheckout } from './square.js';
+import { squareConnection } from './square-oauth.js';
 import { priceTransaction } from './pricing.js';
 import { assertMerchantProcessorEconomicsSafe } from './financial-safety.js';
 import { handleCompanyBooksRoute } from './company-books-runtime.js';
@@ -132,6 +134,7 @@ async function handlePublicPayment(env, token) {
 
   return json({
     transaction_id: tx.id,
+    processor: tx.processor,
     merchant_name: tx.merchant_name,
     purchase_reference: tx.merchant_reference,
     purchase_description: tx.purchase_description,
@@ -232,16 +235,20 @@ async function handleCheckout(env, token) {
     return json({ error: 'Merchant legal/compliance clearance is incomplete', reasons: merchantLegal.reasons }, 409);
   }
 
-  assertMerchantProcessorEconomicsSafe({
-    id: tx.merchant_id,
-    status: tx.merchant_status,
-    integration_mode: tx.merchant_integration_mode,
-    stripe_fee_payer: tx.stripe_fee_payer,
-    stripe_loss_liability: tx.stripe_loss_liability,
-  });
-
-  if (tx.stripe_checkout_url && ['CREATED', 'CONSENTED', 'PAYMENT_PENDING'].includes(tx.lifecycle_status)) {
-    return json({ url: tx.stripe_checkout_url, checkout_session_id: tx.stripe_checkout_session_id });
+  const useSquare = tx.processor === 'SQUARE';
+  if (!useSquare) {
+    assertMerchantProcessorEconomicsSafe({
+      id: tx.merchant_id,
+      status: tx.merchant_status,
+      integration_mode: tx.merchant_integration_mode,
+      stripe_fee_payer: tx.stripe_fee_payer,
+      stripe_loss_liability: tx.stripe_loss_liability,
+    });
+  }
+  const existingCheckoutUrl = useSquare ? tx.processor_checkout_url : tx.stripe_checkout_url;
+  const existingCheckoutId = useSquare ? tx.processor_checkout_id : tx.stripe_checkout_session_id;
+  if (existingCheckoutUrl && ['CREATED', 'CONSENTED', 'PAYMENT_PENDING'].includes(tx.lifecycle_status)) {
+    return json({ url: existingCheckoutUrl, checkout_session_id: existingCheckoutId, processor: tx.processor });
   }
 
   await env.DB.prepare(`
@@ -253,23 +260,27 @@ async function handleCheckout(env, token) {
      WHERE id=?
   `).bind(tx.id).run();
 
-  const session = await createTrackedCheckout(env, tx);
-  await env.DB.prepare(`
-    UPDATE transactions
-       SET stripe_checkout_session_id = ?,
-           stripe_checkout_url = ?,
-           payment_status = COALESCE(?, payment_status),
-           updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?
-  `).bind(session.id, session.url, session.payment_status || null, tx.id).run();
-
+  // Square links are idempotent by TX id; the hosted link URL never exposes OAuth tokens.
+  // The processor is fixed at transaction creation and cannot be overridden by the public caller.
+  const session = useSquare ? await createSquareCheckout(env, tx) : await createTrackedCheckout(env, tx);
+  if (useSquare) {
+    await env.DB.prepare(`
+      UPDATE transactions SET processor_checkout_id=?,processor_checkout_url=?,
+        processor_order_id=?,processor_app_fee_requested_cents=?,
+        payment_status='PENDING',updated_at=CURRENT_TIMESTAMP WHERE id=?
+    `).bind(session.id,session.url,session.order_id,session.app_fee_cents,tx.id).run();
+  } else {
+    await env.DB.prepare(`
+      UPDATE transactions SET stripe_checkout_session_id=?,stripe_checkout_url=?,
+        processor_checkout_id=?,processor_checkout_url=?,
+        payment_status=COALESCE(?,payment_status),updated_at=CURRENT_TIMESTAMP WHERE id=?
+    `).bind(session.id,session.url,session.id,session.url,session.payment_status||null,tx.id).run();
+  }
   await advanceLifecycle(env, tx.id, 'PAYMENT_PENDING');
   await recordEvent(env, tx.id, 'CHECKOUT_CREATED', 'BUILTEGRITY', null, {
-    checkout_session_id: session.id,
-    legal_gate: true,
+    checkout_session_id: session.id, processor:tx.processor, legal_gate: true,
   });
-
-  return json({ url: session.url, checkout_session_id: session.id });
+  return json({ url:session.url, checkout_session_id:session.id, processor:tx.processor });
 }
 
 async function handleCreateTransaction(request, env) {
@@ -287,9 +298,11 @@ async function handleCreateTransaction(request, env) {
   if (!merchantLegal.ready) {
     return json({ error: 'Merchant legal/compliance clearance is incomplete', reasons: merchantLegal.reasons }, 409);
   }
-  assertMerchantProcessorEconomicsSafe(merchant);
-
   const txInput = body.transaction || {};
+  const processor=String(txInput.processor || merchant.processor || 'STRIPE').toUpperCase();
+  if (!['STRIPE','SQUARE'].includes(processor)) return json({error:'Processor must be STRIPE or SQUARE'},400);
+  if (processor==='STRIPE') assertMerchantProcessorEconomicsSafe(merchant);
+  else await squareConnection(env,merchant.id);
   const pricingOverrides = FORBIDDEN_TRANSACTION_PRICING_INPUTS.filter((key) =>
     Object.prototype.hasOwnProperty.call(txInput, key)
   );
@@ -309,9 +322,8 @@ async function handleCreateTransaction(request, env) {
   const currency = String(txInput.currency || 'USD').toUpperCase();
   if (currency !== 'USD') return json({ error: 'Builtegrity V1 supports USD transactions only' }, 400);
   const pricing = await priceTransaction(env, txInput.amount_cents, { currency });
-  const collectionMethod = merchant.integration_mode === 'STRIPE_CONNECT'
-    ? 'STRIPE_APPLICATION_FEE'
-    : 'AUTOMATIC_USAGE';
+  const collectionMethod = processor==='SQUARE' ? 'OTHER'
+    : merchant.integration_mode === 'STRIPE_CONNECT' ? 'STRIPE_APPLICATION_FEE' : 'AUTOMATIC_USAGE';
 
   let customerId = body.customer_id || null;
   if (!customerId) {
@@ -378,7 +390,7 @@ async function handleCreateTransaction(request, env) {
 
   await env.DB.prepare(`
     INSERT INTO transactions (
-      id, purchase_id, merchant_id, customer_id,
+      id, purchase_id, merchant_id, customer_id, processor,
       transaction_type, description, amount_cents, currency,
       terms_version, terms_snapshot, terms_snapshot_sha256,
       refund_policy_snapshot, cancellation_policy_snapshot,
@@ -387,12 +399,13 @@ async function handleCreateTransaction(request, env) {
       pricing_version_id, pricing_percentage_bps, pricing_minimum_cents,
       pricing_maximum_cents, pricing_density_band_id, pricing_calculated_cents,
       pricing_locked_at, legal_compliance_state
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING')
   `).bind(
     txId,
     purchaseId,
     merchant.id,
     customerId,
+    processor,
     txInput.transaction_type || 'PAYMENT',
     txInput.description,
     txInput.amount_cents,
@@ -426,6 +439,7 @@ async function handleCreateTransaction(request, env) {
   return json({
     transaction: await getTransaction(env, txId),
     payment_path: `/pay/?token=${encodeURIComponent(paymentToken)}`,
+    processor,
   }, 201);
 }
 
