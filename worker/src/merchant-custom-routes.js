@@ -43,6 +43,15 @@ export async function handleMerchantCustomRoute(request,env){
  const principal=await authenticateClerkSession(request,env);
  if(!principal?.sub||principal.claims?.act)return json({error:'Merchant sign-in required'},401);
  const data=method==='POST'?await readBoundedJson(request):Object.fromEntries(url.searchParams);
+ if(path==='/api/merchant/custom/merchants'&&method==='GET'){
+   const rows=await env.DB.prepare(`
+    SELECT m.id,m.name,a.role FROM merchant_access a JOIN merchants m
+    ON m.id=a.merchant_id WHERE a.external_user_id=? AND a.status='ACTIVE'
+     AND a.role='OWNER' ORDER BY m.name LIMIT 100
+   `).bind(principal.sub).all();
+   return json({merchants:rows.results||[],
+     automatic_push_enabled:env.CUSTOM_SYNC_ENABLED==='true'});
+ }
  const merchantId=String(data.merchant_id||'');
  if(!/^MER-[A-Za-z0-9-]+$/.test(merchantId))return json({error:'Merchant ID required'},400);
  // Viewing requires explicit tenant membership. All settings and imports require OWNER.
