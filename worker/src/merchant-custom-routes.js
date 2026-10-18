@@ -76,6 +76,12 @@ export async function handleMerchantCustomRoute(request,env){
  await requireMerchantMembership(env,principal,merchantId,canMutate?'OWNER':'VIEWER');
  if(path==='/api/merchant/custom/schema'&&method==='GET')
    return json({definitions:await listMerchantFieldDefinitions(env,merchantId)});
+ if(path==='/api/merchant/custom/health'&&method==='GET')
+   return json({fields:await merchantCustomSyncHealth(env,merchantId),
+     timing:'Incoming field values appear when a merchant-authorized source delivers them; processor publication does not ensure third-party source delivery.'});
+ if(path==='/api/merchant/custom/field/sync'&&method==='POST')
+   return json({configuration:await setMerchantFieldSyncMode(env,merchantId,
+     String(data.field_key||''),data.update_mode,data.source_id||null)});
  if(path==='/api/merchant/custom/define'&&method==='POST')
    return json({definition:await defineMerchantField(env,merchantId,principal.sub,data)},201);
  if(path==='/api/merchant/custom/deactivate'&&method==='POST'){
