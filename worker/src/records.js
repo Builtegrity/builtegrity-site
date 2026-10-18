@@ -1,3 +1,4 @@
+import {handleMerchantEmailAccess} from './merchant-record-access.js';
 import { handleMerchantBankRoute } from './bank-routes.js';
 import { payoutBankEvidence } from './bank-evidence.js';
 import { getTransaction } from './db.js';
