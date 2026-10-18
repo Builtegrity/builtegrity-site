@@ -13,6 +13,7 @@ import {
 } from './square-oauth.js';
 import { processStripeWebhook } from './webhooks.js';
 import { runSquarePayoutRecovery } from './square-reconciliation.js';
+import { normalizeProviderEvent, recordProviderReceipt, recordProviderResult, webhookTimingSummary } from './processor-event-delivery.js';
 import { verifyIntegritySnapshotBatch } from './integrity-verifier.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
 import { projectStripeEventToTransactionIntelligence } from './stripe-intelligence.js';
@@ -321,6 +322,11 @@ export default {
         return json(await monitorFinancialSafety(env, { refreshProcessorBalance: true }));
       }
 
+      if (path === '/api/watchdogs/provider-timing' && request.method === 'GET') {
+        await requireOperator(request,env);
+        return json(await webhookTimingSummary(env));
+      }
+
       if (path === '/api/watchdogs/status' && request.method === 'GET') {
         await requireOperator(request, env);
         return json(await getWatchdogStatus(env));
@@ -469,28 +475,35 @@ async function requireOperatorOrRedirect(request, env, url) {
 
 async function handleRuntimeStripeWebhook(request, env) {
   if (!env.STRIPE_WEBHOOK_SECRET) return json({ error: 'Stripe webhook secret is not configured' }, 503);
-  const rawBody = await request.text();
-  const signature = request.headers.get('Stripe-Signature');
-  const valid = await verifyStripeSignature(rawBody, signature, env.STRIPE_WEBHOOK_SECRET);
-  if (!valid) return json({ error: 'Invalid Stripe signature' }, 400);
-
+  const receivedAt=new Date().toISOString();
+  const rawBody=await request.text();
+  const valid=await verifyStripeSignature(rawBody,request.headers.get('Stripe-Signature'),env.STRIPE_WEBHOOK_SECRET);
+  if(!valid)return json({error:'Invalid Stripe signature'},400);
   let event;
-  try { event = JSON.parse(rawBody); } catch { return json({ error: 'Invalid JSON' }, 400); }
-  const accountEvent = event.type === 'account.updated' || event.type === 'account.application.deauthorized';
-  if (accountEvent) {
-    const result = await processStripeAccountWebhook(env, event);
-    return json({ received: true, ...result });
+  try{event=JSON.parse(rawBody)}catch{return json({error:'Invalid JSON'},400)}
+  const receipt=normalizeProviderEvent('STRIPE',event,receivedAt);
+  await recordProviderReceipt(env,receipt).catch(e=>console.error('Stripe timing audit unavailable',e.message));
+  try{
+    const accountEvent=event.type==='account.updated'||event.type==='account.application.deauthorized';
+    if(accountEvent){
+      const result=await processStripeAccountWebhook(env,event);
+      await recordProviderResult(env,receipt).catch(e=>console.error('Stripe timing completion audit unavailable',e.message));
+      return json({received:true,...result});
+    }
+    const result=await processStripeWebhook(env,event);
+    const intelligence=await projectStripeEventToTransactionIntelligence(env,event);
+    await recordProviderResult(env,receipt).catch(e=>console.error('Stripe timing completion audit unavailable',e.message));
+    return json({received:true,...result,transaction_intelligence:intelligence});
+  }catch(e){
+    await recordProviderResult(env,receipt,e).catch(x=>console.error('Stripe timing failure audit unavailable',x.message));
+    throw e;
   }
-
-  const result = await processStripeWebhook(env, event);
-  const intelligence = await projectStripeEventToTransactionIntelligence(env, event);
-  return json({ received: true, ...result, transaction_intelligence: intelligence });
 }
-
 
 async function handleRuntimeSquareWebhook(request,env) {
   if(!env.SQUARE_WEBHOOK_SIGNATURE_KEY||!env.SQUARE_WEBHOOK_NOTIFICATION_URL)
     return json({error:'Square webhook configuration is incomplete'},503);
+  const receivedAt=new Date().toISOString();
   const raw=await request.text();
   if(raw.length>1024*1024)return json({error:'Square webhook body too large'},413);
   const ok=await verifySquareWebhook(raw,request.headers.get('x-square-hmacsha256-signature'),
@@ -498,8 +511,16 @@ async function handleRuntimeSquareWebhook(request,env) {
   if(!ok)return json({error:'Invalid Square webhook signature'},403);
   let event;
   try{event=JSON.parse(raw)}catch{return json({error:'Invalid Square webhook JSON'},400)}
-  const result=await processSquareWebhook(env,event);
-  return json({received:true,...result});
+  const receipt=normalizeProviderEvent('SQUARE',event,receivedAt);
+  await recordProviderReceipt(env,receipt).catch(e=>console.error('Square timing audit unavailable',e.message));
+  try{
+    const result=await processSquareWebhook(env,event);
+    await recordProviderResult(env,receipt).catch(e=>console.error('Square timing completion audit unavailable',e.message));
+    return json({received:true,...result});
+  }catch(e){
+    await recordProviderResult(env,receipt,e).catch(x=>console.error('Square timing failure audit unavailable',x.message));
+    throw e;
+  }
 }
 async function handleSquareConnectUrl(env,merchantId) {
   await requirePlatformControl(env,'merchant_onboarding_enabled','Merchant onboarding');
