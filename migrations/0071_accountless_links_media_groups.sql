@@ -9,7 +9,7 @@ CREATE TABLE IF NOT EXISTS merchant_transaction_email_links (
  expires_at TEXT NOT NULL,
  revoked_at TEXT,
  email_state TEXT NOT NULL DEFAULT 'QUEUED'
-  CHECK(email_state IN('QUEUED','SENT','RETRY','DISABLED')),
+  CHECK(email_state IN('QUEUED','SENDING','SENT','RETRY','DISABLED')),
  email_attempts INTEGER NOT NULL DEFAULT 0 CHECK(email_attempts>=0),
  next_attempt_at TEXT,
  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -65,3 +65,7 @@ CREATE TABLE IF NOT EXISTS merchant_record_media (
 );
 CREATE INDEX IF NOT EXISTS idx_record_media_target
  ON merchant_record_media(merchant_id,target_type,target_id,deleted_at,created_at DESC);
+
+-- Email issuance requires documented opt-in obtained during merchant onboarding.
+ALTER TABLE merchants ADD COLUMN record_email_opt_in INTEGER NOT NULL DEFAULT 0
+ CHECK(record_email_opt_in IN(0,1));
