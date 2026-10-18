@@ -58,9 +58,10 @@ export async function merchantSetupNotices(env,merchantId){
       description:'The bank feed has not confirmed new transaction history recently. Builtegrity keeps retrying; no deposit is claimed from stale data.',
       action_url:'/merchant/bank/'});
  }
- const sources=await env.DB.prepare(`SELECT id,title,status,last_error
- FROM merchant_custom_sync_sources WHERE merchant_id=? AND last_error IS NOT NULL
- AND status IN('ACTIVE','ERROR')`)
+ const sources=await env.DB.prepare(`SELECT id,title,status,last_error,last_success_at,
+  expected_interval_minutes,source_kind
+ FROM merchant_custom_sync_sources WHERE merchant_id=?
+  AND status IN('ACTIVE','ERROR')`)
  .bind(merchantId).all();
  for(const source of sources.results||[])notices.push({
    code:'DATA_SOURCE_ERROR',connection_id:source.id,severity:'WARNING',
