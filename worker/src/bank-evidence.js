@@ -80,12 +80,13 @@ export async function connectBank(env,merchantId,userId,publicToken,selectedAcco
     VALUES(?,?,?,?,?,?,?,?,?)
    `).bind(merchantId,connId,a.account_id,String(a.official_name||a.name||'Bank account').slice(0,150),
     String(accounts.item?.institution_id||'Connected bank'),String(a.mask||'').slice(-4),a.type,a.subtype,
-    selected?.account_id===a.account_id?1:0));
+    0));
  }
  await env.DB.batch(tasks);
  // Don't terminate earlier permissions until new connection is saved and the merchant
  // explicitly selects its correct processor payout destination.
  await syncBankConnection(env,connId);
+ if(selected)await selectPayoutBank(env,merchantId,connId,selected.account_id);
  return {connection_id:connId,accounts:eligible.map(a=>({id:a.account_id,name:a.name,mask:a.mask})),
    selected_account_id:selected?.account_id||null,action_required:!selected};
 }
