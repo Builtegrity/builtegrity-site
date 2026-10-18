@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS merchant_custom_field_observations (
   record_id TEXT NOT NULL,
   value_text TEXT NOT NULL CHECK(length(value_text)<=1024),
   source_id TEXT NOT NULL,
-  source_event_id TEXT NOT NULL CHECK(length(source_event_id)<=128),
+  source_event_id TEXT NOT NULL CHECK(length(source_event_id)<=160),
   observed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY(merchant_id,field_key)
     REFERENCES merchant_custom_field_definitions(merchant_id,field_key),
