@@ -175,6 +175,7 @@ async function projectSquarePayment(env,event) {
   }
   if(Number(p.refunded_money?.amount||0)>Number(tx.square_refunded_cents||0))
     await openException(env,tx.id,'SQUARE_REFUND_RECONCILIATION','Square shows refunds that are not yet reconciled from refund facts');
+  if(status==='COMPLETED')await replaySquarePayoutFacts(env,tx.id,event.merchant_id,p.id);
   await recomputeIntegrity(env,tx.id);
   return tx.id;
 }
@@ -212,32 +213,67 @@ async function projectSquarePayout(env,event) {
     if(entry.type!=='CHARGE')continue;
     const paymentId=entry.type_charge_details?.payment_id;
     if(!paymentId)continue;
+    const contribution=Number(entry.net_amount_money?.amount);
+    const currency=String(entry.net_amount_money?.currency||entry.net_amount_money?.currency_code||'').toUpperCase();
+    if(!Number.isSafeInteger(contribution)||contribution<0||currency!=='USD')continue;
+    if(!entry.id)continue;
+    await env.DB.prepare(`
+      INSERT INTO square_payout_entry_facts
+        (payout_entry_id,processor_merchant_id,processor_payment_id,payout_id,payout_status,net_cents,currency)
+      VALUES(?,?,?,?,'PAID',?,?)
+      ON CONFLICT(payout_entry_id) DO UPDATE SET payout_status='PAID',
+        net_cents=excluded.net_cents,updated_at=CURRENT_TIMESTAMP
+      WHERE square_payout_entry_facts.processor_merchant_id=excluded.processor_merchant_id
+        AND square_payout_entry_facts.processor_payment_id=excluded.processor_payment_id
+        AND square_payout_entry_facts.payout_id=excluded.payout_id
+    `).bind(entry.id,event.merchant_id,paymentId,payoutId,contribution,currency).run();
     const tx=await findSquareTransaction(env,event.merchant_id,paymentId,null);
     if(!tx||!tx.payment_at)continue;
-    const contribution=Number(entry.net_amount_money?.amount);
-    if(!Number.isSafeInteger(contribution)||contribution<0){
-      await openException(env,tx.id,'SQUARE_PAYOUT_MISMATCH','Square payout entry has no valid net contribution amount');
-      continue;
-    }
-    if(tx.processor_payout_id&&tx.processor_payout_id!==payoutId){
-      await openException(env,tx.id,'SQUARE_PAYOUT_MISMATCH','Square transaction is associated with two payout IDs');
-      continue;
-    }
-    await env.DB.prepare(`
-      UPDATE transactions SET processor_payout_id=?,processor_payout_status='paid',
-        payout_accounted=1,transaction_payout_contribution_cents=?,
-        actual_merchant_net_cents=?,last_reconciled_at=CURRENT_TIMESTAMP,
-        updated_at=CURRENT_TIMESTAMP WHERE id=? AND processor='SQUARE'
-    `).bind(payoutId,contribution,contribution,tx.id).run();
-    await advanceLifecycle(env,tx.id,'COMPLETE');
-    await recordEvent(env,tx.id,'PAYOUT_PAID','SYSTEM','SQUARE:'+event.event_id+':'+tx.id,{
-      processor:'SQUARE',payout_id:payoutId,entry_id:entry.id
-    });
-    await recomputeIntegrity(env,tx.id);matched++;
+    await applySquarePayoutFact(env,tx,{payout_id:payoutId,net_cents:contribution,payout_entry_id:entry.id},'SQUARE:'+event.event_id+':'+tx.id);
+    matched++;
   }
   return 'payout_entries_matched:'+matched;
 }
 
+
+async function applySquarePayoutFact(env,tx,fact,eventId) {
+  if(tx.processor_payout_id&&tx.processor_payout_id!==fact.payout_id){
+    await openException(env,tx.id,'SQUARE_PAYOUT_MISMATCH','Square payment has conflicting payout IDs');
+    return false;
+  }
+  if(tx.record_classification!=='PROTECTED'){
+    await openException(env,tx.id,'SQUARE_PAYOUT_UNVERIFIED_FEE','Square payout arrived before application-fee/protection confirmation');
+    return false;
+  }
+  await env.DB.prepare(`
+    UPDATE transactions SET processor_payout_id=?,processor_payout_status='paid',
+      payout_accounted=1,transaction_payout_contribution_cents=?,
+      actual_merchant_net_cents=?,last_reconciled_at=CURRENT_TIMESTAMP,
+      updated_at=CURRENT_TIMESTAMP WHERE id=? AND processor='SQUARE'
+  `).bind(fact.payout_id,fact.net_cents,fact.net_cents,tx.id).run();
+  await advanceLifecycle(env,tx.id,'COMPLETE');
+  await recordEvent(env,tx.id,'PAYOUT_PAID','SYSTEM',eventId,{
+    processor:'SQUARE',payout_id:fact.payout_id,entry_id:fact.payout_entry_id
+  });
+  await recomputeIntegrity(env,tx.id);
+  return true;
+}
+async function replaySquarePayoutFacts(env,txId,merchantProviderId,paymentId) {
+  const facts=await env.DB.prepare(`
+    SELECT payout_id,net_cents,payout_entry_id FROM square_payout_entry_facts
+    WHERE processor_merchant_id=? AND processor_payment_id=? AND payout_status='PAID'
+    ORDER BY first_seen_at ASC LIMIT 3
+  `).bind(merchantProviderId,paymentId).all();
+  if(!(facts.results||[]).length)return;
+  const tx=await env.DB.prepare('SELECT * FROM transactions WHERE id=? AND processor=\'SQUARE\'')
+    .bind(txId).first();
+  if(!tx)return;
+  if(new Set(facts.results.map(f=>f.payout_id)).size>1){
+    await openException(env,tx.id,'SQUARE_PAYOUT_MISMATCH','Conflicting Square payout records for the same payment');
+    return;
+  }
+  await applySquarePayoutFact(env,tx,facts.results[0],'SQUARE:PAYOUT_REPLAY:'+facts.results[0].payout_entry_id);
+}
 async function projectSquareRefund(env,event) {
   const payload=event.data?.object?.refund||event.data?.object;
   if(!payload?.id)return 'refund_id_missing';
