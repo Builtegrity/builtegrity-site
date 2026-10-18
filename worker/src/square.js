@@ -181,7 +181,7 @@ async function projectSquarePayout(env,event) {
   let matched=0;
   for(const entry of entries){
     if(entry.type!=='CHARGE')continue;
-    const paymentId=entry.payment_id||entry.payment_details?.payment_id||entry.type_details?.payment_id;
+    const paymentId=entry.type_charge_details?.payment_id;
     if(!paymentId)continue;
     const tx=await findSquareTransaction(env,event.merchant_id,paymentId,null);
     if(!tx||!tx.payment_at)continue;
@@ -189,7 +189,7 @@ async function projectSquarePayout(env,event) {
       UPDATE transactions SET processor_payout_id=?,processor_payout_status='paid',
         payout_accounted=1,transaction_payout_contribution_cents=?,
         updated_at=CURRENT_TIMESTAMP WHERE id=? AND processor='SQUARE'
-    `).bind(payoutId,Number.isInteger(entry.amount_money?.amount)?entry.amount_money.amount:null,tx.id).run();
+    `).bind(payoutId,Number.isInteger(entry.net_amount_money?.amount)?entry.net_amount_money.amount:null,tx.id).run();
     await advanceLifecycle(env,tx.id,'COMPLETE');
     await recordEvent(env,tx.id,'PAYOUT_PAID','SYSTEM','SQUARE:'+event.event_id+':'+tx.id,{
       processor:'SQUARE',payout_id:payoutId,entry_id:entry.id
