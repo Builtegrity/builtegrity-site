@@ -1,6 +1,24 @@
 
 PRAGMA foreign_keys = ON;
 
+
+-- Processor-funded Square application fees satisfy the same no-separate-billing contract.
+DROP TRIGGER IF EXISTS transactions_protected_flow_forbids_separate_billing_insert;
+CREATE TRIGGER transactions_protected_flow_forbids_separate_billing_insert
+BEFORE INSERT ON transactions
+WHEN NEW.record_classification IN ('PENDING_PROTECTED','PROTECTED','FEE_EXCEPTION')
+AND NOT ((NEW.processor='STRIPE' AND NEW.fee_collection_method='STRIPE_APPLICATION_FEE')
+      OR (NEW.processor='SQUARE' AND NEW.fee_collection_method='OTHER'))
+BEGIN SELECT RAISE(ABORT,'Protected transactions must collect Builtegrity revenue inside the processor transaction; separate billing is prohibited'); END;
+
+DROP TRIGGER IF EXISTS transactions_protected_flow_forbids_separate_billing_update;
+CREATE TRIGGER transactions_protected_flow_forbids_separate_billing_update
+BEFORE UPDATE OF record_classification,fee_collection_method,processor ON transactions
+WHEN NEW.record_classification IN ('PENDING_PROTECTED','PROTECTED','FEE_EXCEPTION')
+AND NOT ((NEW.processor='STRIPE' AND NEW.fee_collection_method='STRIPE_APPLICATION_FEE')
+      OR (NEW.processor='SQUARE' AND NEW.fee_collection_method='OTHER'))
+BEGIN SELECT RAISE(ABORT,'Protected transactions must collect Builtegrity revenue inside the processor transaction; separate billing is prohibited'); END;
+
 -- Square and Stripe share historical protection semantics, while retaining independent
 -- processor proofs and fee receipt IDs. This replaces only post-0062 classifier guards;
 -- frozen migrations are never rewritten.
