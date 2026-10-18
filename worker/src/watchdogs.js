@@ -373,9 +373,11 @@ async function checkTransactionState(env, counters) {
 
     const missingProcessorKey = `tx:missing-processor-records:${current.id}`;
     const paidLongEnough = current.payment_at && hoursAgo(current.payment_at) >= 1;
-    const missingProcessorRecords = String(current.payment_status || '').toLowerCase() === 'succeeded' &&
-      paidLongEnough &&
-      (!current.stripe_payment_intent_id || !current.stripe_charge_id || !current.stripe_balance_transaction_id);
+    const paymentSucceeded = ['succeeded','completed','paid'].includes(String(current.payment_status||'').toLowerCase());
+    const missingProcessorRecords = paymentSucceeded && paidLongEnough &&
+      (current.processor==='SQUARE'
+        ? (!current.processor_checkout_id || !current.processor_order_id || !current.processor_payment_id)
+        : (!current.stripe_payment_intent_id || !current.stripe_charge_id || !current.stripe_balance_transaction_id));
     if (missingProcessorRecords) {
       await setAlert(env, {
         key: missingProcessorKey,
@@ -383,14 +385,14 @@ async function checkTransactionState(env, counters) {
         severity: 'CRITICAL',
         subjectType: 'TRANSACTION',
         subjectId: current.id,
-        message: `${current.id} is marked paid but required Stripe processor records are still incomplete after one hour.`,
+        message: `${current.id} is marked paid but required ${current.processor} processor records are still incomplete after one hour.`,
       });
     } else {
       await resolveAlert(env, missingProcessorKey);
     }
 
     const feeKey = `tx:fee-shortfall:${current.id}`;
-    const feeShortfall = String(current.payment_status || '').toLowerCase() === 'succeeded' &&
+    const feeShortfall = paymentSucceeded &&
       paidLongEnough &&
       current.fee_collection_method === 'STRIPE_APPLICATION_FEE' &&
       Number(current.integrity_fee_earned_cents || 0) > Number(current.integrity_fee_collected_cents || 0);
@@ -437,7 +439,7 @@ async function checkTransactionState(env, counters) {
     const payoutOverdueKey = `tx:payout-overdue:${current.id}`;
     const payoutPaid = String(current.processor_payout_status || '').toLowerCase() === 'paid';
     const expectedOverdue = current.expected_payout_arrival && !payoutPaid && hoursAgo(current.expected_payout_arrival) >= 12;
-    const noPayoutAfterThreeDays = !payoutPaid && !current.stripe_payout_id && Number(current.automatic_payouts_required) === 1 &&
+    const noPayoutAfterThreeDays = !payoutPaid && !(current.processor==='SQUARE' ? current.processor_payout_id : current.stripe_payout_id) && Number(current.automatic_payouts_required) === 1 &&
       current.payment_at && hoursAgo(current.payment_at) >= 72;
 
     if (expectedOverdue || noPayoutAfterThreeDays) {
