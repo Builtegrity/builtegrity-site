@@ -261,7 +261,7 @@ export async function createMerchantSyncSource(env,merchantId,userId,title,kind)
  return {id,title,kind,token_once:token};
 }
 export async function listMerchantSyncSources(env,merchantId){
- const x=await env.DB.prepare(`SELECT id,title,source_kind,status,last_success_at,last_error,created_at
+ const x=await env.DB.prepare(`SELECT id,title,source_kind,status,last_success_at,last_heartbeat_at,last_error,created_at
  FROM merchant_custom_sync_sources WHERE merchant_id=? ORDER BY created_at DESC LIMIT 50`)
  .bind(merchantId).all();
  return x.results||[];
