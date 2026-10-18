@@ -154,6 +154,7 @@ See `docs/provider-procurement-standard.md` before requesting quotes or enabling
 | --- | --- | ---: | --- |
 | [Clerk Setup](../docs/clerk-setup.md) | RUNBOOK | Yes | Identity-provider configuration without embedding credentials. |
 | [Cloudflare Access Setup](../docs/cloudflare-access-setup.md) | RUNBOOK | No | Optional infrastructure defense-in-depth setup; not primary product auth. |
+| [Dual Processor Integration](../docs/dual-processor-integration.md) | RUNBOOK | No | Stripe/Square processor adapter integration, Square developer setup and production safety gates. |
 
 ### Public Legal Documents
 
