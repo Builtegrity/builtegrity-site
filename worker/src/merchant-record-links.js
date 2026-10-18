@@ -39,14 +39,14 @@ async function sendTransactionEmail(env,row,token){
    subject:'Your Builtegrity transaction '+row.transaction_id,
    text:[
      'Your business transaction has a Builtegrity record.',
-     'You can view this specific transaction without creating an account:',
+     'You can view this specific transaction STATUS without creating an account:',
      url,
      '',
      'This link is private, read-only and expires 14 days after it is issued.',
      'Anyone who obtains the link can see that transaction summary. Do not forward it.',
-     'It never grants access to unrelated transactions, customer images, bank data or full merchant account settings.',
+     'It never grants access to PDF files, payment amounts, customer information, unrelated transactions, bank details or account settings.',
      '',
-     'Optional: Create a Builtegrity merchant profile at '+domain+'/signup/',
+     'To download, print or share ANY transaction/refund PDF, create a Builtegrity merchant profile at '+domain+'/signup/',
      'Use the same business email address. To link your business account, sign in and return to this private email link to claim access.',
      'You do not need a Builtegrity profile for your payments to be monitored.',
      '',
@@ -108,13 +108,12 @@ async function activeToken(env,token){
 }
 export async function lookupMerchantRecordToken(env,token){return activeToken(env,token);}
 export function accountlessTransactionProjection(tx){
+ // Accountless link carries a minimal status card only, not an invoice,
+ // amount, customer, merchant internal reference, payment ID or PDF.
  return {transaction_id:tx.id,merchant_name:tx.merchant_name,
-  merchant_reference:tx.merchant_reference,merchant_payment_reference:tx.merchant_payment_reference,
-  processor:tx.processor,amount_cents:tx.amount_cents,currency:tx.currency,
+  processor:tx.processor,
   lifecycle_status:tx.lifecycle_status,integrity_status:tx.integrity_status,
   payment_status:tx.payment_status,processor_payout_status:tx.processor_payout_status,
-  created_at:tx.created_at,payment_at:tx.payment_at,
-  expected_payout_arrival:tx.expected_payout_arrival,
   last_updated_at:tx.updated_at};
 }
 export async function verifyClerkBusinessEmail(env,principal,email){
