@@ -179,6 +179,7 @@ See `docs/provider-procurement-standard.md` before requesting quotes or enabling
 
 | Document | Authority | Required | Purpose |
 | --- | --- | ---: | --- |
+| [Merchant Refund PDF & Profile Security](../docs/merchant-refund-profile-security.md) | RUNBOOK | No | Account-gated refunds, emailed status-only links, merchant vanity dashboards and profile adoption reporting. |
 | [Transaction Economics & Records](../docs/transaction-economics-records.md) | CANONICAL_POLICY | Yes | Identity/economics/PDF boundaries, entitlement versus cash and cost semantics. |
 | [Transaction Engine Runbook](../docs/transaction-engine-runbook.md) | RUNBOOK | Yes | Runtime setup, operating model, transaction flow and production configuration. |
 | [Transaction Intelligence](../docs/transaction-intelligence.md) | CANONICAL_POLICY | Yes | Normalized transaction graph, unknown-component learning and modular profiles. |
