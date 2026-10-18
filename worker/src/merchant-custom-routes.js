@@ -20,7 +20,7 @@ async function readBoundedJson(request){
  const length=Number(request.headers.get('content-length'));
  if(length>110000)throw err('Maximum upload batch is 100 KB',413);
  const text=await request.text();
- if(text.length>110000)throw err('Maximum upload batch is 100 KB',413);
+ if(new TextEncoder().encode(text).byteLength>110000)throw err('Maximum upload batch is 100 KB',413);
  try{return JSON.parse(text);}catch{throw err('Valid JSON required');}
 }
 export async function handleMerchantCustomRoute(request,env){
