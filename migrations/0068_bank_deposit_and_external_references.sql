@@ -67,3 +67,10 @@ CREATE TABLE IF NOT EXISTS merchant_external_record_links (
 );
 CREATE INDEX IF NOT EXISTS idx_merchant_external_internal
  ON merchant_external_record_links(merchant_id,record_kind,internal_record_id);
+
+-- Merchant-owned external payment/receipt ID, separate from Builtegrity TX ID and
+-- reusable invoice/customer references. Unique within a merchant to prevent mislinks.
+ALTER TABLE transactions ADD COLUMN merchant_payment_reference TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_merchant_payment_reference
+  ON transactions(merchant_id,merchant_payment_reference)
+  WHERE merchant_payment_reference IS NOT NULL;
