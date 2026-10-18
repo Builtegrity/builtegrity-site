@@ -69,6 +69,10 @@ function buildTransactionPdf(tx) {
   push('Amount', formatMoney(tx.amount_cents, tx.currency));
   push('Lifecycle', tx.lifecycle_status);
   push('Integrity status', tx.integrity_status);
+  push('Record classification', tx.record_classification || 'PENDING_PROTECTED');
+  push('Exception status', tx.exception_status);
+  push('Processor', tx.processor);
+  push('Last status change', tx.integrity_last_changed_at || tx.updated_at);
   push('Payment status', tx.payment_status || 'pending');
   push('Payout status', tx.processor_payout_status || 'pending');
   push('Created', tx.created_at);
