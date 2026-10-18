@@ -47,7 +47,8 @@ export async function handleMerchantHelpRoute(request,env){
      WHERE a.external_user_id=? AND a.status='ACTIVE'
      ORDER BY m.name LIMIT 100
    `).bind(principal.sub).all();
-   return response({merchants:memberships.results||[],
+   const routed=await merchantDashboardUrls(env,memberships.results||[]);
+   return response({merchants:routed,
      sections:['transactions','customers','integrations','help'],
      authenticated:true});
  }
