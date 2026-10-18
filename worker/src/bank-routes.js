@@ -62,6 +62,8 @@ export async function handleMerchantBankRoute(request,env,ctx) {
   }
   return json(await makeBankLinkToken(env,merchantId,principal.sub,row));
  }
+ if(path==='/api/merchant/bank/reauthorize'&&method==='POST')
+   return json(await completeBankReauthorization(env,merchantId,input.connection_id));
  if(path==='/api/merchant/bank/complete'&&method==='POST'){
   return json(await connectBank(env,merchantId,principal.sub,input.public_token,
     input.selected_account_id||null));
