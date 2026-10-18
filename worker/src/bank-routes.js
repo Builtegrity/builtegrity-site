@@ -10,6 +10,15 @@ function bad(message,status=400){const e=new Error(message);e.status=status;retu
 function assertSameOrigin(request) {
  const origin=request.headers.get('origin');
  const url=new URL(request.url);
+ if(path==='/api/merchant/bank/merchants'&&method==='GET'){
+   const rows=await env.DB.prepare(`
+    SELECT m.id,m.name,a.role FROM merchant_access a JOIN merchants m
+    ON m.id=a.merchant_id WHERE a.external_user_id=? AND a.status='ACTIVE'
+       AND a.role='OWNER' ORDER BY m.name LIMIT 100
+   `).bind(principal.sub).all();
+   return json({merchants:rows.results||[],bank_link_available:env.BANK_SYNC_ENABLED==='true'});
+ }
+
  if(origin&&origin!==url.origin)throw bad('Cross-origin bank actions are not allowed',403);
  const fetchSite=request.headers.get('sec-fetch-site');
  if(fetchSite&&['cross-site','same-site'].includes(fetchSite))throw bad('Cross-site bank action blocked',403);
