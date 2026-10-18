@@ -36,6 +36,16 @@ function bankAccountCard(a){
    catch(e){status.textContent=e.message;}
   });box.append(btn);
  }
+ const disconnect=document.createElement('button');
+ disconnect.className='secondary';disconnect.textContent='Disconnect this bank';
+ disconnect.style.marginLeft='8px';
+ disconnect.addEventListener('click',async()=>{
+   if(!confirm('Disconnect this bank? Bank confirmations will no longer appear in current PDFs, and bank-provider permission will be revoked.'))return;
+   try{await api('disconnect',{merchant_id:selectedMerchant,connection_id:a.connection_id});
+     await loadStatus();}
+   catch(e){status.textContent=e.message;}
+ });
+ box.append(disconnect);
  return box;
 }
 async function loadStatus(){
@@ -45,6 +55,8 @@ async function loadStatus(){
   connect.disabled=!data.enabled;refresh.disabled=false;
   const rows=data.connections||[];accounts.replaceChildren();
   if(!rows.length)accounts.textContent='No linked bank. Bank-status details will not appear in PDFs.';
+  const extra=new Set(rows.map(x=>x.connection_id));
+  if(extra.size>1)status.textContent='Multiple bank authorizations exist. Disconnect older unused banks to prevent continued provider subscription charges.';
   else for(const a of rows)accounts.append(bankAccountCard(a));
   status.textContent=data.enabled
     ? rows.length?'Bank data connected. Payout matching runs automatically; changes may lag bank reporting.':
