@@ -1,4 +1,6 @@
+import { assertStripeStageCredential } from './stripe-stage-guard.js';
 export async function processAuthorizedPlatformCredits(env, options = {}) {
+  assertStripeStageCredential(env);
   const limit = Math.min(100, Math.max(1, Number(options.limit || 25)));
   const rows = await env.DB.prepare(`
     SELECT c.*, t.stripe_application_fee_id, t.processor_account_id,
