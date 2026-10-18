@@ -25,7 +25,7 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
           byte_length: bytes.byteLength,
         });
         await recordPdfCost(env, tx.id, requestId, true, bytes.byteLength);
-        return pdfResponse(bytes, `${tx.id}-transaction-record.pdf`, 'HIT');
+        return pdfResponse(bytes, `${tx.id}-transaction-record.pdf`, 'HIT',requester.view===true);
       }
     }
 
@@ -48,7 +48,7 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
       byte_length: bytes.byteLength,
     });
     await recordPdfCost(env, tx.id, requestId, false, bytes.byteLength);
-    return pdfResponse(bytes, `${tx.id}-transaction-record.pdf`, env.TRANSACTION_RECORDS ? 'MISS' : 'BYPASS');
+    return pdfResponse(bytes, `${tx.id}-transaction-record.pdf`, env.TRANSACTION_RECORDS ? 'MISS' : 'BYPASS',requester.view===true);
   } catch (error) {
     await failPdfRequest(env, requestId, error).catch(() => {});
     throw error;
@@ -259,7 +259,7 @@ function byteLength(value) {
   return new TextEncoder().encode(value).byteLength;
 }
 
-function pdfResponse(bytes, filename, cacheStatus) {
+function pdfResponse(bytes, filename, cacheStatus, viewInline=false) {
   return new Response(bytes, {
     status: 200,
     headers: {
