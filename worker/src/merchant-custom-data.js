@@ -184,7 +184,7 @@ export async function customersInGroup(env,merchantId,key,value){
  `).bind(merchantId,key,merchantId,merchantId,value).all();
  return {...grouped,selected_value:value,records:result.results||[]};
 }
-export async function createMerchantSyncSource(env,merchantId,userId,title,kind){
+export async function createMerchantSyncSource(env,merchantId,userId,title,kind,expectedIntervalMinutes=null){
  title=String(title||'').trim();
  kind=String(kind||'').toUpperCase();
  if(title.length<1||title.length>90||!kindSet.has(kind))throw err('Source title or kind invalid');
