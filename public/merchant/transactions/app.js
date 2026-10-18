@@ -97,7 +97,12 @@ function buildJourney(card,data){
  const actions=elem('div');actions.append(pdfIcon(tx.id));
  const save=elem('a','journey-pdf','↓ Download');
  save.href=pdfPath(tx.id);save.title='Download the latest transaction PDF';
- actions.append('  ',save);header.append(actions);wrap.append(header);
+ actions.append('  ',save);
+ const change=elem('a','journey-pdf','▣ Customize');
+ change.href='/merchant/media/?target_type=TRANSACTION&target_id='+encodeURIComponent(tx.id);
+ change.title='Edit transaction display title, private notes and attachments';
+ actions.append('  ',change);
+ header.append(actions);wrap.append(header);
  const steps=elem('ol','journey-track');
  const settled=String(tx.processor_payout_status||'').toLowerCase()==='paid';
  const payment=Boolean(tx.payment_at);
@@ -155,6 +160,19 @@ function buildJourney(card,data){
   evidence.append(section);
  }
  wrap.append(evidence);
+ if(data.customization){
+   const visual=elem('section','journey-evidence');
+   visual.append(elem('strong','',data.customization.display?.display_title||'Record attachments & customization'));
+   if(data.customization.display?.display_note)
+     visual.append(elem('div','',data.customization.display.display_note));
+   for(const media of data.customization.media||[]){
+     const item=elem('div','',media.role+' · '+media.filename+' · '+(media.caption||''));
+     const a=elem('a','','View private file');a.href='/api/merchant/media/file/'+encodeURIComponent(media.id);
+     a.target='_blank';a.rel='noopener noreferrer';item.append('  ',a);
+     visual.append(item);
+   }
+   wrap.append(visual);
+ }
  if((data.custom_fields||[]).length){
   const custom=elem('section','journey-evidence');
   custom.append(elem('strong','','Merchant-defined customer and transaction details'));

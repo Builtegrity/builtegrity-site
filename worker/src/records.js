@@ -1,3 +1,6 @@
+import {handleMerchantMediaRoute,listMedia} from './merchant-media.js';
+import {handleHelpSolutionRoute} from './help-playbooks.js';
+import {handleMerchantEmailAccess} from './merchant-record-access.js';
 import { handleMerchantBankRoute } from './bank-routes.js';
 import { payoutBankEvidence } from './bank-evidence.js';
 import { getTransaction } from './db.js';
@@ -18,6 +21,12 @@ export async function handlePublicRecordRoute(request, env, ctx) {
   // the network sense: each has its own cryptographic signature/secret boundary. Email/provider
   // content remains untrusted evidence and can never inherit operator privileges.
   const url = new URL(request.url);
+  const helpGuide=await handleHelpSolutionRoute(request);
+  if(helpGuide)return helpGuide;
+  const mediaRoute=await handleMerchantMediaRoute(request,env);
+  if(mediaRoute)return mediaRoute;
+  const accountless=await handleMerchantEmailAccess(request,env);
+  if(accountless)return accountless;
   const helpResponse=await handleMerchantHelpRoute(request,env);
   if(helpResponse)return helpResponse;
   const customResponse=await handleMerchantCustomRoute(request,env);
@@ -85,9 +94,10 @@ export async function handlePublicRecordRoute(request, env, ctx) {
     const tx=await getTransaction(env,timelineMatch[1]);
     if(!tx)return json({error:'Transaction not found'},404);
     await requireMerchantMembership(env,principal,tx.merchant_id,'VIEWER');
-    const [bank,customFields,deliveries]=await Promise.all([
+    const [bank,customFields,deliveries,visuals]=await Promise.all([
       payoutBankEvidence(env,tx),merchantFieldContext(env,tx.merchant_id,tx.customer_id,tx.id),
-      transactionEventDeliveries(env,tx.id)]);
+      transactionEventDeliveries(env,tx.id),
+      env.MERCHANT_MEDIA_ENABLED==='true' ? listMedia(env,tx.merchant_id,'TRANSACTION',tx.id):Promise.resolve(null)]);
     // Confidential internal details are not exposed; the full PDF remains authorized.
     const milestones={
       created_at:tx.created_at,consent_at:tx.consent_accepted_at,
@@ -114,7 +124,7 @@ export async function handlePublicRecordRoute(request, env, ctx) {
       ...milestones,
       // Intentionally omit bank fields entirely for unlinked or revoked accounts.
       ...(bank?{bank_evidence:bank}:{})
-    },custom_fields:customFields,deliveries,events:(tx.events||[]).map(e=>({
+    },custom_fields:customFields,customization:visuals,deliveries,events:(tx.events||[]).map(e=>({
       id:e.id,type:e.event_type,occurred_at:e.event_at,source:e.source
     })),exceptions:(tx.exceptions||[]).map(e=>({
       id:e.id,type:e.exception_type,status:e.status,summary:e.summary

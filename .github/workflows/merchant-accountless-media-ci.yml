@@ -1,0 +1,37 @@
+name: Accountless Merchant Access and Private Media CI
+on:
+  pull_request:
+    paths:
+      - 'migrations/0071*'
+      - 'worker/src/merchant-record-*.js'
+      - 'worker/src/merchant-media.js'
+      - 'worker/src/help-playbooks.js'
+      - 'worker/src/records.js'
+      - 'worker/src/runtime.js'
+      - 'worker/src/index.js'
+      - 'worker/src/auth.js'
+      - 'public/merchant/**'
+      - 'public/help/**'
+      - 'public/partner/**'
+      - 'public/signup/**'
+      - 'scripts/test-merchant-accountless-media.mjs'
+      - '.github/workflows/merchant-accountless-media-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  safe-merchant-sharing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax verify
+        run: |
+          for f in worker/src/merchant-record-*.js worker/src/merchant-media.js worker/src/help-playbooks.js worker/src/records.js worker/src/runtime.js worker/src/index.js worker/src/auth.js public/merchant/record/*.js public/merchant/media/*.js public/help/*.js; do node --check "$f"; done
+      - name: Full migration and accountless access safety tests
+        run: node scripts/test-merchant-accountless-media.mjs
+      - name: Frozen migrations remain immutable
+        run: npm run db:lineage

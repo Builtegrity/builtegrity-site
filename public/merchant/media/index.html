@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Customize records & photos | Builtegrity</title><link rel="stylesheet" href="/styles.css">
+<style>.studio{max-width:960px;margin:auto;padding:30px 18px 85px}.studio h1{font-size:clamp(32px,5vw,49px)}.studio section{border:1px solid #dae2ef;background:white;border-radius:16px;padding:20px;margin:16px 0}.studio label{display:grid;gap:7px;font-weight:650;margin:12px 0}.studio input,.studio select,.studio textarea{padding:12px;border:1px solid #c9d4e1;border-radius:10px;background:white;color:#192b42;font:inherit;max-width:100%;width:100%}.studio textarea{min-height:90px}.studio button{min-height:45px;padding:10px 16px;cursor:pointer}.studio-grid{display:grid;grid-template-columns:1fr 1fr;gap:15px}.studio-thumb{max-height:160px;max-width:180px;object-fit:cover;border-radius:12px}.studio-item{display:flex;gap:15px;align-items:center;flex-wrap:wrap;padding:12px 0;border-bottom:1px solid #dfe6ef}.studio-info{font-size:13px;color:#627187;line-height:1.6}.studio-callout{background:#f2f6fa;padding:15px;border-radius:12px}.studio-actions{display:flex;gap:10px;flex-wrap:wrap}@media(max-width:620px){.studio-grid{grid-template-columns:1fr}.studio section{padding:15px}}</style>
+</head><body><main class="studio"><p class="eyebrow">BUILTEGRITY · MERCHANT ACCOUNT</p>
+<h1>Photos & record customization</h1>
+<p class="lede">Give your customers, customer groups, or individual transactions familiar names, photos and supporting documents. Only authorized merchant profiles can open attachments. They never appear in an accountless email link.</p>
+<p><a href="/merchant/">← My profile</a> · <a href="/merchant/integrations/">Customer groups & custom fields</a></p>
+<div class="studio-callout" id="status" role="status">Checking private attachment permissions…</div>
+<section><h2>1. Choose what you're customizing</h2>
+<div class="studio-grid">
+<label>Business<select id="merchant"><option>Loading…</option></select></label>
+<label>Record type<select id="scope">
+<option value="CUSTOMER">Individual customer</option>
+<option value="TRANSACTION">Individual transaction</option>
+<option value="GROUP">Saved customer group</option>
+</select></label>
+</div>
+<label>Select your customer, payment or saved group
+<select id="recordChoices"><option value="">Choose a business and record type first</option></select></label>
+<details><summary>Advanced: enter a record ID directly</summary><label>Record ID
+<input id="target" placeholder="Builtegrity customer, transaction or group ID"></label></details>
+<p class="studio-info">Choose the customer or transaction by its familiar name. For a community group that doesn't exist yet, use the builder below.</p>
+<button id="load" type="button">Open this record</button>
+</section>
+<section><h2>2. Create or select a customer group</h2>
+<p class="studio-info">A group is based on one of the custom customer fields you already defined, for example HOA Community = West Bay HOA. Your group can have its own name, description and photo.</p>
+<div class="studio-grid">
+<label>Customer group field<select id="groupField"></select></label>
+<label>Exact group value<input id="groupValue" maxlength="256" placeholder="West Bay HOA"></label>
+</div>
+<label>Group display title<input id="groupName" maxlength="100" placeholder="West Bay Community"></label>
+<label>Group description (optional)<textarea id="groupDescription" maxlength="800"></textarea></label>
+<div class="studio-actions"><button type="button" id="createGroup">Save customer group</button></div>
+<label>My saved groups<select id="groupList"></select></label>
+<button type="button" id="selectGroup" class="secondary">Customize selected group</button>
+</section>
+<section><h2>3. Customize the title and notes</h2>
+<label>Display title<input id="displayTitle" maxlength="100" placeholder="October HOA service"></label>
+<label>Internal note<textarea id="displayNote" maxlength="800" placeholder="Private merchant note; never shown to email-link viewers"></textarea></label>
+<button type="button" id="saveDisplay">Save presentation</button></section>
+<section><h2>4. Add a picture or supporting file</h2>
+<p class="studio-info">JPEG, PNG, WEBP or PDF, up to 5 MB per file. Choose Cover Photo for a customer/group picture or Supporting File for receipts, work-site photos and agreements. Photos remain private and may contain location metadata; only upload images you have permission to store.</p>
+<label>Choose file<input type="file" id="uploadFile" accept="image/jpeg,image/png,image/webp,application/pdf,.jpg,.jpeg,.png,.webp,.pdf"></label>
+<div class="studio-grid"><label>Purpose<select id="role"><option value="COVER">Profile / cover picture</option><option value="ATTACHMENT">Supporting file</option></select></label>
+<label>Caption<input id="caption" maxlength="400" placeholder="Front entrance, October 2026"></label></div>
+<button type="button" id="upload">Upload securely</button><h3>Saved attachments</h3>
+<div id="items" aria-live="polite">Select a record to view its files.</div>
+</section><p class="studio-info">Merchant files are stored separately from processor records. Removing a photo from your view does not rewrite historical Stripe/Square payment facts, and retention and deletion policies may still apply.</p></main>
+<script type="module" src="/merchant/media/app.js"></script></body></html>

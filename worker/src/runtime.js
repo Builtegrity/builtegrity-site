@@ -16,6 +16,7 @@ import { runSquarePayoutRecovery } from './square-reconciliation.js';
 import { runBankSyncRecovery } from './bank-evidence.js';
 import { runMerchantSetupNotifications } from './merchant-setup-autopilot.js';
 import { deliverMerchantHelpRequests } from './merchant-help.js';
+import {dispatchMerchantRecordEmails} from './merchant-record-links.js';
 import { normalizeProviderEvent, recordProviderReceipt, recordProviderResult, webhookTimingSummary } from './processor-event-delivery.js';
 import { verifyIntegritySnapshotBatch } from './integrity-verifier.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
@@ -139,6 +140,35 @@ export default {
         await requireOperator(request,env);
         return handleSquareDisconnect(env,squareDisconnect[1]);
       }
+      const emailConsent=path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/record-email-consent$/);
+      if(emailConsent&&request.method==='POST'){
+        await requireOperator(request,env);
+        const origin=request.headers.get('origin');
+        if(origin&&origin!==url.origin)return json({error:'Cross-origin action denied'},403);
+        const data=await readJson(request);
+        if(typeof data.opt_in!=='boolean')return json({error:'Explicit opt_in boolean required'},400);
+        const evidence=String(data.consent_reference||'').trim();
+        if(data.opt_in&&(evidence.length<8||evidence.length>180))
+          return json({error:'Verified onboarding consent evidence reference required'},400);
+        const merchant=await env.DB.prepare('SELECT id,email FROM merchants WHERE id=?')
+          .bind(emailConsent[1]).first();
+        if(!merchant)return json({error:'Merchant not found'},404);
+        if(data.opt_in&&!/^\S+@\S+\.\S+$/.test(String(merchant.email||'')))
+          return json({error:'Merchant needs verified onboarding email before enabling invitation delivery'},409);
+        await env.DB.prepare(`UPDATE merchants SET
+          record_email_opt_in=?,record_email_consent_reference=?,
+          record_email_consent_at=CASE WHEN ?=1 THEN CURRENT_TIMESTAMP ELSE NULL END
+          WHERE id=?`).bind(data.opt_in?1:0,data.opt_in?evidence:null,
+             data.opt_in?1:0,merchant.id).run();
+        if(!data.opt_in){
+          await env.DB.prepare(`UPDATE merchant_transaction_email_links
+             SET revoked_at=CURRENT_TIMESTAMP,email_state='DISABLED'
+             WHERE merchant_id=? AND revoked_at IS NULL`).bind(merchant.id).run();
+        }
+        return json({merchant_id:merchant.id,opt_in:data.opt_in,
+          emails_active:env.MERCHANT_TRANSACTION_EMAILS_ENABLED==='true'});
+      }
+
       const processorConnections=path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/processors$/);
       if(processorConnections&&request.method==='GET'){
         await requireOperator(request,env);
@@ -392,6 +422,7 @@ export default {
     const bankRecovery = await runBankSyncRecovery(env);
     const merchantSetup = await runMerchantSetupNotifications(env);
     const merchantHelp = await deliverMerchantHelpRequests(env);
+    const merchantRecordEmail=await dispatchMerchantRecordEmails(env);
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const statements = await runMonthlyStatementPipeline(env);
     const taxDocuments = await runTaxDocumentPipeline(env);
@@ -408,6 +439,7 @@ export default {
       square_payout_recovery: squareRecovery,
       bank_payout_recovery: bankRecovery,
       merchant_self_service_notifications:merchantSetup,
+      merchant_record_email:merchantRecordEmail,
       merchant_help_mail:merchantHelp,
     });
     if(squareRecovery?.errors>0 && ['PILOT','LIVE'].includes(String(env.WATCHDOG_STAGE||'').toUpperCase())) throw new Error('Square payout reconciliation errors require review');
