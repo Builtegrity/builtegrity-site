@@ -147,6 +147,14 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
     }
     lines.push('Provider event time is not guaranteed publication time. Bank data timestamps are independent.');
   }
+  if(merchant&&Array.isArray(tx.custom_fields)&&tx.custom_fields.length){
+    heading('Merchant-defined customer and transaction details');
+    for(const f of tx.custom_fields){
+      label(f.group_title+' / '+f.label+' ('+f.record_scope+')',f.value_text);
+      label('Source and observed at',f.source_id+' / '+f.observed_at);
+    }
+    lines.push('Merchant-supplied facts are not independently verified processor data.');
+  }
   heading('Event history');
   if(!(tx.events||[]).length)lines.push('No events recorded.');
   for(const event of tx.events||[]){
