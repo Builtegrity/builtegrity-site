@@ -93,7 +93,8 @@ export async function handlePublicRecordRoute(request, env, ctx) {
     await requireMerchantMembership(env,principal,tx.merchant_id,'VIEWER');
     const [bank,customFields,deliveries,visuals]=await Promise.all([
       payoutBankEvidence(env,tx),merchantFieldContext(env,tx.merchant_id,tx.customer_id,tx.id),
-      transactionEventDeliveries(env,tx.id)]);
+      transactionEventDeliveries(env,tx.id),
+      env.MERCHANT_MEDIA_ENABLED==='true' ? listMedia(env,tx.merchant_id,'TRANSACTION',tx.id):Promise.resolve(null)]);
     // Confidential internal details are not exposed; the full PDF remains authorized.
     const milestones={
       created_at:tx.created_at,consent_at:tx.consent_accepted_at,
