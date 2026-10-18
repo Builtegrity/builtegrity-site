@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Transaction Integrity Preview · Builtegrity</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+  .tabset{display:flex;gap:10px;margin:22px 0 18px}
+  .tabset button{font:inherit;background:#e8ebf1;color:#141c2e;border:1px solid #cbd5e1;padding:12px 21px;border-radius:12px;cursor:pointer}
+  .tabset button[aria-selected="true"]{background:#141c2e;border-color:#141c2e;color:#fff}
+  .preview-tab[hidden]{display:none}.table-wrap{overflow-x:auto}
+  .preview-tab table{min-width:610px;width:100%;border-collapse:collapse}
+  .preview-tab td,.preview-tab th{padding:12px 10px;border-bottom:1px solid #e2e8f0;text-align:left}
+  .demo-note{font-size:14px;color:#64748b}
+</style></head>
+<body><main class="shell">
+<p class="eyebrow">BUILTEGRITY · FICTIONAL DEMONSTRATION</p>
+<h1>Transaction integrity</h1>
+<p class="lede">One place for agreements, payments, refunds, and payout evidence across Stripe and Square.</p>
+<div class="notice"><strong>Preview only.</strong> All transactions, HOA information, refund references and statuses shown here are fictional. The actual merchant portal requires sign-in and Cloudflare deployment.</div>
+<div class="tabset" role="tablist" aria-label="Transaction integrity history">
+ <button id="transactions-tab" role="tab" aria-controls="transactions-panel" aria-selected="true" type="button">Transactions</button>
+ <button id="refunds-tab" role="tab" aria-controls="refunds-panel" aria-selected="false" type="button" tabindex="-1">Refunds</button>
+</div>
+<section id="transactions-panel" role="tabpanel" aria-labelledby="transactions-tab" class="panel preview-tab">
+<h2>Transaction history</h2>
+<p class="demo-note">Merchant: Receptacle Rollers · Fictional Warwick HOA · 30 homes / 60 carts</p>
+<div class="table-wrap"><table><thead><tr><th>Transaction</th><th>Processor</th><th>Amount</th><th>Integrity</th><th>Document</th></tr></thead>
+<tbody><tr><td>TX-DEMO-RR-STRIPE-0001</td><td>Stripe</td><td>$1,300.00</td><td><strong>ACCOUNTED</strong></td><td>Test PDF available in chat</td></tr>
+<tr><td>TX-DEMO-RR-SQUARE-0001</td><td>Square</td><td>$1,300.00</td><td><strong>ACCOUNTED</strong></td><td>Test PDF available in chat</td></tr></tbody></table></div>
+<p class="demo-note">In the real portal, clicking a transaction opens its latest access-controlled PDF, with download and print options.</p>
+</section>
+<section id="refunds-panel" role="tabpanel" aria-labelledby="refunds-tab" class="panel preview-tab" hidden>
+<h2>Refund history</h2>
+<p class="demo-note">Additional simulated refund examples for the same merchant; these did not occur in the two sample PDF lifecycles.</p>
+<div class="table-wrap"><table><thead><tr><th>Refund</th><th>Associated transaction</th><th>Processor</th><th>Amount</th><th>Status</th></tr></thead>
+<tbody><tr><td>SQ-REF-DEMO-001</td><td>TX-DEMO-RR-SQUARE-0001</td><td>Square</td><td>$120.00</td><td>PENDING</td></tr>
+<tr><td>ST-REF-DEMO-001</td><td>TX-DEMO-RR-STRIPE-0001</td><td>Stripe</td><td>$65.00</td><td>COMPLETED</td></tr></tbody></table></div>
+<p class="demo-note">In production this tab reads processor-verified Square refund IDs and completed Stripe refund adjustments, with a link to each updated transaction PDF.</p>
+</section>
+<div class="actions"><a class="button secondary" href="/">Back to homepage</a><a class="button secondary" href="/preview/console/">Transaction console preview</a></div>
+<p class="demo-note">Builtegrity listens for processor webhooks; history updates after events are verified and stored. The dashboard's automatic refresh doesn't guarantee processor publication or delivery times.</p>
+</main>
+<script>
+const tabs=[document.getElementById('transactions-tab'),document.getElementById('refunds-tab')];
+const panels=[document.getElementById('transactions-panel'),document.getElementById('refunds-panel')];
+for(let i=0;i<2;i++){tabs[i].addEventListener('click',()=>{
+  for(let j=0;j<2;j++){tabs[j].setAttribute('aria-selected',String(i===j));tabs[j].tabIndex=i===j?0:-1;panels[j].hidden=i!==j;}
+});}
+</script></body></html>

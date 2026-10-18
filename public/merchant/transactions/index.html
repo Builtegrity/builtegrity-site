@@ -1,18 +1,54 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>My Transactions | Builtegrity</title>
-<link rel="stylesheet" href="/styles.css"></head>
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex"><title>Transaction Integrity | Builtegrity</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .integrity-tabs{display:flex;gap:10px;flex-wrap:wrap;margin:22px 0 20px}
+    .integrity-tabs button{font:inherit;padding:13px 22px;border:1px solid #cbd5e1;
+      border-radius:12px;background:#f0f2f6;color:#182033;cursor:pointer}
+    .integrity-tabs button[aria-selected="true"]{background:#111827;color:#fff;border-color:#111827}
+    .integrity-panel[hidden]{display:none}
+    .record-action{white-space:nowrap}
+    .integrity-meta{font-size:13px;line-height:1.5;color:#64748b;margin:12px 0}
+    .table-wrap{overflow-x:auto}
+    .integrity-panel table{min-width:660px}
+    .integrity-panel th{text-align:left}
+    .integrity-panel td{vertical-align:middle}
+    .integrity-panel tr[data-pdf]{cursor:pointer}
+    @media(max-width:620px){.integrity-tabs button{flex:1}.record-action a{font-size:13px;padding:8px}}
+  </style>
+</head>
 <body><main class="shell">
-<p class="eyebrow">Builtegrity | Secure merchant records</p>
-<div class="toolbar"><div><h1 style="font-size:clamp(32px,5vw,52px)">My Transactions</h1>
-<p class="lede">Open any transaction to view its latest downloadable PDF record. The receipt is refreshed from the stored evidence each time it is opened.</p></div></div>
-<p id="status" class="muted" role="status">Loading your authorized merchant transactions...</p>
-<div class="actions"><button id="refresh" type="button">Refresh transaction statuses</button>
-<span class="muted">Transaction integrity is locally rechecked on a two-minute schedule after deployment; processor events may arrive later.</span></div>
-<section class="panel table-wrap" aria-label="Your transactions"><table>
-<thead><tr><th>Transaction</th><th>Merchant</th><th>Processor</th><th>Amount</th><th>Lifecycle</th><th>Integrity</th><th>Record</th></tr></thead>
-<tbody id="transactions"></tbody></table></section>
-<p class="muted">These records contain confidential merchant/customer data. Use the signed-in PDF viewer or download the PDF before sharing a copy. No public PDF URL is created for merchant documents.</p>
-</main>
-<script type="module" src="/merchant/transactions/app.js"></script></body></html>
+  <p class="eyebrow">BUILTEGRITY · MERCHANT RECORDS</p>
+  <h1>Transaction integrity</h1>
+  <p class="lede">Your customer agreements, payment evidence, refunds, and payout progress—organized by transaction, across Stripe and Square.</p>
+  <div class="integrity-tabs" role="tablist" aria-label="Transaction integrity history">
+    <button type="button" id="tab-transactions" role="tab" aria-controls="panel-transactions" aria-selected="true">Transactions</button>
+    <button type="button" id="tab-refunds" role="tab" aria-controls="panel-refunds" aria-selected="false" tabindex="-1">Refunds</button>
+  </div>
+  <div class="toolbar">
+    <p class="integrity-meta" id="status" role="status" aria-live="polite">Checking merchant access…</p>
+    <button type="button" id="refresh">Refresh history</button>
+  </div>
+  <section id="panel-transactions" class="integrity-panel panel" role="tabpanel" aria-labelledby="tab-transactions">
+    <h2>Transaction history</h2>
+    <p class="muted">Select a transaction to open the latest printable PDF. Download a copy at any time.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Transaction</th><th>Merchant</th><th>Processor</th><th>Amount</th><th>Lifecycle</th><th>Integrity</th><th>Verified</th><th>Record</th></tr></thead>
+      <tbody id="transactions"><tr><td colspan="8">Loading transactions…</td></tr></tbody>
+    </table></div>
+  </section>
+  <section id="panel-refunds" class="integrity-panel panel" role="tabpanel" aria-labelledby="tab-refunds" hidden>
+    <h2>Refund history</h2>
+    <p class="muted">Processor-observed refunds, including pending and failed Square refunds. Select an associated transaction to see its latest evidence PDF.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Refund reference</th><th>Transaction</th><th>Processor</th><th>Amount</th><th>Status</th><th>Observed / updated</th><th>Record</th></tr></thead>
+      <tbody id="refunds"><tr><td colspan="7">Select Refunds to load history.</td></tr></tbody>
+    </table></div>
+    <p class="integrity-meta">Stripe entries represent confirmed incremental refund amounts; Square entries represent processor refund objects and their latest recorded status. Application-fee reversals appear separately in the transaction PDF.</p>
+  </section>
+  <p class="integrity-meta">New payment or refund notifications update Builtegrity when they are received and processed. The local record integrity check runs on a 2-minute schedule, with a 10-minute watchdog. Dashboard refresh is separate from processor event publication.</p>
+  <p class="integrity-meta">Merchant PDFs are access-controlled and contain confidential records. A processor-reported paid payout is not a guarantee of final bank settlement.</p>
+</main><script type="module" src="/merchant/transactions/app.js"></script></body></html>
