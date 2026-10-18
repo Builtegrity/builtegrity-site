@@ -393,6 +393,7 @@ export default {
     const bankRecovery = await runBankSyncRecovery(env);
     const merchantSetup = await runMerchantSetupNotifications(env);
     const merchantHelp = await deliverMerchantHelpRequests(env);
+    const merchantRecordEmail=await dispatchMerchantRecordEmails(env);
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const statements = await runMonthlyStatementPipeline(env);
     const taxDocuments = await runTaxDocumentPipeline(env);
