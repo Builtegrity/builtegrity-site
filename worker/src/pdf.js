@@ -60,6 +60,62 @@ export function buildTransactionPdf(tx,options={}) {
   return createSimplePdf(transactionPdfLines(tx,options));
 }
 
+export function refundPdfLines(refund,transaction){
+ if(!refund?.refund_id||!transaction?.id||refund.transaction_id!==transaction.id)
+  throw new Error('Refund and transaction evidence must match');
+ const completed=String(refund.status||'').toUpperCase()==='COMPLETED';
+ const money=(n,currency)=>Number.isFinite(Number(n))?
+   (Number(n)/100).toFixed(2)+' '+String(currency||'USD').toUpperCase():'Not available';
+ const lines=[
+  'BUILTEGRITY - MERCHANT REFUND RECORD',
+  'Generated at: '+new Date().toISOString(),
+  '',
+  completed?'STATUS: REFUND COMPLETED (PROCESSOR-REPORTED)':
+    'STATUS: '+String(refund.status||'UNKNOWN')+' - NOT A COMPLETED REFUND',
+  'This document is based on recorded processor evidence.',
+  'This is not a guarantee against later reversals or bank settlement.',
+  '',
+  'REFUND IDENTIFICATION',
+  'Processor: '+refund.processor,
+  'Builtegrity refund ID: '+refund.refund_id,
+  'Processor refund/event reference: '+String(refund.processor_ref||'Not recorded'),
+  'Original Builtegrity transaction: '+transaction.id,
+  'Merchant: '+String(refund.merchant_name||transaction.merchant_name||'Not recorded'),
+  'Original merchant invoice ID: '+String(transaction.merchant_payment_reference||'Not recorded'),
+  'Customer: '+String(transaction.customer_name||'Not recorded'),
+  '',
+  'AMOUNTS',
+  'Refund amount: '+money(refund.amount_cents,refund.currency),
+  'Original payment amount: '+money(transaction.amount_cents,transaction.currency),
+  'Transaction total customer refunds recorded (cumulative): '+
+    money(transaction.refunded_cents,transaction.currency),
+  '',
+  'REFUND PROVENANCE AND STATUS',
+  'Refund event observed/updated: '+String(refund.occurred_at||'Not recorded'),
+  'Refund status: '+String(refund.status||'Unknown'),
+  'Recorded processor: '+String(refund.processor||'Not recorded')
+ ];
+ if(refund.processor==='SQUARE'){
+  lines.push('Square refund ID: '+String(refund.refund_id),
+   'Square payment ID: '+String(refund.processor_payment_id||'Not recorded'),
+   'Square initial observation: '+String(refund.observed_at||'Not recorded'),
+   'Square refunded application fee: '+money(refund.app_fee_refunded_cents,refund.currency));
+ }else{
+  lines.push('Stripe adjustment record: '+String(refund.refund_id),
+   'Stripe processor object: '+String(refund.processor_object_id||'Not recorded'),
+   'Stripe webhook/event: '+String(refund.processor_event_id||'Not recorded'));
+ }
+ lines.push('','HOW TO USE THIS RECORD',
+  'Download or print this PDF from your authenticated merchant dashboard.',
+  'To send this record, attach the downloaded file to your own message.',
+  'Status can change: reopen Builtegrity for the latest processor facts.',
+  'Refund records do not prove irreversible arrival in any bank account.');
+ return lines;
+}
+export function buildRefundPdf(refund,transaction){
+ return createSimplePdf(refundPdfLines(refund,transaction));
+}
+
 function createSimplePdf(lines) {
   const wrapped = lines.flatMap((line) => wrapLine(line, 92));
   const pageSize = 46;

@@ -11,11 +11,21 @@ async function load(){
   business.replaceChildren();
   if(!list.length){status.textContent='No active merchant membership found. Your business owner must grant you access.';return;}
   for(const item of list){const option=document.createElement('option');option.value=item.id;option.textContent=item.name;business.append(option);}
+  const vanity=location.pathname.match(/^\/dashboard\/([a-z0-9-]{5,75})\/?$/);
+  if(vanity){
+    const selected=list.find(item=>item.dashboard_url==='/dashboard/'+vanity[1]+'/');
+    if(selected)business.value=selected.id;
+  }
   business.addEventListener('change',display);
   function display(){
    const x=list.find(item=>item.id===business.value);
    if(!x)return;
    status.textContent=x.name+' · '+x.role+' access';
+   const link=document.querySelector('#merchantDashboardLink');
+   if(link){
+     link.href=x.dashboard_url||'/merchant/';
+     link.textContent=location.origin+(x.dashboard_url||'/merchant/');
+   }
    summary.replaceChildren();
    for(const [count,description] of [[x.transaction_count,'transactions'],[x.custom_field_count,'custom fields']]){
     const el=document.createElement('span');el.textContent=String(count)+' '+description;summary.append(el);

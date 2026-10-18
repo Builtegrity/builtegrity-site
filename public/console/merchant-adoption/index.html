@@ -1,0 +1,23 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Merchant Profile Adoption | Builtegrity</title><link rel="stylesheet" href="/styles.css">
+<style>.analytics{max-width:1010px;margin:auto;padding:40px 20px 90px}.analytics h1{font-size:clamp(30px,5vw,48px)}.metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:15px}.metric{background:#fff;border:1px solid #d9e3ed;padding:20px;border-radius:15px}.metric b{font-size:34px;display:block}.metric span{font-size:14px;color:#596b81}.details{border:1px solid #d9e3ed;background:white;padding:20px;border-radius:15px;margin:20px 0}.details p{line-height:1.65}@media(max-width:680px){.metrics{grid-template-columns:1fr 1fr}}</style></head>
+<body><main class="analytics">
+<p class="eyebrow">BUILTEGRITY · INTERNAL ANALYTICS</p>
+<h1>Merchant profile adoption</h1>
+<p class="lede">How many merchants continue using transaction integrity without creating an account, and how many choose to activate their private dashboard?</p>
+<p id="status" role="status">Checking operator permissions and loading current numbers…</p>
+<div id="metrics" class="metrics">
+<div class="metric"><b id="total">—</b><span>Eligible merchants</span></div>
+<div class="metric"><b id="profiles">—</b><span>Merchants with profiles</span></div>
+<div class="metric"><b id="accountless">—</b><span>Merchants without profiles</span></div>
+<div class="metric"><b id="adoption">—</b><span>Profile adoption</span></div>
+<div class="metric"><b id="links">—</b><span>Email links opened</span></div>
+<div class="metric"><b id="refunds">—</b><span>Refund PDF downloads</span></div>
+</div>
+<section class="details"><h2>What these numbers measure</h2>
+<p>Eligible merchants are businesses with at least one recorded transaction or a connected processor. A merchant counts as having a profile when it has an active, authorized user membership; a verified owner membership is tracked separately.</p>
+<p>Opening an emailed single-transaction link is counted only when the token is valid. Repeat visits and completed owner claims are tracked without recording browser IPs in this adoption report. These numbers describe account usage; <strong>they do not independently prove customer satisfaction, product-market fit or the cause of a merchant's choice.</strong></p>
+<p><strong>Privacy:</strong> this report contains aggregate counts only. It never shows business emails, customer names, refund documents or accountless access tokens.</p>
+</section>
+<p><button id="refresh" type="button">Refresh numbers</button> <a href="/console/">Operator console</a></p>
+</main><script type="module" src="/console/merchant-adoption/app.js"></script></body></html>

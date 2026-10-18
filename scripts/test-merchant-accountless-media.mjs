@@ -43,7 +43,7 @@ globalThis.fetch=async(url,opts)=>{
  assert.equal(url,'https://api.resend.com/emails');
  const message=JSON.parse(opts.body);
  assert.deepEqual(message.to,['owner@example.com']);
- assert.match(message.text,/Create a Builtegrity merchant profile/);
+ assert.match(message.text,/create a Builtegrity merchant profile/);
  delivery=message;return new Response(JSON.stringify({id:'email-test'}),{status:200});
 };
 try{
@@ -63,7 +63,8 @@ try{
   customer_email:'notvisible@example.com',bank_evidence:{bank_posted_at:'secret'}});
  assert.equal(view.bank_evidence,undefined);
  assert.equal(view.customer_email,undefined);
- assert.equal(view.amount_cents,130000);
+ assert.equal(view.amount_cents,undefined,'Accountless email view must never expose amount');
+ assert.equal(view.currency,undefined);
  const again=await dispatchMerchantRecordEmails(env);assert.equal(again.sent,0);
  sqlRun("UPDATE merchant_transaction_email_links SET expires_at='2020-01-01' WHERE transaction_id='TX-0001'");
  assert.equal(await lookupMerchantRecordToken(env,token),null,'Expired link fails closed');

@@ -15,6 +15,7 @@ import { processStripeWebhook } from './webhooks.js';
 import { runSquarePayoutRecovery } from './square-reconciliation.js';
 import { runBankSyncRecovery } from './bank-evidence.js';
 import { runMerchantSetupNotifications } from './merchant-setup-autopilot.js';
+import {handleVanityMerchantDashboard,merchantAdoptionMetrics} from './merchant-dashboard-adoption.js';
 import { deliverMerchantHelpRequests } from './merchant-help.js';
 import {dispatchMerchantRecordEmails} from './merchant-record-links.js';
 import { normalizeProviderEvent, recordProviderReceipt, recordProviderResult, webhookTimingSummary } from './processor-event-delivery.js';
@@ -92,6 +93,13 @@ export default {
           missing_config_count: readiness.missing_config_count,
           last_watchdog: readiness.last_watchdog,
         }, readiness.ok ? 200 : 503);
+      }
+
+      const vanityResponse=await handleVanityMerchantDashboard(request,env);
+      if(vanityResponse)return vanityResponse;
+      if(path==='/api/operations/merchant-profile-adoption'&&request.method==='GET'){
+        await requireOperator(request,env);
+        return json(await merchantAdoptionMetrics(env));
       }
 
       // Production webhook entrypoint. Account-level events are routed to merchant self-service;
