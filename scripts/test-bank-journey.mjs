@@ -14,7 +14,7 @@ assert.equal(observedPlaidCredit({transaction_id:'b',account_id:'a',amount:15,
   iso_currency_code:'USD'}),null,'Outbound bank debit is not a deposit');
 const env={BANK_TOKEN_ENCRYPTION_KEY_B64:Buffer.alloc(32,17).toString('base64')};
 const stored=await encryptBankToken(env,'access-sandbox-example');
-assert.equal(await decryptBankToken(env,stored),'access-sandbox-example');
+assert.equal(await decryptBankToken(env,{access_token_ciphertext:stored.ciphertext,access_token_iv:stored.iv}),'access-sandbox-example');
 assert.notEqual(stored.ciphertext,'access-sandbox-example');
 const tx={merchant_id:'MER-0001',id:'TX-0001',processor:'STRIPE',
   stripe_payout_id:'po_bank_demo',amount_cents:130000,currency:'USD'};
