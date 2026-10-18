@@ -27,7 +27,15 @@ function bankAccountCard(a){
  const name=document.createElement('strong');name.textContent=a.account_name+' ••••'+(a.mask||'');
  box.append(name);
  const p=document.createElement('p');p.className='bank-note';
- p.textContent='Connection: '+a.status+(a.is_payout_target?' · Selected payout account':' · Not selected');
+ p.textContent='Connection: '+a.status+(a.is_payout_target?' · Selected payout account':' · Not selected')+
+   (a.last_sync_at?' · Last bank update: '+a.last_sync_at:' · Waiting for first bank update');
+ if(a.status==='REAUTH_REQUIRED'){
+   const hint=document.createElement('p');hint.className='bank-note';
+   hint.textContent='Bank permission expired or needs renewal. Stripe/Square monitoring continues, but bank deposit verification is paused until you authorize again.';
+   box.append(hint);
+   const reconnect=document.createElement('button');reconnect.textContent='Reconnect this bank';
+   reconnect.addEventListener('click',()=>link(a.connection_id));box.append(reconnect);
+ }
  box.append(p);
  if(!a.is_payout_target&&a.account_id){
   const btn=document.createElement('button');btn.className='secondary';btn.textContent='Use as payout account';
@@ -56,8 +64,8 @@ async function loadStatus(){
   const rows=data.connections||[];accounts.replaceChildren();
   if(!rows.length)accounts.textContent='No linked bank. Bank-status details will not appear in PDFs.';
   const extra=new Set(rows.map(x=>x.connection_id));
-  if(extra.size>1)status.textContent='Multiple bank authorizations exist. Disconnect older unused banks to prevent continued provider subscription charges.';
-  else for(const a of rows)accounts.append(bankAccountCard(a));
+  for(const a of rows)accounts.append(bankAccountCard(a));
+  if(extra.size>1)status.textContent='Multiple bank authorizations are active; review unused connections to avoid bank-provider charges.';
   status.textContent=data.enabled
     ? rows.length?'Bank data connected. Payout matching runs automatically; changes may lag bank reporting.':
       'No bank connected. Connect an account to enable automatic deposit evidence.'
@@ -71,18 +79,23 @@ async function plaidLoader(){
   tag.onload=resolve;tag.onerror=()=>reject(Error('Unable to load secure bank connection'));document.head.append(tag);
  });
 }
-async function link(){
+async function link(connectionId=null){
  if(!selectedMerchant||!eligible)return;
  connect.disabled=true;status.textContent='Opening secure bank connection…';
  try{
   await plaidLoader();
-  const input={merchant_id:selectedMerchant};
+  const input={merchant_id:selectedMerchant,...(connectionId?{connection_id:connectionId}:{})};
   const data=await api('link-token',input);
   if(!window.Plaid)throw Error('Bank link unavailable');
   const handler=window.Plaid.create({
    token:data.link_token,
    onSuccess:async(public_token,metadata)=>{
     try{
+     if(connectionId){
+       await api('reauthorize',{merchant_id:selectedMerchant,connection_id:connectionId});
+       status.textContent='Authorization renewed; updated bank transactions will synchronize when available.';
+       await loadStatus();return;
+     }
      const picked=metadata?.accounts?.length===1?metadata.accounts[0].id:null;
      const done=await api('complete',{merchant_id:selectedMerchant,public_token,
        ...(picked?{selected_account_id:picked}:{})});
@@ -96,7 +109,7 @@ async function link(){
   handler.open();
  }catch(e){status.textContent=e.message;}finally{connect.disabled=!eligible;}
 }
-connect.addEventListener('click',link);
+connect.addEventListener('click',()=>link());
 refresh.addEventListener('click',loadStatus);
 merchants.addEventListener('change',()=>{selectedMerchant=merchants.value;loadStatus();});
 loadMerchants();
