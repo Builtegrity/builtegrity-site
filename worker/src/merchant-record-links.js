@@ -1,5 +1,6 @@
 // Accountless merchant notification: separate from public customer payment token and
 // separately scoped from the authenticated merchant evidence portal.
+import {ensureMerchantDashboardUrl} from './merchant-dashboard-adoption.js';
 const expHours=14*24;
 const regex=/^\S+@\S+\.\S+$/;
 const toHex=b=>[...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('');
