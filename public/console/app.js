@@ -221,7 +221,7 @@ function renderRows(items) {
   rows.innerHTML = items.map((t) => `
     <tr data-id="${escapeHtml(t.transaction_id)}">
       <td><strong>${escapeHtml(t.transaction_id)}</strong></td>
-      <td>${escapeHtml(t.merchant_name || '')}</td>
+      <td>${escapeHtml(t.merchant_name || '')} <small class="muted">· ${escapeHtml(t.processor || 'STRIPE')}</small></td>
       <td>${escapeHtml(t.customer_name || '')}</td>
       <td>${escapeHtml(t.merchant_reference || t.purchase_id || '')}</td>
       <td>${money(t.amount_cents, t.currency)}</td>
@@ -263,13 +263,24 @@ function renderDetail(tx) {
           <dt>Amount</dt><dd>${money(tx.amount_cents, tx.currency)}</dd>
           <dt>Consent</dt><dd>${Number(tx.consent_accepted) ? 'Accepted' : 'Not accepted'}</dd>
           <dt>Terms hash</dt><dd><code>${escapeHtml(tx.terms_snapshot_sha256 || '—')}</code></dd>
+          <dt>Processor</dt><dd>${escapeHtml(tx.processor || 'STRIPE')}</dd>
+          ${tx.processor === 'SQUARE' ? `
+          <dt>Square checkout</dt><dd><code>${escapeHtml(tx.processor_checkout_id || '—')}</code></dd>
+          <dt>Square order</dt><dd><code>${escapeHtml(tx.processor_order_id || '—')}</code></dd>
+          <dt>Square payment</dt><dd><code>${escapeHtml(tx.processor_payment_id || '—')}</code></dd>
+          <dt>Square payout</dt><dd><code>${escapeHtml(tx.processor_payout_id || '—')}</code></dd>
+          <dt>Application fee requested</dt><dd>${money(tx.processor_app_fee_requested_cents,tx.currency)}</dd>
+          <dt>Application fee reported by Square</dt><dd>${money(tx.processor_app_fee_confirmed_cents,tx.currency)} (not recognized as Builtegrity revenue until settlement verified)</dd>
+          ` : `
           <dt>PaymentIntent</dt><dd><code>${escapeHtml(tx.stripe_payment_intent_id || '—')}</code></dd>
           <dt>Charge</dt><dd><code>${escapeHtml(tx.stripe_charge_id || '—')}</code></dd>
           <dt>Balance transaction</dt><dd><code>${escapeHtml(tx.stripe_balance_transaction_id || '—')}</code></dd>
           <dt>Application fee</dt><dd><code>${escapeHtml(tx.stripe_application_fee_id || '—')}</code></dd>
           <dt>Payout</dt><dd><code>${escapeHtml(tx.stripe_payout_id || '—')}</code></dd>
-          <dt>Fee earned</dt><dd>${money(tx.integrity_fee_earned_cents, tx.currency)} via ${escapeHtml(tx.fee_collection_method || '—')}</dd>
-          <dt>Fee collected</dt><dd>${money(tx.integrity_fee_collected_cents, tx.currency)}</dd>
+          `}
+          <dt>Fee quoted</dt><dd>${money(tx.integrity_fee_earned_cents, tx.currency)} via ${escapeHtml(tx.fee_collection_method || '—')}</dd>
+          <dt>Recognized fee revenue</dt><dd>${money(tx.bg_fee_earned_cents || 0, tx.currency)} · ${escapeHtml(tx.record_classification || 'PENDING')}</dd>
+          <dt>Application fee cash recognized</dt><dd>${money(tx.integrity_fee_collected_cents, tx.currency)}</dd>
         </dl>
         <div class="actions">
           ${publicPath ? `<a class="button secondary" target="_blank" rel="noreferrer" href="${publicPath}">Open customer payment page</a>` : ''}

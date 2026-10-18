@@ -94,11 +94,11 @@ function render(payment) {
 
     ${readyForCheckout ? `
       <div class="notice" style="margin-top:12px">U.S. billing jurisdiction confirmed: ${escapeHtml(currentState)}.</div>
-      <div class="actions"><button id="payButton">Continue to secure Stripe payment</button></div>
+      <div class="actions"><button id="payButton">Continue to secure payment</button></div>
     ` : `
       <div class="panel" style="margin-top:16px;padding:16px">
         <h3 style="margin-top:0">Billing jurisdiction</h3>
-        <p class="muted">Builtegrity V1 supports U.S. customer payments only. Stripe will collect your full billing address securely; Builtegrity only records the country/state needed for legal and tax jurisdiction checks.</p>
+        <p class="muted">Builtegrity V1 supports U.S. customer payments only. Your selected payment processor handles payment details securely; Builtegrity records the country/state needed for legal and tax jurisdiction checks.</p>
         <label for="billingState"><strong>Billing state</strong></label>
         <select id="billingState" style="width:100%;margin-top:8px">${stateOptions(currentState)}</select>
         <label class="checkline" style="margin-top:14px">
@@ -106,7 +106,7 @@ function render(payment) {
           <span>I confirm that my billing address for this payment is in the United States and in the state selected above.</span>
         </label>
       </div>
-      <div class="actions"><button id="continueButton" disabled>${accepted ? 'Confirm jurisdiction and continue to Stripe' : 'Accept terms and continue to Stripe'}</button></div>
+      <div class="actions"><button id="continueButton" disabled>${accepted ? 'Confirm jurisdiction and continue to payment' : 'Accept terms and continue to payment'}</button></div>
     `}
     <p id="status" class="muted"></p>
   `;
@@ -145,7 +145,7 @@ function render(payment) {
           turnstile_token: challengeToken,
         }),
       });
-      setStatus('Confirmation recorded. Preparing secure Stripe checkout…');
+      setStatus('Confirmation recorded. Preparing secure checkout…');
       await startCheckout();
     } catch (error) {
       setStatus(error.message, true);
@@ -160,7 +160,7 @@ async function startCheckout() {
   setStatus('Running security verification…');
   try {
     const challengeToken = await getTurnstileToken('payment_checkout');
-    setStatus('Creating secure Stripe Checkout…');
+    setStatus('Creating secure checkout…');
     const checkout = await api(`/api/payments/${encodeURIComponent(token)}/checkout`, {
       method: 'POST',
       body: JSON.stringify({ turnstile_token: challengeToken }),

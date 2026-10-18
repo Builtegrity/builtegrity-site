@@ -127,7 +127,7 @@ export async function createTrackedCheckout(env, tx) {
   });
 }
 
-async function assertCustomerStateReady(env, value) {
+export async function assertCustomerStateReady(env, value) {
   const state = String(value || '').trim().toUpperCase();
   if (!/^[A-Z]{2}$/.test(state)) throw complianceError('Customer U.S. state is not attested');
   const pack = await env.DB.prepare(`

@@ -15,13 +15,13 @@ async function check() {
     if (!response.ok) throw new Error(payment.error || 'Unable to read transaction status');
 
     if (payment.payment_status === 'succeeded' || ['PAID','PAYOUT_PENDING','COMPLETE'].includes(payment.lifecycle_status)) {
-      box.innerHTML = `<strong>Stripe payment confirmed.</strong><br>The transaction record is now ${escapeHtml(payment.lifecycle_status)}. Payout tracking continues automatically in the background.`;
+      box.innerHTML = `<strong>Payment confirmed by processor.</strong><br>The transaction record is now ${escapeHtml(payment.lifecycle_status)}. Payout tracking continues automatically in the background.`;
       pdfLink.href = `/api/records/${encodeURIComponent(token)}/pdf`;
       actions.hidden = false;
       return;
     }
 
-    box.innerHTML = `<strong>Payment confirmation is still pending.</strong><br>Current processor status: ${escapeHtml(payment.payment_status || 'waiting for Stripe')}. You do not need to resubmit payment.`;
+    box.innerHTML = `<strong>Payment confirmation is still pending.</strong><br>Current processor status: ${escapeHtml(payment.payment_status || 'awaiting processor confirmation')}. You do not need to resubmit payment.`;
   } catch (error) {
     box.textContent = error.message;
   }

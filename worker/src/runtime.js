@@ -6,7 +6,13 @@ import {
   exchangeStripeOAuthCode,
 } from './stripe-oauth.js';
 import { verifyStripeSignature } from './stripe.js';
+import { verifySquareWebhook,processSquareWebhook } from './square.js';
+import {
+  SQUARE_SCOPES,squareAuthorizeUrl,squareTokenExchange,squareAuthorizeLocation,
+  saveSquareConnection,squareBase,squareApi,squareAccessToken,squareConnection
+} from './square-oauth.js';
 import { processStripeWebhook } from './webhooks.js';
+import { runSquarePayoutRecovery } from './square-reconciliation.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
 import { projectStripeEventToTransactionIntelligence } from './stripe-intelligence.js';
 import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
@@ -87,12 +93,18 @@ export default {
       if (path === '/api/webhooks/stripe' && request.method === 'POST') {
         return handleRuntimeStripeWebhook(request, env);
       }
+      if (path === '/api/webhooks/square' && request.method === 'POST') {
+        return handleRuntimeSquareWebhook(request,env);
+      }
 
       const authResponse = await handleAuthRoute(request, env);
       if (authResponse) return authResponse;
 
       if (path === '/api/stripe/oauth/callback' && request.method === 'GET') {
         return handleOAuthCallback(url, env);
+      }
+      if (path === '/api/square/oauth/callback' && request.method === 'GET') {
+        return handleSquareOAuthCallback(url,env);
       }
 
       const connectMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/stripe\/connect-url$/);
@@ -105,6 +117,32 @@ export default {
       if (disconnectMatch && request.method === 'POST') {
         await requireOperator(request, env);
         return handleDisconnect(env, disconnectMatch[1]);
+      }
+
+      const squareConnect = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/square\/connect-url$/);
+      if(squareConnect&&request.method==='POST'){
+        await requireOperator(request,env);
+        return handleSquareConnectUrl(env,squareConnect[1]);
+      }
+      const squareVerify = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/square\/verify$/);
+      if(squareVerify&&request.method==='POST'){
+        await requireOperator(request,env);
+        return handleSquareVerify(env,squareVerify[1]);
+      }
+      const squareDisconnect = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/square\/disconnect$/);
+      if(squareDisconnect&&request.method==='POST'){
+        await requireOperator(request,env);
+        return handleSquareDisconnect(env,squareDisconnect[1]);
+      }
+      const processorConnections=path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/processors$/);
+      if(processorConnections&&request.method==='GET'){
+        await requireOperator(request,env);
+        const merchant=await env.DB.prepare('SELECT id,processor_account_id FROM merchants WHERE id=?').bind(processorConnections[1]).first();
+        if(!merchant)return json({error:'Merchant not found'},404);
+        const rows=await env.DB.prepare(`SELECT processor,external_account_id,location_id,status,scopes,
+          access_expires_at,updated_at FROM merchant_processor_connections WHERE merchant_id=?`).bind(merchant.id).all();
+        return json({merchant_id:merchant.id,processors:rows.results||[],
+          legacy_stripe_connected:Boolean(merchant.processor_account_id)});
       }
 
       const merchantProfileMatch = path.match(/^\/api\/merchants\/(MER-[A-Za-z0-9-]+)\/transaction-profile$/);
@@ -332,6 +370,7 @@ export default {
 
   async scheduled(controller, env) {
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
+    const squareRecovery = kind === 'DEEP' ? await runSquarePayoutRecovery(env) : null;
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const statements = await runMonthlyStatementPipeline(env);
     const taxDocuments = await runTaxDocumentPipeline(env);
@@ -345,7 +384,9 @@ export default {
       tax_documents: taxDocuments,
       tax_workpapers: taxWorkpapers,
       case_routing: routing,
+      square_payout_recovery: squareRecovery,
     });
+    if(squareRecovery?.errors>0 && ['PILOT','LIVE'].includes(String(env.WATCHDOG_STAGE||'').toUpperCase())) throw new Error('Square payout reconciliation errors require review');
     if (result.status === 'FAIL' || financial.state === 'RED' || statements.generated.failed > 0 || statements.delivered.failed > 0 || taxDocuments.delivered.failed > 0) {
       throw new Error(`Builtegrity safety monitor failed: watchdog_critical=${result.critical}, financial_state=${financial.state}, statement_generation_failures=${statements.generated.failed}, statement_delivery_failures=${statements.delivered.failed}, tax_document_delivery_failures=${taxDocuments.delivered.failed}`);
     }
@@ -355,10 +396,10 @@ export default {
 function isInternalApi(path) {
   if (!path.startsWith('/api/')) return false;
   if (path.startsWith('/api/health')) return false;
-  if (path === '/api/webhooks/stripe') return false;
+  if (path === '/api/webhooks/stripe' || path === '/api/webhooks/square') return false;
   if (path.startsWith('/api/payments/')) return false;
   if (path.startsWith('/api/records/')) return false;
-  if (path === '/api/stripe/oauth/callback') return false;
+  if (path === '/api/stripe/oauth/callback' || path === '/api/square/oauth/callback') return false;
   return true;
 }
 
@@ -435,6 +476,91 @@ async function handleRuntimeStripeWebhook(request, env) {
   const result = await processStripeWebhook(env, event);
   const intelligence = await projectStripeEventToTransactionIntelligence(env, event);
   return json({ received: true, ...result, transaction_intelligence: intelligence });
+}
+
+
+async function handleRuntimeSquareWebhook(request,env) {
+  if(!env.SQUARE_WEBHOOK_SIGNATURE_KEY||!env.SQUARE_WEBHOOK_NOTIFICATION_URL)
+    return json({error:'Square webhook configuration is incomplete'},503);
+  const raw=await request.text();
+  if(raw.length>1024*1024)return json({error:'Square webhook body too large'},413);
+  const ok=await verifySquareWebhook(raw,request.headers.get('x-square-hmacsha256-signature'),
+    env.SQUARE_WEBHOOK_SIGNATURE_KEY,env.SQUARE_WEBHOOK_NOTIFICATION_URL);
+  if(!ok)return json({error:'Invalid Square webhook signature'},403);
+  let event;
+  try{event=JSON.parse(raw)}catch{return json({error:'Invalid Square webhook JSON'},400)}
+  const result=await processSquareWebhook(env,event);
+  return json({received:true,...result});
+}
+async function handleSquareConnectUrl(env,merchantId) {
+  await requirePlatformControl(env,'merchant_onboarding_enabled','Merchant onboarding');
+  const merchant=await env.DB.prepare('SELECT id FROM merchants WHERE id=?').bind(merchantId).first();
+  if(!merchant)return json({error:'Merchant not found'},404);
+  const state=randomToken();
+  const expires=new Date(Date.now()+10*60000).toISOString();
+  await env.DB.prepare('INSERT INTO square_oauth_states(state_token,merchant_id,expires_at) VALUES(?,?,?)')
+    .bind(state,merchantId,expires).run();
+  return json({merchant_id:merchantId,authorize_url:squareAuthorizeUrl(env,state),expires_at:expires});
+}
+async function handleSquareOAuthCallback(url,env) {
+  const state=url.searchParams.get('state');
+  if(!state)return new Response('Missing Square authorization state',{status:400});
+  const row=await env.DB.prepare('SELECT * FROM square_oauth_states WHERE state_token=? AND consumed_at IS NULL').bind(state).first();
+  if(!row||Date.parse(row.expires_at)<=Date.now())return new Response('Square authorization expired or already used',{status:400});
+  const consumed=await env.DB.prepare('UPDATE square_oauth_states SET consumed_at=CURRENT_TIMESTAMP WHERE state_token=? AND consumed_at IS NULL')
+    .bind(state).run();
+  if(Number(consumed.meta?.changes||0)!==1)return new Response('Square authorization was already used',{status:400});
+  const denied=url.searchParams.get('error');
+  if(denied)return redirectToConsole(env,{square:'denied',merchant:row.merchant_id});
+  const code=url.searchParams.get('code');
+  if(!code)return new Response('Missing Square authorization code',{status:400});
+  await requirePlatformControl(env,'merchant_onboarding_enabled','Merchant onboarding');
+  const grant=await squareTokenExchange(env,'authorization_code',code);
+  const locationId=await squareAuthorizeLocation(env,grant.access_token);
+  await saveSquareConnection(env,row.merchant_id,grant,locationId);
+  await registerMerchantTransactionSource(env,row.merchant_id,{
+    source_system:'SQUARE',source_type:'PROCESSOR',external_account_id:grant.merchant_id,
+    capabilities:{payments:true,application_fees:true,refunds:true,payouts:true}
+  });
+  return redirectToConsole(env,{square:'connected',merchant:row.merchant_id,status:'TEST'});
+}
+async function handleSquareVerify(env,merchantId) {
+  const connection=await squareConnection(env,merchantId);
+  const {token}=await squareAccessToken(env,merchantId);
+  const response=await fetch(squareBase(env)+'/oauth2/token/status',{
+    method:'POST',headers:{Authorization:'Bearer '+token,'Square-Version':'2026-09-16','Content-Type':'application/json'}
+  });
+  const info=await response.json().catch(()=>({}));
+  if(!response.ok||info.merchant_id!==connection.external_account_id)
+    return json({compatible:false,reason:'Square token is invalid or belongs to another merchant'},409);
+  const missing=SQUARE_SCOPES.filter(scope=>!(info.scopes||[]).includes(scope));
+  if(missing.length)return json({compatible:false,missing_scopes:missing},409);
+  const locations=await squareApi(env,merchantId,'/v2/locations');
+  const location=(locations.locations||[]).find(loc=>loc.id===connection.location_id&&loc.status==='ACTIVE'&&loc.country==='US'&&loc.currency==='USD');
+  if(!location)return json({compatible:false,reason:'Square US/USD location is no longer eligible'},409);
+  await env.DB.prepare(`UPDATE merchant_processor_connections SET status='ACTIVE',
+    scopes=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`).bind((info.scopes||[]).join(' '),connection.id).run();
+  return json({compatible:true,processor:'SQUARE',status:'ACTIVE',location_id:connection.location_id});
+}
+async function handleSquareDisconnect(env,merchantId) {
+  let connection;
+  try{connection=await squareConnection(env,merchantId)}
+  catch{return json({disconnected:true,already_disconnected:true})}
+  const response=await fetch(squareBase(env)+'/oauth2/revoke',{
+    method:'POST',headers:{Authorization:'Client '+env.SQUARE_APP_SECRET,
+      'Square-Version':'2026-09-16','Content-Type':'application/json'},
+    body:JSON.stringify({client_id:env.SQUARE_APP_ID,merchant_id:connection.external_account_id})
+  });
+  const result=await response.json().catch(()=>({}));
+  if(!response.ok||result.success!==true)
+    return json({error:'Square authorization could not be revoked; connection remains active'},502);
+  await env.DB.prepare(`UPDATE merchant_processor_connections SET status='DISCONNECTED',
+    encrypted_access_token=NULL,encrypted_refresh_token=NULL,updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+    .bind(connection.id).run();
+  await env.DB.prepare(`UPDATE merchant_transaction_sources SET status='DISCONNECTED',last_seen_at=CURRENT_TIMESTAMP
+     WHERE merchant_id=? AND source_system='SQUARE' AND external_account_id=?`)
+    .bind(merchantId,connection.external_account_id).run().catch(()=>null);
+  return json({disconnected:true,processor:'SQUARE'});
 }
 
 async function handleConnectUrl(env, merchantId) {

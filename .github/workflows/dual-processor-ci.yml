@@ -1,0 +1,33 @@
+name: Dual processor safety checks
+on:
+  push:
+    branches: ['feature/stripe-square-dual-processor']
+  pull_request:
+    paths:
+      - 'worker/src/**'
+      - 'migrations/**'
+      - 'public/pay/**'
+      - 'scripts/test-dual-processors.mjs'
+      - '.github/workflows/dual-processor-ci.yml'
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Syntax check Worker modules
+        run: |
+          for f in worker/src/*.js public/pay/*.js public/console/*.js; do node --check "$f"; done
+      - name: Test Square OAuth, signatures, and fail-closed payment controls
+        run: node --test scripts/test-dual-processors.mjs
+      - name: Verify migration lineage
+        run: npm run db:lineage
+      - name: Verify Square protection and fee accounting against full SQLite migration chain
+        run: node scripts/test-dual-processor-schema.mjs
+

@@ -76,8 +76,16 @@ CLERK_ADMIN_USER_IDS = "user_REPLACE_OWNER_ID"
 CLERK_SIGN_IN_URL = "https://REPLACE.accounts.dev/sign-in"
 CLERK_USER_URL = "https://REPLACE.accounts.dev/user"
 
-# Payment adapter.
+# Payment adapters. Square stays disabled until sandbox tests, payout/reversal review and owner approval.
 STRIPE_CONNECT_CLIENT_ID = "ca_REPLACE_ME"
+SQUARE_ENV = "sandbox"
+SQUARE_APP_ID = "REPLACE_SQUARE_SANDBOX_APP_ID"
+SQUARE_PAYMENT_LINKS_ENABLED = "false"
+SQUARE_LIVE_ENABLED = "false"
+SQUARE_RECONCILIATION_ENABLED = "false"  # Enable after verified Square Sandbox payout tests
+SQUARE_WEBHOOK_NOTIFICATION_URL = "https://builtegrity.com/api/webhooks/square"
+# Keep SQUARE_APP_SECRET, SQUARE_WEBHOOK_SIGNATURE_KEY and
+# SQUARE_TOKEN_ENCRYPTION_KEY_B64 in Cloudflare Worker secrets.
 
 # Public abuse protection. The site key is browser-safe; the secret key remains a Worker secret.
 # Siteverify responses must report one of these hostnames before a public mutation is accepted.
