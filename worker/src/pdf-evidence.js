@@ -22,6 +22,8 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
   heading('Transaction identity and statuses');
   fields([['Transaction ID','id'],['Merchant','merchant_name'],['Customer','customer_name'],
     ['Purchase reference','merchant_reference'],['Purchase ID','purchase_id'],
+    ['Merchant receipt reference','merchant_payment_reference'],
+    ['Merchant customer reference','merchant_customer_reference'],
     ['Description','description'],['Type','transaction_type'],['Processor','processor'],
     ['Lifecycle status','lifecycle_status'],['Integrity status','integrity_status'],
     ['Record classification','record_classification'],['Exception status','exception_status'],
