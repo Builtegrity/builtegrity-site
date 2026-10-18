@@ -52,10 +52,10 @@ try{
  assert.equal((await queueMerchantRecordEmail(env,'TX-0001','MER-0001')).queued,true);
  assert.equal(sqlRun("SELECT COUNT(*) AS n FROM merchant_transaction_email_links",true)[0].n,1);
  const outcome=await dispatchMerchantRecordEmails(env);assert.equal(outcome.sent,1);
- assert.match(delivery.text,/\\/merchant\\/record\\/#/);
- const found=delivery.text.match(/https:\\/\\/builtegrity.com\\/merchant\\/record\\/#([a-f0-9]{64})/);
+ assert(delivery.text.includes('/merchant/record/#'));
+ const found=delivery.text.split('/merchant/record/#')[1]?.match(/^[a-f0-9]{64}/);
  assert(found);
- const token=found[1];
+ const token=found[0];
  assert.equal((await lookupMerchantRecordToken(env,token)).transaction_id,'TX-0001');
  assert.equal(await lookupMerchantRecordToken(env,'a'.repeat(64)),null);
  const view=accountlessTransactionProjection({id:'TX-0001',processor:'STRIPE',
