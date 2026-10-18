@@ -30,6 +30,8 @@ for(const name of readdirSync('migrations').filter(x=>x.endsWith('.sql')).sort()
  if(name.startsWith('0009_'))sqlRun(readFileSync('transaction-engine/seed-tx-0001.sql','utf8'));
 }
 sqlRun("UPDATE transactions SET merchant_payment_reference='RR-INVOICE-1' WHERE id='TX-0001';");
+sqlRun("INSERT INTO merchants(id,partner_id,name,email,processor,integration_mode,status) VALUES('MER-0002','PARTNER-0001','Other merchant','other@example.com','STRIPE','STRIPE_CONNECT','TEST');");
+sqlRun("INSERT INTO customers(id,merchant_id,name,email,merchant_customer_reference) VALUES('CUST-0002','MER-0002','Unrelated buyer','buyer@other.example','CUST-OTHER');");
 function statement(s){return {bind(...values){
  let at=0;const query=s.replace(/\?/g,()=>lit(values[at++]));
  assert.equal(at,values.length,'Unexpected SQL placeholders');
@@ -76,6 +78,10 @@ assert.doesNotMatch(transactionPdfLines({id:'TX-0001',custom_fields:fields},{aud
  /West Bay HOA 55\+/);
 await assert.rejects(()=>ingestMerchantCustomFields(env,'MER-0001',source.id,'bad-cross',
  [{scope:'CUSTOMER',external_reference:'nonexistent',fields:{hoa_name:'Other'}}]),/Unmatched/);
+await assert.rejects(()=>ingestMerchantCustomFields(env,'MER-0001',source.id,'cross-merchant',
+ [{scope:'CUSTOMER',external_reference:'CUST-OTHER',fields:{hoa_name:'Must never import'}}]),/Unmatched/);
+assert.equal((await merchantFieldContext(env,'MER-0002','CUST-0002')).length,0,
+ 'Other merchant can never inherit source values');
 await assert.rejects(()=>ingestMerchantCustomFields(env,'MER-0001',source.id,'bad-truth',
  [{scope:'TRANSACTION',external_reference:'RR-INVOICE-1',fields:{payment_status:'PAID'}}]),/Unregistered/);
 assert.equal(sqlRun("SELECT COUNT(*) AS n FROM merchant_custom_sync_deliveries WHERE source_id="+lit(source.id),true)[0].n,2);
