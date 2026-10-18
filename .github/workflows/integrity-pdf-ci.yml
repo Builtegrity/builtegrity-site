@@ -1,0 +1,34 @@
+name: Integrity cadence and living PDF CI
+on:
+  pull_request:
+    paths:
+      - 'worker/src/**'
+      - 'public/merchant/**'
+      - 'public/console/**'
+      - 'migrations/**'
+      - 'wrangler.toml.example'
+      - 'scripts/test-integrity-pdf.mjs'
+      - '.github/workflows/integrity-pdf-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  integrity-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax checks
+        run: |
+          node --check worker/src/integrity-verifier.js
+          node --check worker/src/pdf-evidence.js
+          node --check worker/src/pdf.js
+          node --check worker/src/records.js
+          node --check worker/src/runtime.js
+          node --check worker/src/watchdogs.js
+          node --check public/merchant/transactions/app.js
+      - name: Validate snapshot and cadence invariants
+        run: node scripts/test-integrity-pdf.mjs
+      - name: Verify D1 migration lineage
+        run: npm run db:lineage
