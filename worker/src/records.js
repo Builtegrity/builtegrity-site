@@ -19,6 +19,8 @@ export async function handlePublicRecordRoute(request, env, ctx) {
   // the network sense: each has its own cryptographic signature/secret boundary. Email/provider
   // content remains untrusted evidence and can never inherit operator privileges.
   const url = new URL(request.url);
+  const accountless=await handleMerchantEmailAccess(request,env);
+  if(accountless)return accountless;
   const helpResponse=await handleMerchantHelpRoute(request,env);
   if(helpResponse)return helpResponse;
   const customResponse=await handleMerchantCustomRoute(request,env);
