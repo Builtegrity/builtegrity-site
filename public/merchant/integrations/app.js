@@ -49,8 +49,13 @@ async function refresh(){
   sourceList.replaceChildren();fileList.replaceChildren();
   for(const source of sources){
    const item=node('div');item.className='setup-item';
-   item.append(node('strong',source.title),node('div',source.source_kind+' · '+source.status+
-     ' · '+(source.last_success_at||'No data received yet')));
+   item.append(node('strong',source.title),
+    node('div',source.source_kind+' · '+source.status+' · Sync: '+(source.sync_health||'Awaiting verification')),
+    node('div','Last successful update: '+(source.last_success_at||'Not yet received')));
+   if(source.sync_health==='LATE'||source.sync_health==='NEEDS_ATTENTION'){
+     const note=node('p','This source may be delayed. Check the sender or rotate its connection key in settings. Transaction payments remain unaffected.');
+     note.className='setup-help';item.append(note);
+   }
    if(source.source_kind==='FILE'&&source.status==='ACTIVE')option(fileList,source.id,source.title);
    if(source.source_kind!=='FILE'&&source.status==='ACTIVE'){
      const endpoint=node('code','POST '+location.origin+'/api/sync/merchant-fields/'+source.id);
