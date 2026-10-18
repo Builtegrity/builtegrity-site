@@ -93,10 +93,21 @@ export function buildTransactionPdf(tx, options = {}) {
   lines.push('');
   lines.push('PROCESSOR TRACE');
   push('Processor', tx.processor);
-  push('Payment intent', tx.stripe_payment_intent_id || 'pending');
-  push('Charge', tx.stripe_charge_id || 'pending');
-  push('Balance transaction', tx.stripe_balance_transaction_id || 'pending');
-  push('Payout', tx.stripe_payout_id || 'pending');
+  if(tx.processor==='SQUARE'){
+    push('Square checkout',tx.processor_checkout_id||'pending');
+    push('Square order',tx.processor_order_id||'pending');
+    push('Square payment',tx.processor_payment_id||'pending');
+    push('Square payout',tx.processor_payout_id||'pending');
+  }else{
+    push('Payment intent',tx.stripe_payment_intent_id||'pending');
+    push('Stripe charge',tx.stripe_charge_id||'pending');
+    push('Stripe balance entry',tx.stripe_balance_transaction_id||'pending');
+    push('Stripe application fee',tx.stripe_application_fee_id||'pending');
+    push('Stripe payout',tx.stripe_payout_id||'pending');
+  }
+  push('Paid at',tx.payment_at||'pending');
+  push('Expected payout',tx.expected_payout_arrival||'pending');
+  push('Payout reconciled',Number(tx.payout_accounted)===1?'yes':'no');
   lines.push('');
   lines.push('EVENT HISTORY');
 
