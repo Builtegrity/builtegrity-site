@@ -18,12 +18,13 @@ migrations_dir = "migrations"
 binding = "TRANSACTION_RECORDS"
 bucket_name = "builtegrity-transaction-records"
 
-# The 15-minute loop runs safety checks, statements, tax-document delivery, company-books
+# The 2-minute loop rechecks local integrity status. The 10-minute watchdog runs
+# safety checks, statements, tax-document delivery, company-books
 # freshness/reconciliation, tax-workpaper readiness, watchdog routing, and legal-incident response.
 # Expensive accounting API syncs are internally throttled and do not run every 15 minutes.
 # Cloudflare cron is UTC.
 [triggers]
-crons = ["*/15 * * * *", "17 13 * * *"]
+crons = ["*/2 * * * *", "*/10 * * * *", "17 13 * * *"]
 
 [vars]
 APP_BASE_URL = "https://builtegrity.com"

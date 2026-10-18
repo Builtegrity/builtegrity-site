@@ -13,6 +13,7 @@ import {
 } from './square-oauth.js';
 import { processStripeWebhook } from './webhooks.js';
 import { runSquarePayoutRecovery } from './square-reconciliation.js';
+import { verifyIntegritySnapshotBatch } from './integrity-verifier.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
 import { projectStripeEventToTransactionIntelligence } from './stripe-intelligence.js';
 import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
@@ -205,7 +206,7 @@ export default {
       const operatorPdfMatch = path.match(/^\/api\/transactions\/(TX-[A-Za-z0-9-]+)\/pdf$/);
       if (operatorPdfMatch && request.method === 'GET') {
         const principal = await requireOperator(request, env);
-        return serveOperatorTransactionPdf(env, operatorPdfMatch[1], principal);
+        return serveOperatorTransactionPdf(env, operatorPdfMatch[1], principal, { view: url.searchParams.get('view') === '1' });
       }
 
       if (path === '/api/statements' && request.method === 'GET') {
@@ -369,6 +370,14 @@ export default {
   },
 
   async scheduled(controller, env) {
+    // Fast truth verification does not trigger costly processor/accounting/report pipelines.
+    if(controller.cron==='*/2 * * * *'){
+      const verification=await verifyIntegritySnapshotBatch(env);
+      console.log('Builtegrity 2-minute integrity verification',verification);
+      if(verification.failed>0)throw new Error('Integrity verification encountered errors');
+      return;
+    }
+    // Independent 10-minute watchdog (plus daily deep checks) monitors verification lag.
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
     const squareRecovery = kind === 'DEEP' ? await runSquarePayoutRecovery(env) : null;
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });

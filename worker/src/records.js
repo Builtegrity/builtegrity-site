@@ -1,5 +1,7 @@
 import { getTransaction } from './db.js';
 import { serveTransactionPdf } from './pdf.js';
+import { authenticateClerkSession } from './clerk-auth.js';
+import { requireMerchantMembership } from './authorization.js';
 import { handleResendStatementWebhook } from './resend-statement-webhooks.js';
 import { handleMerchantComplianceRoute } from './merchant-compliance-routes.js';
 import { handleLegalInboxWebhook } from './legal-inbox.js';
@@ -24,6 +26,31 @@ export async function handlePublicRecordRoute(request, env) {
   const resendWebhookResponse = await handleResendStatementWebhook(request, env);
   if (resendWebhookResponse) return resendWebhookResponse;
 
+  const merchantPdf = url.pathname.match(/^\/api\/merchant\/transactions\/(TX-[A-Za-z0-9-]+)\/pdf$/);
+  const merchantList = url.pathname === '/api/merchant/transactions';
+  if((merchantPdf||merchantList)&&request.method==='GET'){
+    const principal=await authenticateClerkSession(request,env);
+    if(!principal?.sub)return json({error:'Merchant sign-in required'},401);
+    if(merchantPdf){
+      const full=await getTransaction(env,merchantPdf[1]);
+      if(!full)return json({error:'Transaction not found'},404);
+      await requireMerchantMembership(env,principal,full.merchant_id,'VIEWER');
+      return serveTransactionPdf(env,full,{type:'MERCHANT',ref:principal.sub,view:url.searchParams.get('view')==='1'});
+    }
+    const result=await env.DB.prepare(`
+      SELECT t.id,t.merchant_id,t.processor,t.amount_cents,t.currency,
+        t.lifecycle_status,t.integrity_status,t.exception_status,t.payment_at,t.created_at,
+        m.name AS merchant_name,p.merchant_reference
+      FROM transactions t
+      JOIN merchant_access a ON a.merchant_id=t.merchant_id
+      JOIN merchants m ON m.id=t.merchant_id
+      JOIN purchases p ON p.id=t.purchase_id
+      WHERE a.external_user_id=? AND a.status='ACTIVE'
+      ORDER BY t.created_at DESC,t.id DESC LIMIT 100
+    `).bind(principal.sub).all();
+    return json({transactions:result.results||[],limit:100});
+  }
+
   const match = url.pathname.match(/^\/api\/records\/([^/]+)(\/pdf)?$/);
   if (!match || request.method !== 'GET') return null;
 
@@ -41,12 +68,13 @@ export async function handlePublicRecordRoute(request, env) {
   return json(publicRecord(tx));
 }
 
-export async function serveOperatorTransactionPdf(env, txId, principal) {
+export async function serveOperatorTransactionPdf(env, txId, principal, options={}) {
   const tx = await getTransaction(env, txId);
   if (!tx) return json({ error: 'Transaction not found' }, 404);
   return serveTransactionPdf(env, tx, {
     type: 'OPERATOR',
     ref: principal?.sub || null,
+    view: Boolean(options.view),
   });
 }
 

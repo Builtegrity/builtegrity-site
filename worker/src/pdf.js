@@ -1,3 +1,4 @@
+import { transactionPdfLines } from './pdf-evidence.js';
 import {
   completePdfRequest,
   createPdfRequest,
@@ -11,8 +12,11 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
   const requestId = await createPdfRequest(env, tx.id, requestedByType, requestedByRef);
 
   try {
-    const version = safeVersion(tx.updated_at || tx.created_at || new Date().toISOString());
-    const objectKey = `transaction-records/${tx.id}/${version}.pdf`;
+    const audience = requestedByType === 'CUSTOMER_TOKEN' ? 'customer' : 'merchant';
+    const bytes = buildTransactionPdf(tx,{audience});
+    const digest=await crypto.subtle.digest('SHA-256',bytes);
+    const version=Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join('');
+    const objectKey=`transaction-records/${tx.id}/${audience}/${version}.pdf`;
 
     if (env.TRANSACTION_RECORDS) {
       const cached = await env.TRANSACTION_RECORDS.get(objectKey);
@@ -24,11 +28,9 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
           byte_length: bytes.byteLength,
         });
         await recordPdfCost(env, tx.id, requestId, true, bytes.byteLength);
-        return pdfResponse(bytes, `${tx.id}-transaction-record.pdf`, 'HIT');
+        return pdfResponse(bytes, `${tx.id}-transaction-record.pdf`, 'HIT',requester.view===true);
       }
     }
-
-    const bytes = buildTransactionPdf(tx);
 
     if (env.TRANSACTION_RECORDS) {
       await env.TRANSACTION_RECORDS.put(objectKey, bytes, {
@@ -47,60 +49,15 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
       byte_length: bytes.byteLength,
     });
     await recordPdfCost(env, tx.id, requestId, false, bytes.byteLength);
-    return pdfResponse(bytes, `${tx.id}-transaction-record.pdf`, env.TRANSACTION_RECORDS ? 'MISS' : 'BYPASS');
+    return pdfResponse(bytes, `${tx.id}-transaction-record.pdf`, env.TRANSACTION_RECORDS ? 'MISS' : 'BYPASS',requester.view===true);
   } catch (error) {
     await failPdfRequest(env, requestId, error).catch(() => {});
     throw error;
   }
 }
 
-function buildTransactionPdf(tx) {
-  const lines = [];
-  const push = (label, value = '') => lines.push(label ? `${label}: ${display(value)}` : display(value));
-
-  lines.push('BUILTEGRITY TRANSACTION RECORD');
-  lines.push('Every payment accounted for.');
-  lines.push('');
-  push('Transaction', tx.id);
-  push('Merchant', tx.merchant_name);
-  push('Customer', tx.customer_name);
-  push('Purchase reference', tx.merchant_reference || tx.purchase_id);
-  push('Description', tx.description || tx.purchase_description);
-  push('Amount', formatMoney(tx.amount_cents, tx.currency));
-  push('Lifecycle', tx.lifecycle_status);
-  push('Integrity status', tx.integrity_status);
-  push('Payment status', tx.payment_status || 'pending');
-  push('Payout status', tx.processor_payout_status || 'pending');
-  push('Created', tx.created_at);
-  push('Last updated', tx.updated_at);
-  lines.push('');
-  lines.push('CONSENT AND TERMS');
-  push('Terms version', tx.terms_version || 'n/a');
-  push('Consent accepted', Number(tx.consent_accepted) === 1 ? 'yes' : 'no');
-  push('Consent accepted at', tx.consent_accepted_at || 'n/a');
-  push('Consent method', tx.consent_method || 'n/a');
-  push('Terms SHA-256', tx.terms_snapshot_sha256 || 'n/a');
-  if (tx.refund_policy_snapshot) push('Refund policy', tx.refund_policy_snapshot);
-  if (tx.cancellation_policy_snapshot) push('Cancellation policy', tx.cancellation_policy_snapshot);
-  lines.push('');
-  lines.push('PROCESSOR TRACE');
-  push('Processor', tx.processor);
-  push('Payment intent', tx.stripe_payment_intent_id || 'pending');
-  push('Charge', tx.stripe_charge_id || 'pending');
-  push('Balance transaction', tx.stripe_balance_transaction_id || 'pending');
-  push('Payout', tx.stripe_payout_id || 'pending');
-  lines.push('');
-  lines.push('EVENT HISTORY');
-
-  for (const event of tx.events || []) {
-    lines.push(`${display(event.event_at)}  ${display(event.event_type)}  [${display(event.source)}]`);
-  }
-
-  lines.push('');
-  lines.push('This PDF is a rendered copy of Builtegrity\'s canonical transaction record.');
-  lines.push('The canonical structured record and immutable event history remain authoritative.');
-
-  return createSimplePdf(lines);
+export function buildTransactionPdf(tx,options={}) {
+  return createSimplePdf(transactionPdfLines(tx,options));
 }
 
 function createSimplePdf(lines) {
@@ -175,7 +132,7 @@ function wrapLine(value, width) {
     }
   }
   if (current) lines.push(current);
-  return lines;
+  return lines.flatMap(line => line.length > width ? (line.match(new RegExp('.{1,'+width+'}', 'g')) || []) : [line]);
 }
 
 function escapePdf(value) {
@@ -206,12 +163,12 @@ function byteLength(value) {
   return new TextEncoder().encode(value).byteLength;
 }
 
-function pdfResponse(bytes, filename, cacheStatus) {
+function pdfResponse(bytes, filename, cacheStatus, viewInline=false) {
   return new Response(bytes, {
     status: 200,
     headers: {
       'content-type': 'application/pdf',
-      'content-disposition': `attachment; filename="${filename}"`,
+      'content-disposition': `${viewInline ? 'inline' : 'attachment'}; filename="${filename}"`,
       'cache-control': 'private, no-store',
       'x-builtegrity-pdf-cache': cacheStatus,
       'x-content-type-options': 'nosniff',

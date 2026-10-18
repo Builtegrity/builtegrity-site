@@ -23,6 +23,7 @@ export async function getTransaction(env, txId) {
   const transaction = await env.DB.prepare(`
     SELECT
       t.*,
+      v.verified_at AS integrity_verified_at,
       p.merchant_reference,
       p.purchase_type,
       p.description AS purchase_description,
@@ -37,6 +38,7 @@ export async function getTransaction(env, txId) {
       ptn.name AS partner_name,
       ptn.partner_type
     FROM transactions t
+    LEFT JOIN transaction_integrity_verifications v ON v.transaction_id=t.id
     JOIN purchases p ON p.id = t.purchase_id
     JOIN merchants m ON m.id = t.merchant_id
     JOIN customers c ON c.id = t.customer_id
@@ -202,8 +204,8 @@ export async function recomputeIntegrity(env, transactionId) {
        SET integrity_status = ?,
            exception_status = ?,
            updated_at = CURRENT_TIMESTAMP
-     WHERE id = ?
-  `).bind(integrityStatus, exceptionStatus, transactionId).run();
+     WHERE id = ? AND (integrity_status <> ? OR exception_status <> ?)
+  `).bind(integrityStatus, exceptionStatus, transactionId,integrityStatus,exceptionStatus).run();
 
   return { integrityStatus, exceptionStatus };
 }

@@ -152,6 +152,7 @@ export async function runWatchdogs(env, options = {}) {
     await checkConfiguration(env, counters);
     await checkWebhookReceipts(env, counters);
     await checkTransactionState(env, counters);
+    await checkIntegrityFreshness(env, counters);
     await checkMerchantState(env, counters);
 
     if (kind === 'DEEP' || kind === 'MANUAL') {
@@ -299,6 +300,25 @@ async function checkWebhookReceipts(env, counters) {
   }
 }
 
+async function checkIntegrityFreshness(env,counters) {
+  counters.checks+=1;
+  const row=await env.DB.prepare(`
+    SELECT COUNT(*) AS overdue FROM transactions t
+    LEFT JOIN transaction_integrity_verifications v ON v.transaction_id=t.id
+    WHERE datetime(t.created_at)<=datetime('now','-10 minutes')
+      AND (v.verified_at IS NULL OR datetime(v.verified_at)<datetime('now','-10 minutes')
+           OR v.last_error IS NOT NULL)
+  `).first();
+  const overdue=Number(row?.overdue||0);
+  const key='watchdog:integrity-verification-overdue';
+  if(overdue>0){
+    await setAlert(env,{key,category:'WATCHDOG',
+      severity:watchdogStage(env)==='LIVE'?'CRITICAL':'ERROR',
+      subjectType:'SERVICE',subjectId:'INTEGRITY_VERIFIER',
+      message:`${overdue} transaction(s) have no successful local-evidence integrity verification in over 10 minutes; increase capacity or investigate stalled checks.`});
+  }else await resolveAlert(env,key);
+}
+
 async function checkTransactionState(env, counters) {
   counters.checks += 1;
   const result = await env.DB.prepare(`
@@ -353,9 +373,11 @@ async function checkTransactionState(env, counters) {
 
     const missingProcessorKey = `tx:missing-processor-records:${current.id}`;
     const paidLongEnough = current.payment_at && hoursAgo(current.payment_at) >= 1;
-    const missingProcessorRecords = String(current.payment_status || '').toLowerCase() === 'succeeded' &&
-      paidLongEnough &&
-      (!current.stripe_payment_intent_id || !current.stripe_charge_id || !current.stripe_balance_transaction_id);
+    const paymentSucceeded = ['succeeded','completed','paid'].includes(String(current.payment_status||'').toLowerCase());
+    const missingProcessorRecords = paymentSucceeded && paidLongEnough &&
+      (current.processor==='SQUARE'
+        ? (!current.processor_checkout_id || !current.processor_order_id || !current.processor_payment_id)
+        : (!current.stripe_payment_intent_id || !current.stripe_charge_id || !current.stripe_balance_transaction_id));
     if (missingProcessorRecords) {
       await setAlert(env, {
         key: missingProcessorKey,
@@ -363,14 +385,14 @@ async function checkTransactionState(env, counters) {
         severity: 'CRITICAL',
         subjectType: 'TRANSACTION',
         subjectId: current.id,
-        message: `${current.id} is marked paid but required Stripe processor records are still incomplete after one hour.`,
+        message: `${current.id} is marked paid but required ${current.processor} processor records are still incomplete after one hour.`,
       });
     } else {
       await resolveAlert(env, missingProcessorKey);
     }
 
     const feeKey = `tx:fee-shortfall:${current.id}`;
-    const feeShortfall = String(current.payment_status || '').toLowerCase() === 'succeeded' &&
+    const feeShortfall = paymentSucceeded &&
       paidLongEnough &&
       current.fee_collection_method === 'STRIPE_APPLICATION_FEE' &&
       Number(current.integrity_fee_earned_cents || 0) > Number(current.integrity_fee_collected_cents || 0);
@@ -417,7 +439,7 @@ async function checkTransactionState(env, counters) {
     const payoutOverdueKey = `tx:payout-overdue:${current.id}`;
     const payoutPaid = String(current.processor_payout_status || '').toLowerCase() === 'paid';
     const expectedOverdue = current.expected_payout_arrival && !payoutPaid && hoursAgo(current.expected_payout_arrival) >= 12;
-    const noPayoutAfterThreeDays = !payoutPaid && !current.stripe_payout_id && Number(current.automatic_payouts_required) === 1 &&
+    const noPayoutAfterThreeDays = !payoutPaid && !(current.processor==='SQUARE' ? current.processor_payout_id : current.stripe_payout_id) && Number(current.automatic_payouts_required) === 1 &&
       current.payment_at && hoursAgo(current.payment_at) >= 72;
 
     if (expectedOverdue || noPayoutAfterThreeDays) {
