@@ -1,0 +1,38 @@
+name: Merchant PDF Access and Adoption CI
+on:
+  pull_request:
+    paths:
+      - 'migrations/0072*'
+      - 'worker/src/merchant-record-access.js'
+      - 'worker/src/merchant-record-links.js'
+      - 'worker/src/merchant-refund-pdf.js'
+      - 'worker/src/merchant-dashboard-adoption.js'
+      - 'worker/src/merchant-help.js'
+      - 'worker/src/records.js'
+      - 'worker/src/runtime.js'
+      - 'worker/src/pdf.js'
+      - 'public/merchant/**'
+      - 'public/console/merchant-adoption/**'
+      - 'scripts/test-refund-pdf-security-and-merchant-adoption.mjs'
+      - '.github/workflows/merchant-refunds-and-adoption-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  verified-merchant-pdf-access:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate syntax and private status UI
+        run: |
+          for f in worker/src/merchant-record-access.js worker/src/merchant-record-links.js worker/src/merchant-refund-pdf.js worker/src/merchant-dashboard-adoption.js worker/src/merchant-help.js worker/src/records.js worker/src/runtime.js worker/src/pdf.js public/merchant/record/app.js public/merchant/transactions/app.js public/merchant/app.js public/console/merchant-adoption/app.js; do node --check "$f"; done
+      - name: Build complete migration and verify authenticated refund documents and adoption
+        run: node scripts/test-refund-pdf-security-and-merchant-adoption.mjs
+      - name: Legacy merchant accountless and media behavior
+        run: node scripts/test-merchant-accountless-media.mjs
+      - name: Frozen schema lineage
+        run: npm run db:lineage
