@@ -68,12 +68,13 @@ export async function handlePublicRecordRoute(request, env) {
   return json(publicRecord(tx));
 }
 
-export async function serveOperatorTransactionPdf(env, txId, principal) {
+export async function serveOperatorTransactionPdf(env, txId, principal, options={}) {
   const tx = await getTransaction(env, txId);
   if (!tx) return json({ error: 'Transaction not found' }, 404);
   return serveTransactionPdf(env, tx, {
     type: 'OPERATOR',
     ref: principal?.sub || null,
+    view: Boolean(options.view),
   });
 }
 
