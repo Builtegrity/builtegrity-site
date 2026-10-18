@@ -183,7 +183,7 @@ async function fullMerchantPdfEvidence(env,tx) {
   const [graph,deliveries,customFields]=await Promise.all([
     getTransactionGraph(env,tx.id),transactionEventDeliveries(env,tx.id),
     merchantFieldContext(env,tx.merchant_id,tx.customer_id,tx.id,{forPdf:true})]);
-  return {...tx,...(bank?{bank_evidence:bank}:{}),deliveries,
+  return {...tx,...(bank?{bank_evidence:bank}:{}),deliveries,custom_fields:customFields,
     components:graph.visible_components||[],
     artifacts:graph.artifacts||[],source_objects:graph.source_objects||[]};
 }
