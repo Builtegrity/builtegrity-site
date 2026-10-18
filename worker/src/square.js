@@ -241,10 +241,10 @@ async function projectSquarePayout(env,event) {
 async function projectSquareRefund(env,event) {
   const payload=event.data?.object?.refund||event.data?.object;
   if(!payload?.id)return 'refund_id_missing';
-  const owner=await env.DB.prepare(\`
+  const owner=await env.DB.prepare(`
     SELECT merchant_id FROM merchant_processor_connections
     WHERE processor='SQUARE' AND external_account_id=? AND status IN ('TEST','ACTIVE')
-  \`).bind(event.merchant_id).first();
+  `).bind(event.merchant_id).first();
   if(!owner)return 'unconnected_merchant';
   // Always retrieve the authoritative refund, not only possibly partial webhook data.
   const response=await squareApi(env,owner.merchant_id,'/v2/refunds/'+encodeURIComponent(payload.id));
@@ -262,14 +262,14 @@ async function projectSquareRefund(env,event) {
     return 'invalid_refund';
   }
   const status=String(refund.status||'UNKNOWN').toUpperCase();
-  await env.DB.prepare(\`
+  await env.DB.prepare(`
     INSERT INTO square_refund_facts(refund_id,transaction_id,processor_payment_id,status,amount_cents,app_fee_refunded_cents,currency)
     VALUES(?,?,?,?,?,?,?)
     ON CONFLICT(refund_id) DO UPDATE SET status=excluded.status,
       amount_cents=excluded.amount_cents,app_fee_refunded_cents=excluded.app_fee_refunded_cents,
       updated_at=CURRENT_TIMESTAMP
     WHERE square_refund_facts.status<>'COMPLETED'
-  \`).bind(refund.id,tx.id,refund.payment_id,status,amount,feeRefund,currency).run();
+  `).bind(refund.id,tx.id,refund.payment_id,status,amount,feeRefund,currency).run();
   await recordEvent(env,tx.id,'REFUND_OBSERVED','SYSTEM','SQUARE:'+event.event_id,{
     processor:'SQUARE',refund_id:refund.id,status,customer_refund_cents:amount,
     app_fee_refund_cents:feeRefund
@@ -279,11 +279,11 @@ async function projectSquareRefund(env,event) {
     return tx.id;
   }
   if(status!=='COMPLETED')return 'refund_pending';
-  const totals=await env.DB.prepare(\`
+  const totals=await env.DB.prepare(`
     SELECT COALESCE(SUM(amount_cents),0) AS refunded,
            COALESCE(SUM(app_fee_refunded_cents),0) AS fee_refunded
     FROM square_refund_facts WHERE transaction_id=? AND status='COMPLETED'
-  \`).bind(tx.id).first();
+  `).bind(tx.id).first();
   const refunded=Number(totals.refunded||0);
   const appFeeRefunded=Number(totals.fee_refunded||0);
   const gross=Number(tx.processor_app_fee_confirmed_cents||0);
@@ -298,13 +298,13 @@ async function projectSquareRefund(env,event) {
     await openException(env,tx.id,'SQUARE_REFUND_RECONCILIATION',
       'Processor application-fee refund differs from the locked proportional refund policy');
   }else{
-    await env.DB.prepare(\`
+    await env.DB.prepare(`
       UPDATE transactions SET square_refunded_cents=?,
         square_app_fee_refunded_cents=?,refunded_cents=?,
         application_fee_refunded_cents=?,integrity_fee_collected_cents=?,
         payment_status=CASE WHEN ?>=amount_cents THEN 'refunded' ELSE 'partially_refunded' END,
         updated_at=CURRENT_TIMESTAMP WHERE id=? AND processor='SQUARE'
-    \`).bind(refunded,appFeeRefunded,refunded,appFeeRefunded,
+    `).bind(refunded,appFeeRefunded,refunded,appFeeRefunded,
       Math.max(0,gross-appFeeRefunded),refunded,tx.id).run();
     // Never remove historical PROTECTED status; reversals change current cash, not past facts.
     await recordEvent(env,tx.id,'REFUND_SUCCEEDED','SYSTEM','SQUARE:'+event.event_id+':verified',{
