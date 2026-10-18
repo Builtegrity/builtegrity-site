@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Help & Requests | Builtegrity</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+.help{max-width:930px;margin:auto;padding:34px 20px 80px}
+.help h1{font-size:clamp(34px,6vw,54px);margin:10px 0}
+.help p,.help li{line-height:1.55}
+.help-box{background:#fff;border:1px solid #d8e3ee;border-radius:17px;padding:22px;margin:18px 0}
+.help-links{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.help-links a{border:1px solid #c9d8e7;border-radius:13px;padding:17px;display:block;text-decoration:none}
+.help-links a strong{display:block}
+.help-links a span{font-size:13px;color:#5d6b80;display:block;margin-top:8px}
+.help form{display:grid;gap:14px}
+.help label{display:grid;gap:7px;font-weight:650}
+.help select,.help input,.help textarea{font:inherit;padding:12px;border:1px solid #bfcbdc;border-radius:10px;width:100%;background:white;color:#172033}
+.help textarea{min-height:145px;resize:vertical}
+.help button{min-height:48px;padding:12px 20px;font:inherit;cursor:pointer}
+.help-status{background:#f1f5fa;border-radius:11px;padding:13px;line-height:1.5;font-size:14px}
+.help-small{font-size:13px;color:#5e6d80}
+.help-list{list-style:none;padding:0;display:grid;gap:10px}
+.help-list li{border-bottom:1px solid #e5eaf0;padding-bottom:10px;font-size:14px}
+@media(max-width:640px){.help-links{grid-template-columns:1fr}.help{padding:21px 13px 60px}.help-box{padding:17px}}
+</style></head>
+<body><main class="help">
+<p class="eyebrow">BUILTEGRITY · YOUR ACCOUNT</p>
+<h1>Help & integration requests</h1>
+<p class="lede">Most things can be completed directly in your account. Use the guides below first. If your software does not support automatic updates, send an integration request without sharing passwords or financial secrets.</p>
+<section class="help-box">
+<h2>Get connected without contacting anyone</h2>
+<div class="help-links">
+<a href="/merchant/setup/"><strong>Complete setup →</strong><span>Check what is connected and what needs attention.</span></a>
+<a href="/merchant/integrations/"><strong>Custom fields & data →</strong><span>Create labels, connect an automatic source, or upload CSV/JSON.</span></a>
+<a href="/merchant/bank/"><strong>Bank connection →</strong><span>Authorize, select your payout account, or reconnect expired permission.</span></a>
+<a href="/merchant/transactions/"><strong>Transaction integrity →</strong><span>View payment progress, refunds and printable PDF records.</span></a>
+</div></section>
+<section class="help-box">
+<h2>When automatic updates work</h2>
+<p>Stripe/Square events arrive independently of merchant custom fields. Your other software must <strong>send</strong> its field updates using an authorized webhook, app automation, or database relay. Once configured, Builtegrity receives those fields automatically; neither you nor Builtegrity staff have to re-enter them.</p>
+<p>If your software cannot send updates, you can use the secure field editor or import a CSV/JSON file. These are manual methods—not live integrations.</p>
+<p><strong>Bank status reminder:</strong> a processor payout marked paid is not the same as a posted bank deposit. Bank updates can take days, and bank access may occasionally need your approval again. Builtegrity will show a reconnect action when required and will not claim final settlement.</p>
+</section>
+<section class="help-box" id="request">
+<h2>Submit an integration request</h2>
+<p>Tell us which software or data source you want to connect and what you want tracked. Your account saves a ticket number. Requests for unsupported software may require future connector development; submitting a request does not create an instant integration.</p>
+<form id="helpForm">
+<label>Business
+<select id="merchant" required><option value="">Checking your access…</option></select></label>
+<label>What do you need?
+<select id="type" required>
+<option value="INTEGRATION">Connect software automatically</option>
+<option value="FIELD_MAPPING">Match my existing customer or transaction IDs</option>
+<option value="IMPORT_ISSUE">Fix a file import or field configuration</option>
+<option value="BANK_ACCESS">Bank permission or payout evidence question</option>
+<option value="OTHER">Something else</option>
+</select></label>
+<label>Name of software, bank-data service or other system
+<input id="service" maxlength="100" required placeholder="e.g. Jobber, QuickBooks, my database"></label>
+<label>Field titles you would like to track (optional)
+<textarea id="fields" maxlength="500" rows="2" placeholder="e.g. HOA community, route number, service completed date"></textarea></label>
+<label>What should happen automatically?
+<textarea id="details" required minlength="15" maxlength="3000" placeholder="Which system has the data, which existing customer/invoice reference identifies it, and when should updates happen?"></textarea></label>
+<p class="help-small">Do not submit bank account numbers, access tokens, passwords, customer payment-card details, private files, or API keys. Describe field names and connection needs only. Files can be imported in the Integrations page if appropriately authorized.</p>
+<button type="submit" id="submit">Save my request</button>
+<p class="help-status" id="result" role="status" aria-live="polite">No request submitted yet.</p>
+</form></section>
+<section class="help-box">
+<h2>Your previous requests</h2>
+<ul id="history" class="help-list"><li>Sign in to view your history.</li></ul>
+</section>
+<p><a href="/merchant/">← Back to my profile</a></p>
+</main><script type="module" src="/merchant/help/app.js"></script></body></html>
