@@ -103,8 +103,8 @@ async function resolveImportTarget(env,merchantId,item){
  return {scope,id:row.id};
 }
 export async function ingestMerchantCustomFields(env,merchantId,sourceId,deliveryId,records){
- if(!Array.isArray(records)||records.length<1||records.length>50)
-   throw err('Provide between 1 and 50 records per batch');
+ if(!Array.isArray(records)||records.length<1||records.length>8)
+   throw err('Provide between 1 and 8 records per batch (small D1-safe batches)');
  if(!deliveryId||typeof deliveryId!=='string'||deliveryId.length>128)
    throw err('Provide a stable delivery_id of 1–128 characters');
  const minute=await env.DB.prepare(`SELECT COUNT(*) AS n
@@ -123,7 +123,7 @@ export async function ingestMerchantCustomFields(env,merchantId,sourceId,deliver
   const fields=item?.fields;
   if(!fields||typeof fields!=='object'||Array.isArray(fields))throw err('Each record must contain a fields object');
   const entries=Object.entries(fields);
-  if(!entries.length||entries.length>15)throw err('Every record must supply 1–15 custom fields');
+  if(!entries.length||entries.length>4)throw err('Every record must supply 1–4 custom fields; split larger updates into multiple deliveries');
   for(const [key,raw] of entries){
    const def=byKey.get(key);
    if(!def||def.record_scope!==target.scope)throw err('Unregistered field or scope mismatch: '+key,422);
