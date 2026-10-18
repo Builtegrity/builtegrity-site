@@ -490,6 +490,10 @@ async function handleCreateTransaction(request, env) {
     legal_compliance_state: 'PENDING',
   });
 
+  // Authorized merchant onboarding can issue a per-transaction read-only email.
+  // Delivery failures never interrupt a legitimate processor checkout.
+  await queueMerchantRecordEmail(env,txId,merchant.id).catch(e=>
+    console.error('Merchant record email scheduling failed',txId,String(e.message)));
   return json({
     transaction: await getTransaction(env, txId),
     payment_path: `/pay/?token=${encodeURIComponent(paymentToken)}`,
