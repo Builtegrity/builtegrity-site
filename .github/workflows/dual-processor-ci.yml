@@ -28,3 +28,6 @@ jobs:
         run: node --test scripts/test-dual-processors.mjs
       - name: Verify migration lineage
         run: npm run db:lineage
+      - name: Verify Square protection and fee accounting against full SQLite migration chain
+        run: node scripts/test-dual-processor-schema.mjs
+
