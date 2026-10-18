@@ -405,6 +405,7 @@ export default {
       case_routing: routing,
       square_payout_recovery: squareRecovery,
       bank_payout_recovery: bankRecovery,
+      merchant_self_service_notifications:merchantSetup,
     });
     if(squareRecovery?.errors>0 && ['PILOT','LIVE'].includes(String(env.WATCHDOG_STAGE||'').toUpperCase())) throw new Error('Square payout reconciliation errors require review');
     if (result.status === 'FAIL' || financial.state === 'RED' || statements.generated.failed > 0 || statements.delivered.failed > 0 || taxDocuments.delivered.failed > 0) {
