@@ -91,7 +91,8 @@ function buildJourney(card,data){
  const description=elem('div');
  description.append(elem('strong','',tx.customer_name||tx.merchant_name||'Merchant transaction'));
  description.append(elem('div','integrity-meta','Merchant reference: '+(tx.merchant_reference||'Not provided')+
-    ' · Transaction: '+tx.id));
+    ' · Merchant payment ID: '+(tx.merchant_payment_reference||'Not supplied')+
+    ' · Builtegrity: '+tx.id));
  header.append(description);
  const actions=elem('div');actions.append(pdfIcon(tx.id));
  const save=elem('a','journey-pdf','↓ Download');
@@ -154,6 +155,20 @@ function buildJourney(card,data){
   evidence.append(section);
  }
  wrap.append(evidence);
+ if((data.deliveries||[]).length){
+  const timings=elem('div','journey-evidence');
+  timings.append(elem('strong','','Live processor notification timestamps'));
+  for(const d of data.deliveries.slice(0,5)){
+   const row=elem('div','journey-bank');
+   row.append(elem('strong','',d.processor+' · '+d.event_type));
+   row.append(elem('div','','Processor event created: '+time(d.provider_event_created_at)));
+   row.append(elem('div','','Builtegrity received: '+time(d.received_at)));
+   row.append(elem('div','','Builtegrity processed: '+time(d.processed_at)));
+   row.append(elem('div','','Processing: '+d.outcome));
+   timings.append(row);
+  }
+  wrap.append(timings);
+ }
  const events=elem('div','journey-evidence');
  events.append(elem('strong','','Recent processing events'));
  for(const item of (data.events||[]).slice(-12).reverse()){
