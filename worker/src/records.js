@@ -180,7 +180,7 @@ async function transactionEventDeliveries(env,transactionId){
 
 async function fullMerchantPdfEvidence(env,tx) {
   const bank=await payoutBankEvidence(env,tx);
-  const [graph,deliveries]=await Promise.all([
+  const [graph,deliveries,customFields]=await Promise.all([
     getTransactionGraph(env,tx.id),transactionEventDeliveries(env,tx.id)]);
   return {...tx,...(bank?{bank_evidence:bank}:{}),deliveries,
     components:graph.visible_components||[],
