@@ -181,6 +181,15 @@ async function projectSquarePayment(env,event) {
   await recomputeIntegrity(env,tx.id);
   return tx.id;
 }
+export async function applySquarePayoutSnapshot(env,merchantId,payout) {
+  if(!merchantId||!payout?.id||payout?.status!=='PAID')throw new Error('Only confirmed Square paid payouts can be reconciled');
+  return projectSquarePayout(env,{
+    type:'payout.paid',merchant_id:merchantId,
+    event_id:'SQUARE_RECONCILE:'+payout.id,
+    created_at:new Date().toISOString(),
+    data:{object:{payout}}
+  });
+}
 async function projectSquarePayout(env,event) {
   const payout=event.data?.object?.payout||event.data?.object;
   const payoutId=payout?.id||event.data?.id;
