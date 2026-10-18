@@ -41,6 +41,7 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
     ['Refund policy snapshot','refund_policy_snapshot'],
     ['Cancellation policy snapshot','cancellation_policy_snapshot']]);
   heading('Processor references and payout evidence');
+  if(merchant){
   if(String(tx.processor).toUpperCase()==='SQUARE'){
     fields([['Square checkout','processor_checkout_id'],['Square order','processor_order_id'],
       ['Square payment','processor_payment_id'],['Square payout','processor_payout_id']]);
@@ -49,6 +50,7 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
       ['PaymentIntent','stripe_payment_intent_id'],['Stripe charge','stripe_charge_id'],
       ['Balance transaction','stripe_balance_transaction_id'],
       ['Application fee ID','stripe_application_fee_id'],['Stripe payout','stripe_payout_id']]);
+  }
   }
   fields([['Payment confirmed at','payment_at'],['Expected payout date','expected_payout_arrival'],
     ['Payout accounted','payout_accounted'],['Last processor reconciliation','last_reconciled_at']]);
@@ -75,7 +77,6 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
     heading('Exceptions and resolutions');
     if(!(tx.exceptions||[]).length)lines.push('No exceptions recorded.');
     for(const ex of tx.exceptions||[]){
-      fields.call(null,[]);
       label('Exception',[(ex.id||''),(ex.exception_type||''),(ex.status||'')].join(' | '));
       label('Opened',ex.opened_at);label('Summary',ex.summary);
       label('Resolution',ex.resolution);label('Resolved',ex.resolved_at);
