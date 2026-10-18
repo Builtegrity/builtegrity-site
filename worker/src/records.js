@@ -82,8 +82,10 @@ export async function handlePublicRecordRoute(request, env) {
     const result=await env.DB.prepare(`
       SELECT t.id,t.merchant_id,t.processor,t.amount_cents,t.currency,
         t.lifecycle_status,t.integrity_status,t.exception_status,t.payment_at,t.created_at,
+        v.verified_at AS integrity_verified_at,
         m.name AS merchant_name,p.merchant_reference
       FROM transactions t
+      LEFT JOIN transaction_integrity_verifications v ON v.transaction_id=t.id
       JOIN merchant_access a ON a.merchant_id=t.merchant_id
       JOIN merchants m ON m.id=t.merchant_id
       JOIN purchases p ON p.id=t.purchase_id
