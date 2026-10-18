@@ -46,7 +46,7 @@ const fakeOriginal={id:'TX-0001',merchant_name:'RR',customer_name:'West Bay HOA'
  amount_cents:130000,merchant_payment_reference:'RR-OCT-2026',
  currency:'USD',refunded_cents:20000};
 const lines=refundPdfLines(stripe,fakeOriginal);
-assert(lines.some(x=>x.includes('20'+'.00 USD')));
+assert(lines.some(x=>x.includes('200.00 USD')));
 assert(lines.some(x=>x.includes('COMPLETED')));
 assert(lines.some(x=>x.includes('re_test_0001')));
 const pdf=buildRefundPdf(stripe,fakeOriginal);
