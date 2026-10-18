@@ -4,6 +4,7 @@ const status=document.querySelector('#status');
 const refresh=document.querySelector('#refresh');
 const tabs={transactions:document.querySelector('#tab-transactions'),refunds:document.querySelector('#tab-refunds')};
 const panels={transactions:document.querySelector('#panel-transactions'),refunds:document.querySelector('#panel-refunds')};
+const loaded={transactions:false,refunds:false};
 let active=new URLSearchParams(location.search).get('tab')==='refunds'?'refunds':'transactions';
 let inflight=false,lastIds='',latestId=null;
 const journeys=new Map();
@@ -237,5 +238,5 @@ tabs.transactions.addEventListener('click',()=>activate('transactions'));
 tabs.refunds.addEventListener('click',()=>activate('refunds'));
 refresh.addEventListener('click',reload);
 // A lightweight browser refresh keeps the visible screen current; payment ingestion is webhook-driven.
-setInterval(()=>{if(document.visibilityState==='visible')reload();},30000);
+setInterval(()=>{if(document.visibilityState==='visible')reload();},15000);
 activate(active,false);
