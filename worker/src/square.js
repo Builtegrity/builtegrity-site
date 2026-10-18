@@ -22,6 +22,10 @@ export async function createSquareCheckout(env,tx) {
   if(locked.processor!=='SQUARE'||!locked.payment_access_token||Number(locked.consent_accepted)!==1)
     throw statusError('Square transaction consent and payment token are required',409);
   if(String(locked.currency).toUpperCase()!=='USD')throw statusError('Square V1 accepts USD only',409);
+  // Square seller-initiated refunds automatically reverse app fees proportionally.
+  // Only the compatible locked refund policy can safely use this hosted checkout.
+  if(locked.fee_refund_handler_code!=='PRO_RATA_APP_FEE')
+    throw statusError('Square checkout requires an approved proportional application-fee refund policy',409);
 
   const reserved=await reserveAvailableFeeCarry(env,locked.id);
   const effective={...locked,...(reserved||{})};
@@ -126,13 +130,37 @@ async function projectSquarePayment(env,event) {
   }
   const confirmed=Number(p.app_fee_money?.amount||0);
   if(status==='COMPLETED'){
+    if(!Number.isSafeInteger(confirmed)||confirmed<0||confirmed>total){
+      await openException(env,tx.id,'SQUARE_FEE_MISMATCH','Square reported an invalid application fee');
+      return 'invalid_application_fee';
+    }
+    if(tx.record_classification==='PROTECTED'&&
+       (confirmed!==Number(tx.processor_app_fee_confirmed_cents)||p.id!==tx.processor_payment_id)){
+      await openException(env,tx.id,'SQUARE_FEE_MISMATCH','Square payment facts changed after immutable protection confirmation');
+      return 'protected_payment_changed';
+    }
+    const processorFees=Array.isArray(p.processing_fee)
+      ? -p.processing_fee.reduce((n,f)=>n+Number(f.amount_money?.amount||0),0)
+      : null;
+    if(processorFees!==null&&(!Number.isSafeInteger(processorFees)||processorFees<0)){
+      await openException(env,tx.id,'SQUARE_PROCESSING_FEE_MISMATCH','Square processing fees were malformed');
+      return 'invalid_processing_fee';
+    }
+    const net=Math.max(0,confirmed-Number(tx.square_app_fee_refunded_cents||0));
     await env.DB.prepare(`
       UPDATE transactions SET processor_payment_id=COALESCE(processor_payment_id,?),
-       payment_status='COMPLETED',payment_at=COALESCE(payment_at,?),
+       payment_status=CASE WHEN COALESCE(square_refunded_cents,0)>0
+         THEN CASE WHEN square_refunded_cents>=amount_cents THEN 'refunded' ELSE 'partially_refunded' END
+         ELSE 'COMPLETED' END,
+       payment_at=COALESCE(payment_at,?),
        customer_paid_cents=?,processor_app_fee_confirmed_cents=?,
+       application_fee_gross_confirmed_cents=?,
+       integrity_fee_collected_cents=?,
+       processor_fee_cents=COALESCE(?,processor_fee_cents),
+       last_reconciled_at=CURRENT_TIMESTAMP,
        updated_at=CURRENT_TIMESTAMP
       WHERE id=? AND processor='SQUARE'
-    `).bind(p.id,p.created_at||new Date().toISOString(),total,confirmed,tx.id).run();
+    `).bind(p.id,p.created_at||new Date().toISOString(),total,confirmed,confirmed,net,processorFees,tx.id).run();
     await advanceLifecycle(env,tx.id,'PAID');
     if(confirmed!==Number(tx.processor_app_fee_requested_cents)){
       await openException(env,tx.id,'SQUARE_FEE_MISMATCH','Square application fee does not match the locked checkout amount');
@@ -145,7 +173,8 @@ async function projectSquarePayment(env,event) {
     await recordEvent(env,tx.id,'PAYMENT_FAILED','SYSTEM','SQUARE:'+event.event_id,{processor:'SQUARE',status});
     await openException(env,tx.id,'PAYMENT_FAILED','Square reported a failed or cancelled payment');
   }
-  if(Number(p.refunded_money?.amount||0)>0)await openException(env,tx.id,'SQUARE_REFUND_RECONCILIATION','Square refund requires application-fee refund reconciliation');
+  if(Number(p.refunded_money?.amount||0)>Number(tx.square_refunded_cents||0))
+    await openException(env,tx.id,'SQUARE_REFUND_RECONCILIATION','Square shows refunds that are not yet reconciled from refund facts');
   await recomputeIntegrity(env,tx.id);
   return tx.id;
 }
@@ -185,11 +214,21 @@ async function projectSquarePayout(env,event) {
     if(!paymentId)continue;
     const tx=await findSquareTransaction(env,event.merchant_id,paymentId,null);
     if(!tx||!tx.payment_at)continue;
+    const contribution=Number(entry.net_amount_money?.amount);
+    if(!Number.isSafeInteger(contribution)||contribution<0){
+      await openException(env,tx.id,'SQUARE_PAYOUT_MISMATCH','Square payout entry has no valid net contribution amount');
+      continue;
+    }
+    if(tx.processor_payout_id&&tx.processor_payout_id!==payoutId){
+      await openException(env,tx.id,'SQUARE_PAYOUT_MISMATCH','Square transaction is associated with two payout IDs');
+      continue;
+    }
     await env.DB.prepare(`
       UPDATE transactions SET processor_payout_id=?,processor_payout_status='paid',
         payout_accounted=1,transaction_payout_contribution_cents=?,
+        actual_merchant_net_cents=?,last_reconciled_at=CURRENT_TIMESTAMP,
         updated_at=CURRENT_TIMESTAMP WHERE id=? AND processor='SQUARE'
-    `).bind(payoutId,Number.isInteger(entry.net_amount_money?.amount)?entry.net_amount_money.amount:null,tx.id).run();
+    `).bind(payoutId,contribution,contribution,tx.id).run();
     await advanceLifecycle(env,tx.id,'COMPLETE');
     await recordEvent(env,tx.id,'PAYOUT_PAID','SYSTEM','SQUARE:'+event.event_id+':'+tx.id,{
       processor:'SQUARE',payout_id:payoutId,entry_id:entry.id
@@ -198,14 +237,82 @@ async function projectSquarePayout(env,event) {
   }
   return 'payout_entries_matched:'+matched;
 }
+
 async function projectSquareRefund(env,event) {
-  const obj=event.data?.object?.refund||event.data?.object;
-  const id=obj?.payment_id;
-  if(!id)return 'refund_unmatched';
-  const tx=await findSquareTransaction(env,event.merchant_id,id,null);
+  const payload=event.data?.object?.refund||event.data?.object;
+  if(!payload?.id)return 'refund_id_missing';
+  const owner=await env.DB.prepare(\`
+    SELECT merchant_id FROM merchant_processor_connections
+    WHERE processor='SQUARE' AND external_account_id=? AND status IN ('TEST','ACTIVE')
+  \`).bind(event.merchant_id).first();
+  if(!owner)return 'unconnected_merchant';
+  // Always retrieve the authoritative refund, not only possibly partial webhook data.
+  const response=await squareApi(env,owner.merchant_id,'/v2/refunds/'+encodeURIComponent(payload.id));
+  const refund=response.refund;
+  if(!refund?.payment_id||!refund.id)return 'refund_unavailable';
+  const tx=await findSquareTransaction(env,event.merchant_id,refund.payment_id,refund.order_id||null);
   if(!tx)return 'unmanaged_refund';
-  await recordEvent(env,tx.id,'REFUND_OBSERVED','SYSTEM','SQUARE:'+event.event_id,{processor:'SQUARE',refund_id:obj?.id||null});
-  await openException(env,tx.id,'SQUARE_REFUND_RECONCILIATION','Square refund requires application-fee refund reconciliation');
+  const amount=Number(refund.amount_money?.amount);
+  const feeRefund=Number(refund.app_fee_money?.amount);
+  const currency=String(refund.amount_money?.currency||'').toUpperCase();
+  if(!Number.isSafeInteger(amount)||amount<=0||
+     !Number.isSafeInteger(feeRefund)||feeRefund<0||feeRefund>amount||
+     currency!==String(tx.currency).toUpperCase()){
+    await openException(env,tx.id,'SQUARE_REFUND_RECONCILIATION','Square refund amount, fee or currency is invalid/missing');
+    return 'invalid_refund';
+  }
+  const status=String(refund.status||'UNKNOWN').toUpperCase();
+  await env.DB.prepare(\`
+    INSERT INTO square_refund_facts(refund_id,transaction_id,processor_payment_id,status,amount_cents,app_fee_refunded_cents,currency)
+    VALUES(?,?,?,?,?,?,?)
+    ON CONFLICT(refund_id) DO UPDATE SET status=excluded.status,
+      amount_cents=excluded.amount_cents,app_fee_refunded_cents=excluded.app_fee_refunded_cents,
+      updated_at=CURRENT_TIMESTAMP
+    WHERE square_refund_facts.status<>'COMPLETED'
+  \`).bind(refund.id,tx.id,refund.payment_id,status,amount,feeRefund,currency).run();
+  await recordEvent(env,tx.id,'REFUND_OBSERVED','SYSTEM','SQUARE:'+event.event_id,{
+    processor:'SQUARE',refund_id:refund.id,status,customer_refund_cents:amount,
+    app_fee_refund_cents:feeRefund
+  });
+  if(status==='FAILED'||status==='REJECTED'){
+    await openException(env,tx.id,'SQUARE_REFUND_FAILED','Square refund failed or was rejected');
+    return tx.id;
+  }
+  if(status!=='COMPLETED')return 'refund_pending';
+  const totals=await env.DB.prepare(\`
+    SELECT COALESCE(SUM(amount_cents),0) AS refunded,
+           COALESCE(SUM(app_fee_refunded_cents),0) AS fee_refunded
+    FROM square_refund_facts WHERE transaction_id=? AND status='COMPLETED'
+  \`).bind(tx.id).first();
+  const refunded=Number(totals.refunded||0);
+  const appFeeRefunded=Number(totals.fee_refunded||0);
+  const gross=Number(tx.processor_app_fee_confirmed_cents||0);
+  if(refunded>Number(tx.amount_cents)||appFeeRefunded>gross){
+    await openException(env,tx.id,'SQUARE_REFUND_RECONCILIATION','Square cumulative refunds exceed the original recorded amounts');
+    return 'refund_totals_exceed_payment';
+  }
+  // Square seller-initiated refunds automatically pro-rate developer app fee.
+  // Compare with the policy-allowed proportional amount, tolerating only 1¢ provider rounding.
+  const expectedFeeRefund=Math.round(refunded*gross/Number(tx.amount_cents));
+  if(tx.fee_refund_handler_code!=='PRO_RATA_APP_FEE'||Math.abs(expectedFeeRefund-appFeeRefunded)>1){
+    await openException(env,tx.id,'SQUARE_REFUND_RECONCILIATION',
+      'Processor application-fee refund differs from the locked proportional refund policy');
+  }else{
+    await env.DB.prepare(\`
+      UPDATE transactions SET square_refunded_cents=?,
+        square_app_fee_refunded_cents=?,refunded_cents=?,
+        application_fee_refunded_cents=?,integrity_fee_collected_cents=?,
+        payment_status=CASE WHEN ?>=amount_cents THEN 'refunded' ELSE 'partially_refunded' END,
+        updated_at=CURRENT_TIMESTAMP WHERE id=? AND processor='SQUARE'
+    \`).bind(refunded,appFeeRefunded,refunded,appFeeRefunded,
+      Math.max(0,gross-appFeeRefunded),refunded,tx.id).run();
+    // Never remove historical PROTECTED status; reversals change current cash, not past facts.
+    await recordEvent(env,tx.id,'REFUND_SUCCEEDED','SYSTEM','SQUARE:'+event.event_id+':verified',{
+      processor:'SQUARE',cumulative_refunded_cents:refunded,
+      cumulative_app_fee_refunded_cents:appFeeRefunded
+    });
+  }
+  await recomputeIntegrity(env,tx.id);
   return tx.id;
 }
 function statusError(message,status=409){const e=new Error(message);e.status=status;return e;}
