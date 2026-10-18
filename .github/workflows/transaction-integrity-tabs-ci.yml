@@ -1,0 +1,28 @@
+name: Transaction Integrity Tabs CI
+on:
+  pull_request:
+    paths:
+      - 'worker/src/records.js'
+      - 'public/merchant/transactions/**'
+      - 'preview/integrity/**'
+      - 'public/preview/integrity/**'
+      - 'scripts/test-transaction-integrity-tabs.mjs'
+      - '.github/workflows/transaction-integrity-tabs-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  refund-history-authorization:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: |
+          node --check worker/src/records.js
+          node --check public/merchant/transactions/app.js
+          node --check scripts/test-transaction-integrity-tabs.mjs
+      - name: Verify authorized tab data and full-schema refund queries
+        run: node scripts/test-transaction-integrity-tabs.mjs
