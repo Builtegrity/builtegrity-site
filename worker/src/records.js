@@ -27,6 +27,46 @@ export async function handlePublicRecordRoute(request, env) {
   const resendWebhookResponse = await handleResendStatementWebhook(request, env);
   if (resendWebhookResponse) return resendWebhookResponse;
 
+  // Merchant refund history is a separate history projection; no refund is initiated here.
+  // Stripe keeps append-only successful refund deltas. Square keeps provider refund IDs and
+  // their latest verified status, including pending and failed refunds.
+  if (url.pathname === '/api/merchant/refunds' && request.method === 'GET') {
+    const principal = await authenticateClerkSession(request,env);
+    if (!principal?.sub) return json({error:'Merchant sign-in required'},401);
+    const result=await env.DB.prepare(`
+      SELECT refund_id, transaction_id, merchant_id,merchant_name,processor,
+             amount_cents,currency,status,occurred_at,processor_ref,app_fee_refunded_cents
+      FROM (
+        SELECT a.id AS refund_id,a.transaction_id,a.merchant_id,m.name AS merchant_name,
+               'STRIPE' AS processor,a.amount_cents,a.currency,'COMPLETED' AS status,
+               a.adjustment_at AS occurred_at,
+               COALESCE(a.processor_event_id,a.processor_object_id) AS processor_ref,
+               NULL AS app_fee_refunded_cents
+        FROM transaction_financial_adjustments a
+        JOIN merchants m ON m.id=a.merchant_id
+        WHERE a.processor='STRIPE' AND a.adjustment_type='REFUND'
+          AND EXISTS (
+            SELECT 1 FROM merchant_access access
+            WHERE access.merchant_id=a.merchant_id
+              AND access.external_user_id=? AND access.status='ACTIVE')
+        UNION ALL
+        SELECT f.refund_id AS refund_id,f.transaction_id,t.merchant_id,m.name AS merchant_name,
+               'SQUARE' AS processor,f.amount_cents,f.currency,f.status,
+               f.updated_at AS occurred_at,f.refund_id AS processor_ref,
+               f.app_fee_refunded_cents
+        FROM square_refund_facts f
+        JOIN transactions t ON t.id=f.transaction_id AND t.processor='SQUARE'
+        JOIN merchants m ON m.id=t.merchant_id
+        WHERE EXISTS (
+          SELECT 1 FROM merchant_access access
+          WHERE access.merchant_id=t.merchant_id
+            AND access.external_user_id=? AND access.status='ACTIVE')
+      )
+      ORDER BY occurred_at DESC,refund_id DESC LIMIT 100
+    `).bind(principal.sub,principal.sub).all();
+    return json({refunds:result.results||[],limit:100,read_only:true});
+  }
+
   const merchantPdf = url.pathname.match(/^\/api\/merchant\/transactions\/(TX-[A-Za-z0-9-]+)\/pdf$/);
   const merchantList = url.pathname === '/api/merchant/transactions';
   if((merchantPdf||merchantList)&&request.method==='GET'){
