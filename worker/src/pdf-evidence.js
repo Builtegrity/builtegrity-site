@@ -113,6 +113,25 @@ export function transactionPdfLines(tx,{audience='merchant'}={}){
     }
     lines.push('Binary attachments are referenced by evidence records but are not embedded in this PDF.');
   }
+  // No merchant-authorized active bank feed => no bank-arrival claims or section.
+  if(merchant&&tx.bank_evidence){
+    heading('Optional connected bank deposit evidence');
+    label('Bank verification status',tx.bank_evidence.status);
+    label('Independent bank credit matching',
+      tx.bank_evidence.verified===true?'Posted bank credit matched to payout batch':
+        'Not independently confirmed as a posted deposit');
+    if(tx.bank_evidence.bank_transaction_date)
+      label('Bank transaction date',tx.bank_evidence.bank_transaction_date);
+    if(tx.bank_evidence.bank_posted_at)
+      label('Bank reported posting date',tx.bank_evidence.bank_posted_at);
+    if(tx.bank_evidence.matched_payout_amount_cents!==undefined)
+      label('Matched complete payout batch amount',
+        money(tx.bank_evidence.matched_payout_amount_cents,tx.currency));
+    if(tx.bank_evidence.evidence_source)
+      label('Bank data source',tx.bank_evidence.evidence_source);
+    lines.push('Bank evidence describes a full processor payout deposit, not a separate bank credit for each card charge.');
+    lines.push('Posted means the bank-data provider reports posting; irreversible final settlement is not asserted.');
+  }
   heading('Event history');
   if(!(tx.events||[]).length)lines.push('No events recorded.');
   for(const event of tx.events||[]){
