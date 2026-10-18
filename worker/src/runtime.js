@@ -12,6 +12,7 @@ import {
   saveSquareConnection,squareBase,squareApi,squareAccessToken,squareConnection
 } from './square-oauth.js';
 import { processStripeWebhook } from './webhooks.js';
+import { runSquarePayoutRecovery } from './square-reconciliation.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
 import { projectStripeEventToTransactionIntelligence } from './stripe-intelligence.js';
 import { getWatchdogStatus, runWatchdogs, systemReadiness } from './watchdogs.js';
@@ -369,6 +370,7 @@ export default {
 
   async scheduled(controller, env) {
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
+    const squareRecovery = kind === 'DEEP' ? await runSquarePayoutRecovery(env) : null;
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const statements = await runMonthlyStatementPipeline(env);
     const taxDocuments = await runTaxDocumentPipeline(env);
@@ -382,7 +384,9 @@ export default {
       tax_documents: taxDocuments,
       tax_workpapers: taxWorkpapers,
       case_routing: routing,
+      square_payout_recovery: squareRecovery,
     });
+    if(squareRecovery?.errors>0 && ['PILOT','LIVE'].includes(String(env.WATCHDOG_STAGE||'').toUpperCase())) throw new Error('Square payout reconciliation errors require review');
     if (result.status === 'FAIL' || financial.state === 'RED' || statements.generated.failed > 0 || statements.delivered.failed > 0 || taxDocuments.delivered.failed > 0) {
       throw new Error(`Builtegrity safety monitor failed: watchdog_critical=${result.critical}, financial_state=${financial.state}, statement_generation_failures=${statements.generated.failed}, statement_delivery_failures=${statements.delivered.failed}, tax_document_delivery_failures=${taxDocuments.delivered.failed}`);
     }
