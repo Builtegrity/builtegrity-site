@@ -4,6 +4,7 @@ import {
  defineMerchantField,disableMerchantField,listMerchantFieldDefinitions,
  merchantFieldContext,merchantCustomerGroups,customersInGroup,
  createMerchantSyncSource,listMerchantSyncSources,rotateMerchantSyncSource,
+ setMerchantFieldSyncMode,merchantCustomSyncHealth,
  revokeMerchantSyncSource,ingestMerchantCustomFields,verifyMerchantSyncToken
 } from './merchant-custom-data.js';
 function json(data,status=200){return new Response(JSON.stringify(data),{
