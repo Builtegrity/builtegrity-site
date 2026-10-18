@@ -1,6 +1,8 @@
 import { handleMerchantBankRoute } from './bank-routes.js';
 import { payoutBankEvidence } from './bank-evidence.js';
 import { getTransaction } from './db.js';
+import { merchantFieldContext } from './merchant-custom-data.js';
+import { handleMerchantCustomRoute } from './merchant-custom-routes.js';
 import { getTransactionGraph } from './transaction-intelligence.js';
 import { serveTransactionPdf } from './pdf.js';
 import { authenticateClerkSession } from './clerk-auth.js';
@@ -15,6 +17,8 @@ export async function handlePublicRecordRoute(request, env, ctx) {
   // the network sense: each has its own cryptographic signature/secret boundary. Email/provider
   // content remains untrusted evidence and can never inherit operator privileges.
   const url = new URL(request.url);
+  const customResponse=await handleMerchantCustomRoute(request,env);
+  if(customResponse)return customResponse;
   const bankResponse=await handleMerchantBankRoute(request,env,ctx);
   if(bankResponse)return bankResponse;
   if (url.pathname === '/api/webhooks/legal-inbox' && request.method === 'POST') {
@@ -78,8 +82,9 @@ export async function handlePublicRecordRoute(request, env, ctx) {
     const tx=await getTransaction(env,timelineMatch[1]);
     if(!tx)return json({error:'Transaction not found'},404);
     await requireMerchantMembership(env,principal,tx.merchant_id,'VIEWER');
-    const bank=await payoutBankEvidence(env,tx);
-    const deliveries=await transactionEventDeliveries(env,tx.id);
+    const [bank,customFields,deliveries]=await Promise.all([
+      payoutBankEvidence(env,tx),merchantFieldContext(env,tx.merchant_id,tx.customer_id,tx.id),
+      transactionEventDeliveries(env,tx.id)]);
     // Confidential internal details are not exposed; the full PDF remains authorized.
     const milestones={
       created_at:tx.created_at,consent_at:tx.consent_accepted_at,
@@ -106,7 +111,7 @@ export async function handlePublicRecordRoute(request, env, ctx) {
       ...milestones,
       // Intentionally omit bank fields entirely for unlinked or revoked accounts.
       ...(bank?{bank_evidence:bank}:{})
-    },deliveries,events:(tx.events||[]).map(e=>({
+    },custom_fields:customFields,deliveries,events:(tx.events||[]).map(e=>({
       id:e.id,type:e.event_type,occurred_at:e.event_at,source:e.source
     })),exceptions:(tx.exceptions||[]).map(e=>({
       id:e.id,type:e.exception_type,status:e.status,summary:e.summary
@@ -175,9 +180,10 @@ async function transactionEventDeliveries(env,transactionId){
 
 async function fullMerchantPdfEvidence(env,tx) {
   const bank=await payoutBankEvidence(env,tx);
-  const [graph,deliveries]=await Promise.all([
-    getTransactionGraph(env,tx.id),transactionEventDeliveries(env,tx.id)]);
-  return {...tx,...(bank?{bank_evidence:bank}:{}),deliveries,
+  const [graph,deliveries,customFields]=await Promise.all([
+    getTransactionGraph(env,tx.id),transactionEventDeliveries(env,tx.id),
+    merchantFieldContext(env,tx.merchant_id,tx.customer_id,tx.id,{forPdf:true})]);
+  return {...tx,...(bank?{bank_evidence:bank}:{}),deliveries,custom_fields:customFields,
     components:graph.visible_components||[],
     artifacts:graph.artifacts||[],source_objects:graph.source_objects||[]};
 }

@@ -3,6 +3,7 @@ import { requireMerchantMembership } from './authorization.js';
 import { makeBankLinkToken, connectBank, bankConnectionsForMerchant,
   selectPayoutBank, disconnectMerchantBank } from './bank-evidence.js';
 import { handlePlaidWebhook } from './plaid-webhooks.js';
+import { completeBankReauthorization,merchantSetupNotices } from './merchant-setup-autopilot.js';
 
 function json(value,status=200){return new Response(JSON.stringify(value),{status,headers:{
   'content-type':'application/json','cache-control':'no-store','x-content-type-options':'nosniff'}});}
@@ -42,6 +43,8 @@ export async function handleMerchantBankRoute(request,env,ctx) {
    return json({error:'Merchant ID required'},400);
  await requireMerchantMembership(env,principal,merchantId,
    method==='POST'?'OWNER':'VIEWER');
+ if(path==='/api/merchant/bank/notices'&&method==='GET')
+   return json({notices:await merchantSetupNotices(env,merchantId)});
  if(path==='/api/merchant/bank/status'&&method==='GET'){
   const connections=await bankConnectionsForMerchant(env,merchantId);
   return json({enabled:env.BANK_SYNC_ENABLED==='true',merchant_id:merchantId,
@@ -59,6 +62,8 @@ export async function handleMerchantBankRoute(request,env,ctx) {
   }
   return json(await makeBankLinkToken(env,merchantId,principal.sub,row));
  }
+ if(path==='/api/merchant/bank/reauthorize'&&method==='POST')
+   return json(await completeBankReauthorization(env,merchantId,input.connection_id));
  if(path==='/api/merchant/bank/complete'&&method==='POST'){
   return json(await connectBank(env,merchantId,principal.sub,input.public_token,
     input.selected_account_id||null));

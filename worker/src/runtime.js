@@ -14,6 +14,7 @@ import {
 import { processStripeWebhook } from './webhooks.js';
 import { runSquarePayoutRecovery } from './square-reconciliation.js';
 import { runBankSyncRecovery } from './bank-evidence.js';
+import { runMerchantSetupNotifications } from './merchant-setup-autopilot.js';
 import { normalizeProviderEvent, recordProviderReceipt, recordProviderResult, webhookTimingSummary } from './processor-event-delivery.js';
 import { verifyIntegritySnapshotBatch } from './integrity-verifier.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
@@ -388,6 +389,7 @@ export default {
     const kind = controller.cron === '17 13 * * *' ? 'DEEP' : 'FAST';
     const squareRecovery = kind === 'DEEP' ? await runSquarePayoutRecovery(env) : null;
     const bankRecovery = await runBankSyncRecovery(env);
+    const merchantSetup = await runMerchantSetupNotifications(env);
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const statements = await runMonthlyStatementPipeline(env);
     const taxDocuments = await runTaxDocumentPipeline(env);
@@ -403,6 +405,7 @@ export default {
       case_routing: routing,
       square_payout_recovery: squareRecovery,
       bank_payout_recovery: bankRecovery,
+      merchant_self_service_notifications:merchantSetup,
     });
     if(squareRecovery?.errors>0 && ['PILOT','LIVE'].includes(String(env.WATCHDOG_STAGE||'').toUpperCase())) throw new Error('Square payout reconciliation errors require review');
     if (result.status === 'FAIL' || financial.state === 'RED' || statements.generated.failed > 0 || statements.delivered.failed > 0 || taxDocuments.delivered.failed > 0) {

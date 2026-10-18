@@ -1,0 +1,32 @@
+name: Merchant Custom Data & Self-Service CI
+on:
+  pull_request:
+    paths:
+      - 'migrations/0069*'
+      - 'worker/src/merchant-*.js'
+      - 'worker/src/bank-routes.js'
+      - 'worker/src/records.js'
+      - 'worker/src/runtime.js'
+      - 'worker/src/pdf-evidence.js'
+      - 'public/merchant/**'
+      - 'scripts/test-merchant-custom-integrations.mjs'
+      - '.github/workflows/merchant-custom-integrations-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  merchant-private-evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax and browser safety
+        run: |
+          for f in worker/src/merchant-*.js worker/src/bank-routes.js worker/src/records.js worker/src/runtime.js worker/src/pdf-evidence.js public/merchant/integrations/*.js public/merchant/setup/*.js public/merchant/bank/*.js public/merchant/transactions/*.js; do node --check "$f"; done
+      - name: Full-schema custom fields, PDF and tenant isolation
+        run: node scripts/test-merchant-custom-integrations.mjs
+      - name: Migration immutability
+        run: npm run db:lineage
