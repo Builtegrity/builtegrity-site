@@ -31,7 +31,7 @@ BEFORE INSERT ON transactions
 WHEN NEW.processor='STRIPE'
 AND EXISTS(SELECT 1 FROM merchants m WHERE m.id=NEW.merchant_id AND m.integration_mode='STRIPE_CONNECT')
 AND COALESCE(NEW.fee_collection_method,'')<>'STRIPE_APPLICATION_FEE'
-BEGIN SELECT RAISE(ABORT,'STRIPE_CONNECT transactions must collect the Builtegrity fee from merchant proceeds via STRIPE_APPLICATION_FEE'); END;
+BEGIN SELECT RAISE(ABORT,'STRIPE_CONNECT transactions must collect the Builtegrity fee from merchant proceeds via STRIPE_APPLICATION_FEE; separate billing is prohibited'); END;
 
 DROP TRIGGER IF EXISTS transactions_require_stripe_application_fee_on_update;
 CREATE TRIGGER transactions_require_stripe_application_fee_on_update
@@ -39,7 +39,7 @@ BEFORE UPDATE OF fee_collection_method,merchant_id,processor ON transactions
 WHEN NEW.processor='STRIPE'
 AND EXISTS(SELECT 1 FROM merchants m WHERE m.id=NEW.merchant_id AND m.integration_mode='STRIPE_CONNECT')
 AND COALESCE(NEW.fee_collection_method,'')<>'STRIPE_APPLICATION_FEE'
-BEGIN SELECT RAISE(ABORT,'STRIPE_CONNECT transactions must collect the Builtegrity fee from merchant proceeds via STRIPE_APPLICATION_FEE'); END;
+BEGIN SELECT RAISE(ABORT,'STRIPE_CONNECT transactions must collect the Builtegrity fee from merchant proceeds via STRIPE_APPLICATION_FEE; separate billing is prohibited'); END;
 
 DROP TRIGGER IF EXISTS merchants_require_compatible_fee_collection;
 CREATE TRIGGER merchants_require_compatible_fee_collection
