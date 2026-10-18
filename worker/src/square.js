@@ -4,7 +4,7 @@ import { assertMerchantLegalReadyForLiveAction } from './legal-enforcement.js';
 import { assertCustomerStateReady } from './stripe.js';
 import { lockTransactionFeeRefundRule,assertTransactionFeeRefundRuleLocked } from './fee-refund-compliance.js';
 import { reserveAvailableFeeCarry } from './pricing.js';
-import { advanceLifecycle, recordEvent, recomputeIntegrity, openException } from './db.js';
+import { advanceLifecycle, recordEvent, recomputeIntegrity, openException, resolveException } from './db.js';
 
 export async function createSquareCheckout(env,tx) {
   if(env.SQUARE_PAYMENT_LINKS_ENABLED!=='true') throw statusError('Square checkout is disabled until integration tests and approvals pass',503);
@@ -164,6 +164,8 @@ async function projectSquarePayment(env,event) {
     await advanceLifecycle(env,tx.id,'PAID');
     if(confirmed!==Number(tx.processor_app_fee_requested_cents)){
       await openException(env,tx.id,'SQUARE_FEE_MISMATCH','Square application fee does not match the locked checkout amount');
+    }else{
+      await resolveException(env,tx.id,'SQUARE_FEE_MISMATCH','Square confirmed the expected application fee');
     }
     await recordEvent(env,tx.id,'PAYMENT_SUCCEEDED','SYSTEM','SQUARE:'+event.event_id,{
       processor:'SQUARE',payment_id:p.id,app_fee_reported_cents:confirmed
@@ -252,6 +254,8 @@ async function applySquarePayoutFact(env,tx,fact,eventId) {
       updated_at=CURRENT_TIMESTAMP WHERE id=? AND processor='SQUARE'
   `).bind(fact.payout_id,fact.net_cents,fact.net_cents,tx.id).run();
   await advanceLifecycle(env,tx.id,'COMPLETE');
+  await resolveException(env,tx.id,'SQUARE_PAYOUT_UNVERIFIED_FEE','Square payment fee was verified and payout matched');
+  await resolveException(env,tx.id,'PAYOUT_FAILED','Square subsequently reported a paid payout');
   await recordEvent(env,tx.id,'PAYOUT_PAID','SYSTEM',eventId,{
     processor:'SQUARE',payout_id:fact.payout_id,entry_id:fact.payout_entry_id
   });
