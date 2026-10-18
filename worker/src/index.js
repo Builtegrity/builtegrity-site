@@ -299,6 +299,18 @@ async function handleCreateTransaction(request, env) {
     return json({ error: 'Merchant legal/compliance clearance is incomplete', reasons: merchantLegal.reasons }, 409);
   }
   const txInput = body.transaction || {};
+  const merchantPaymentReference=txInput.merchant_payment_reference==null?null:
+    String(txInput.merchant_payment_reference).trim();
+  if(merchantPaymentReference&&
+    (merchantPaymentReference.length>120||! /^[A-Za-z0-9][A-Za-z0-9._:\\/-]*$/.test(merchantPaymentReference)))
+    return json({error:'Invalid merchant payment reference (1–120 characters, letters/numbers/punctuation only)'},400);
+  if(merchantPaymentReference){
+    const existingRef=await env.DB.prepare(`
+      SELECT id FROM transactions WHERE merchant_id=? AND merchant_payment_reference=?
+    `).bind(merchant.id,merchantPaymentReference).first();
+    if(existingRef)return json({error:'Merchant payment reference already belongs to another Builtegrity transaction',
+      existing_transaction_id:existingRef.id},409);
+  }
   const processor=String(txInput.processor || merchant.processor || 'STRIPE').toUpperCase();
   if (!['STRIPE','SQUARE'].includes(processor)) return json({error:'Processor must be STRIPE or SQUARE'},400);
   if (processor==='STRIPE') assertMerchantProcessorEconomicsSafe(merchant);
@@ -428,6 +440,18 @@ async function handleCreateTransaction(request, env) {
     pricing.pricing_locked_at,
   ).run();
 
+  // Merchant's own receipt/payment identifier persists alongside the immutable TX ID.
+  // It is not a separate unverifiable "customer relationship" field.
+  if(merchantPaymentReference){
+    await env.DB.prepare(`
+      UPDATE transactions SET merchant_payment_reference=? WHERE id=? AND merchant_id=?
+    `).bind(merchantPaymentReference,txId,merchant.id).run();
+    await env.DB.prepare(`
+      INSERT OR IGNORE INTO merchant_external_record_links
+      (merchant_id,external_system,record_kind,external_record_id,internal_record_id)
+      VALUES(?,'MERCHANT_DEFINED','TRANSACTION',?,?)
+    `).bind(merchant.id,merchantPaymentReference,txId).run();
+  }
   await recordEvent(env, txId, 'TX_CREATED', 'BUILTEGRITY', null, {
     purchase_id: purchaseId,
     merchant_id: merchant.id,
