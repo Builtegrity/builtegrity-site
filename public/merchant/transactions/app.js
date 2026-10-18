@@ -41,13 +41,13 @@ function drawTransactions(items){
     const row=document.createElement('tr');row.dataset.pdf=pdfPath(tx.id,true);
     td(row,tx.id);td(row,tx.merchant_name);td(row,tx.processor);
     td(row,money(tx.amount_cents,tx.currency));td(row,tx.lifecycle_status);td(row,tx.integrity_status);
-    pdfLinks(row,tx.id);transactions.append(row);
+    td(row,tx.integrity_verified_at||'Pending');pdfLinks(row,tx.id);transactions.append(row);
     row.addEventListener('click',ev=>{
       if(ev.target.closest('a'))return;
       window.open(row.dataset.pdf,'_blank','noopener,noreferrer');
     });
   }
-  if(!items.length){const row=document.createElement('tr');const el=td(row,'No transactions yet.');el.colSpan=7;transactions.append(row);}
+  if(!items.length){const row=document.createElement('tr');const el=td(row,'No transactions yet.');el.colSpan=8;transactions.append(row);}
 }
 function drawRefunds(items){
   refunds.replaceChildren();
@@ -63,16 +63,17 @@ function drawRefunds(items){
 async function reload(){
   if(inflight)return;
   inflight=true;refresh.disabled=true;
-  status.textContent='Refreshing '+active+' history…';
+  const requestedTab=active;
+  status.textContent='Refreshing '+requestedTab+' history…';
   try{
-    const source=active==='refunds'?'/api/merchant/refunds':'/api/merchant/transactions';
+    const source=requestedTab==='refunds'?'/api/merchant/refunds':'/api/merchant/transactions';
     const result=await request(source);
-    const records=active==='refunds'?result.refunds||[]:result.transactions||[];
-    if(active==='refunds')drawRefunds(records);else drawTransactions(records);
-    loaded[active]=true;
-    status.textContent=records.length+' '+active+' record(s) · Updated '+new Date().toLocaleTimeString();
+    const records=requestedTab==='refunds'?result.refunds||[]:result.transactions||[];
+    if(requestedTab==='refunds')drawRefunds(records);else drawTransactions(records);
+    loaded[requestedTab]=true;
+    if(requestedTab===active)status.textContent=records.length+' '+requestedTab+' record(s) · Updated '+new Date().toLocaleTimeString();
   }catch(e){status.textContent=String(e.message||e);}
-  finally{inflight=false;refresh.disabled=false;}
+  finally{inflight=false;refresh.disabled=false;if(requestedTab!==active)reload();}
 }
 function activate(tab,updateHistory=true){
   active=tab==='refunds'?'refunds':'transactions';
