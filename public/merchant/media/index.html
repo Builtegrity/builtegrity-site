@@ -16,9 +16,11 @@
 <option value="GROUP">Saved customer group</option>
 </select></label>
 </div>
-<label>Record ID
-<input id="target" placeholder="Choose or paste your Builtegrity customer/transaction ID"></label>
-<p class="studio-info">Find IDs in <a href="/merchant/transactions/">My transactions</a> or <a href="/merchant/integrations/#groupCustomers">My customers & groups</a>. For a group, use the builder below; no database knowledge is required.</p>
+<label>Select your customer, payment or saved group
+<select id="recordChoices"><option value="">Choose a business and record type first</option></select></label>
+<details><summary>Advanced: enter a record ID directly</summary><label>Record ID
+<input id="target" placeholder="Builtegrity customer, transaction or group ID"></label></details>
+<p class="studio-info">Choose the customer or transaction by its familiar name. For a community group that doesn't exist yet, use the builder below.</p>
 <button id="load" type="button">Open this record</button>
 </section>
 <section><h2>2. Create or select a customer group</h2>
