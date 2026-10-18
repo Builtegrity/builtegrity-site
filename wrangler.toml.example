@@ -105,6 +105,12 @@ CUSTOM_SYNC_ENABLED = "false"
 # Throttled bank-permission and integration health notices are visible in the portal
 # even when email delivery is off. Email delivery must use a verified Resend sender.
 MERCHANT_SETUP_EMAILS_ENABLED = "false"
+# Merchant Help request emails stay disabled until the owner verifies the Resend
+# sender domain and supplies an authorized destination mailbox.
+MERCHANT_HELP_EMAILS_ENABLED = "false"
+# Store MERCHANT_HELP_EMAIL_FROM and MERCHANT_HELP_EMAIL_TO as deployment config.
+# RESEND_API_KEY remains an encrypted Worker secret. No merchant bank secrets are
+# required for Help requests.
 MERCHANT_SETUP_EMAIL_FROM = "Builtegrity Setup <hello@builtegrity.com>"
 
 # Public abuse protection. The site key is browser-safe; the secret key remains a Worker secret.
