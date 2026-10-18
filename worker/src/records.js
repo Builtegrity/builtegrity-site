@@ -91,7 +91,7 @@ export async function handlePublicRecordRoute(request, env, ctx) {
     const tx=await getTransaction(env,timelineMatch[1]);
     if(!tx)return json({error:'Transaction not found'},404);
     await requireMerchantMembership(env,principal,tx.merchant_id,'VIEWER');
-    const [bank,customFields,deliveries]=await Promise.all([
+    const [bank,customFields,deliveries,visuals]=await Promise.all([
       payoutBankEvidence(env,tx),merchantFieldContext(env,tx.merchant_id,tx.customer_id,tx.id),
       transactionEventDeliveries(env,tx.id)]);
     // Confidential internal details are not exposed; the full PDF remains authorized.
