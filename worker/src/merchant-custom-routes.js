@@ -33,6 +33,14 @@ export async function handleMerchantCustomRoute(request,env){
    const token=(request.headers.get('authorization')||'').replace(/^Bearer\s+/i,'').trim();
    const source=await verifyMerchantSyncToken(env,external[1],token);
    if(!source)return json({error:'Invalid or revoked source key'},401);
+   if(external[2]==='/heartbeat'){
+     await env.DB.prepare(`UPDATE merchant_custom_sync_sources SET
+       last_heartbeat_at=CURRENT_TIMESTAMP,last_error=NULL,updated_at=CURRENT_TIMESTAMP
+       WHERE id=? AND merchant_id=? AND status='ACTIVE'`)
+       .bind(source.id,source.merchant_id).run();
+     return json({accepted:true,source_status:'CONNECTED',
+       note:'Heartbeat confirms sender activity, not that new field values exist.'});
+   }
    const body=await readBoundedJson(request);
    try{
      const result=await ingestMerchantCustomFields(env,source.merchant_id,source.id,
