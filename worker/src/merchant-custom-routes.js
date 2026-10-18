@@ -26,7 +26,7 @@ async function readBoundedJson(request){
 }
 export async function handleMerchantCustomRoute(request,env){
  const url=new URL(request.url),path=url.pathname,method=request.method;
- const external=path.match(/^\/api\/sync\/merchant-fields\/(SYNC-[a-f0-9-]{36})$/);
+ const external=path.match(/^\/api\/sync\/merchant-fields\/(SYNC-[a-f0-9-]{36})(\/heartbeat)?$/);
  if(external){
    if(method!=='POST')return json({error:'Method not allowed'},405);
    if(env.CUSTOM_SYNC_ENABLED!=='true')return json({error:'Custom data feed is not activated'},503);
