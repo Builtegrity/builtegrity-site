@@ -52,6 +52,19 @@ async function refresh(){
    item.append(node('strong',source.title),node('div',source.source_kind+' · '+source.status+
      ' · '+(source.last_success_at||'No data received yet')));
    if(source.source_kind==='FILE'&&source.status==='ACTIVE')option(fileList,source.id,source.title);
+   if(source.source_kind!=='FILE'&&source.status==='ACTIVE'){
+     const endpoint=node('code','POST '+location.origin+'/api/sync/merchant-fields/'+source.id);
+     endpoint.className='setup-secret';item.append(endpoint);
+     const rotate=node('button','Rotate key');rotate.type='button';rotate.className='secondary';
+     rotate.addEventListener('click',async()=>{
+       if(!confirm('Rotate this key? Existing key will stop working immediately.'))return;
+       try{
+         const result=await request('source/rotate',{merchant_id:merchantId,source_id:source.id});
+         oneTimeSecret(result.token_once,source.id);
+         message('New private source key generated; update your integration once.');
+       }catch(e){message(e.message);}
+     });item.append(rotate);
+   }
    if(source.status==='ACTIVE'){
     const revoke=node('button','Revoke source');revoke.type='button';revoke.className='secondary';
     revoke.addEventListener('click',async()=>{
