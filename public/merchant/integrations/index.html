@@ -59,7 +59,18 @@
 <option value="WEBHOOK">HTTPS webhook push (ongoing)</option>
 <option value="DATABASE_PUSH">Database-to-HTTPS relay (ongoing)</option>
 <option value="APP_PUSH">Third-party app-to-HTTPS automation (ongoing)</option></select></label>
-</div><div class="setup-actions"><button type="button" id="createSource">Create source</button></div>
+</div>
+<label class="setup-field">How often should this automatic source send updates?
+<select id="sourceInterval">
+<option value="">When changes happen (event-driven, no fixed interval)</option>
+<option value="5">About every 5 minutes</option>
+<option value="15">About every 15 minutes</option>
+<option value="60">About hourly</option>
+<option value="1440">About daily</option>
+</select></label>
+<p class="setup-help">This monitors your source's health; it does not force another service to send updates faster. Updates appear after your connected app sends them.</p>
+<div class="setup-actions"><button type="button" id="createSource">Create source</button>
+<a href="/merchant/help/#request" class="button secondary">Need a different connector? Request one</a></div>
 <div id="oneTimeToken" class="setup-status" hidden aria-live="polite"></div>
 <p class="setup-help">For an automated feed, send a stable event ID and one or more customer/transaction references matching those already in your own system.</p>
 <pre class="setup-secret" aria-label="Example JSON event">{
