@@ -3,6 +3,7 @@ import { requireMerchantMembership } from './authorization.js';
 import { makeBankLinkToken, connectBank, bankConnectionsForMerchant,
   selectPayoutBank, disconnectMerchantBank } from './bank-evidence.js';
 import { handlePlaidWebhook } from './plaid-webhooks.js';
+import { completeBankReauthorization,merchantSetupNotices } from './merchant-setup-autopilot.js';
 
 function json(value,status=200){return new Response(JSON.stringify(value),{status,headers:{
   'content-type':'application/json','cache-control':'no-store','x-content-type-options':'nosniff'}});}
