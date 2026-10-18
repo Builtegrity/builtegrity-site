@@ -28,6 +28,19 @@ async function loadAccount(){
   await loadGroupOptions();say('Ready. Select a customer, transaction, or group.');
  }catch(e){say(e.message);}
 }
+async function loadRecordChoices(){
+ if(!merchantId)return;
+ const select=$('#recordChoices');select.replaceChildren();
+ const category=$('#scope').value;
+ const result=await getApi(q('/api/merchant/media/choices',{target_type:category}));
+ opt(select,'','Choose a record…');
+ for(const row of result.records||[]){
+   opt(select,row.id,String(row.title||row.id).slice(0,90)+
+     (row.subtitle?' · '+String(row.subtitle).slice(0,90):'')+' ('+row.id+')');
+ }
+ select.value=$('#target').value||'';
+ if(!select.value)select.value='';
+}
 async function loadGroupOptions(){
  const [schema,data]=await Promise.all([
   getApi(q('/api/merchant/custom/schema')),
@@ -39,6 +52,7 @@ async function loadGroupOptions(){
  for(const g of groups)opt(list,g.id,g.title+' · '+g.group_value);
  if(!field.options.length)opt(field,'','Define a customer field first');
  if(!list.options.length)opt(list,'','No saved groups');
+ await loadRecordChoices();
 }
 function selected(){return {merchant_id:merchantId,target_type:$('#scope').value,target_id:$('#target').value.trim()};}
 async function openRecord(){
@@ -75,6 +89,11 @@ async function openRecord(){
  if(!result.media?.length)items.textContent='No photos or files attached.';
  say('Private '+data.target_type.toLowerCase()+' record open. Changes are saved separately from financial evidence.');
 }
+$('#recordChoices').addEventListener('change',()=>{
+ $('#target').value=$('#recordChoices').value;
+ if($('#target').value)openRecord().catch(e=>say(e.message));
+});
+$('#scope').addEventListener('change',()=>loadRecordChoices().catch(e=>say(e.message)));
 $('#load').addEventListener('click',()=>openRecord().catch(e=>say(e.message)));
 $('#merchant').addEventListener('change',async()=>{
  merchantId=$('#merchant').value;try{await loadGroupOptions();}catch(e){say(e.message);}
@@ -84,12 +103,14 @@ $('#createGroup').addEventListener('click',async()=>{
   const r=await postApi('/api/merchant/media/group',{merchant_id:merchantId,
    field_key:$('#groupField').value,group_value:$('#groupValue').value,
    title:$('#groupName').value,description:$('#groupDescription').value});
-  await loadGroupOptions();$('#scope').value='GROUP';$('#target').value=r.group_id;
+  $('#scope').value='GROUP';$('#target').value=r.group_id;
+  await loadGroupOptions();
   await openRecord();say('Group ready. You can now customize its title and upload a cover photo.');
  }catch(e){say(e.message);}
 });
 $('#selectGroup').addEventListener('click',async()=>{
  $('#scope').value='GROUP';$('#target').value=$('#groupList').value;
+ await loadRecordChoices();
  try{await openRecord();}catch(e){say(e.message);}
 });
 $('#saveDisplay').addEventListener('click',async()=>{
