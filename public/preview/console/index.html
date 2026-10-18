@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Transaction console preview · Builtegrity</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <p class="eyebrow">Builtegrity · Static product preview</p>
+    <h1>Transaction Console</h1>
+    <p class="lede">Track customer agreements, processor payment events, fee verification, and payout progress in one place.</p>
+    <div class="notice" role="status"><strong>Demonstration only.</strong> Every record below is fictional. No live merchant records, authentication, payment API, or financial status is available on this preview.</div>
+    <div class="grid" style="margin-top:24px">
+      <div class="panel stat"><span class="muted">Sample transactions</span><strong>3</strong></div>
+      <div class="panel stat"><span class="muted">Accounted</span><strong>1</strong></div>
+      <div class="panel stat"><span class="muted">Payout pending</span><strong>1</strong></div>
+      <div class="panel stat"><span class="muted">Needs attention</span><strong>1</strong></div>
+    </div>
+    <div class="toolbar"><h2>Transactions</h2><span class="muted">Fictional preview records</span></div>
+    <section class="panel table-wrap">
+      <table>
+        <thead><tr><th>Transaction</th><th>Merchant</th><th>Processor</th><th>Amount</th><th>Integrity status</th></tr></thead>
+        <tbody>
+          <tr><td>TX-DEMO-0001</td><td>Example Cabinet Shop</td><td>Stripe</td><td>$1,200.00</td><td><span class="badge warn">Payout pending</span></td></tr>
+          <tr><td>TX-DEMO-0002</td><td>Example Design Studio</td><td>Square</td><td>$850.00</td><td><span class="badge ok">Accounted</span></td></tr>
+          <tr><td>TX-DEMO-0003</td><td>Example Home Services</td><td>Stripe</td><td>$2,300.00</td><td><span class="badge bad">Needs attention</span></td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="panel" style="margin-top:20px">
+      <h2>Example payment history</h2>
+      <p class="muted">TX-DEMO-0002 · Example Design Studio · Square</p>
+      <ol class="timeline">
+        <li><strong>Customer reviewed and accepted terms</strong><time>Demonstration event</time></li>
+        <li><strong>Processor confirmed payment</strong><time>Demonstration event</time></li>
+        <li><strong>Application fee matched the expected amount</strong><time>Demonstration event</time></li>
+        <li><strong>Payment matched a processor payout</strong><time>Demonstration event</time></li>
+      </ol>
+    </section>
+    <div class="actions">
+      <a class="button secondary" href="/">Back to Builtegrity</a>
+      <a class="button" href="/preview/payment/">Preview customer payment page</a>
+    </div>
+    <p class="muted">The authenticated transaction console will be available through the Cloudflare application after configuration and deployment. This static preview deliberately cannot read or change real records.</p>
+  </main>
+</body>
+</html>
