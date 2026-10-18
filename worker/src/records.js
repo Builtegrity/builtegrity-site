@@ -1,3 +1,4 @@
+import {handleMerchantRefundPdf} from './merchant-refund-pdf.js';
 import {handleMerchantMediaRoute,listMedia} from './merchant-media.js';
 import {handleHelpSolutionRoute} from './help-playbooks.js';
 import {handleMerchantEmailAccess} from './merchant-record-access.js';
