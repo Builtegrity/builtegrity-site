@@ -74,3 +74,5 @@ ALTER TABLE transactions ADD COLUMN merchant_payment_reference TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_merchant_payment_reference
   ON transactions(merchant_id,merchant_payment_reference)
   WHERE merchant_payment_reference IS NOT NULL;
+
+ALTER TABLE square_payout_entry_facts ADD COLUMN payout_amount_cents INTEGER CHECK(payout_amount_cents>=0);
