@@ -200,7 +200,12 @@ async function projectSquarePayout(env,event) {
   `).bind(event.merchant_id).first();
   if(!owner)return 'unconnected_merchant';
   if(event.type==='payout.sent')return 'payout_sent_pending';
-  if(event.type==='payout.failed'){
+  // A signed notification does not replace an authoritative payout GET.
+  const payoutDetail=await squareApi(env,owner.merchant_id,
+    '/v2/payouts/'+encodeURIComponent(payoutId));
+  const verifiedPayout=payoutDetail.payout;
+  if(!verifiedPayout||verifiedPayout.id!==payoutId)return 'payout_not_confirmed';
+  if(event.type==='payout.failed'||verifiedPayout.status==='FAILED'){
     const known=await env.DB.prepare(`SELECT id FROM transactions WHERE processor='SQUARE' AND processor_payout_id=?`).bind(payoutId).all();
     for(const item of known.results||[]){
       await env.DB.prepare(`UPDATE transactions SET processor_payout_status='failed',payout_accounted=0 WHERE id=?`).bind(item.id).run();
@@ -208,6 +213,11 @@ async function projectSquarePayout(env,event) {
     }
     return 'payout_failed';
   }
+  if(verifiedPayout.status!=='PAID')return 'payout_not_yet_paid';
+  const batchCents=Number(verifiedPayout.amount_money?.amount);
+  const batchCurrency=String(verifiedPayout.amount_money?.currency_code||'').toUpperCase();
+  const payoutBankAmount=Number.isSafeInteger(batchCents)&&batchCents>0&&
+    batchCurrency==='USD'?batchCents:null;
   // Payout is not accounted for unless its individual payment IDs can be confirmed
   // from the complete (paginated) settlement-entry listing.
   let cursor=null;const entries=[];let pages=0;
@@ -230,17 +240,19 @@ async function projectSquarePayout(env,event) {
     if(!entry.id)continue;
     await env.DB.prepare(`
       INSERT INTO square_payout_entry_facts
-        (payout_entry_id,processor_merchant_id,processor_payment_id,payout_id,payout_status,net_cents,currency)
-      VALUES(?,?,?,?,'PAID',?,?)
+        (payout_entry_id,processor_merchant_id,processor_payment_id,payout_id,payout_status,net_cents,currency,payout_amount_cents)
+      VALUES(?,?,?,?,'PAID',?,?,?)
       ON CONFLICT(payout_entry_id) DO UPDATE SET payout_status='PAID',
-        net_cents=excluded.net_cents,updated_at=CURRENT_TIMESTAMP
+        net_cents=excluded.net_cents,payout_amount_cents=excluded.payout_amount_cents,
+        updated_at=CURRENT_TIMESTAMP
       WHERE square_payout_entry_facts.processor_merchant_id=excluded.processor_merchant_id
         AND square_payout_entry_facts.processor_payment_id=excluded.processor_payment_id
         AND square_payout_entry_facts.payout_id=excluded.payout_id
-    `).bind(entry.id,event.merchant_id,paymentId,payoutId,contribution,currency).run();
+    `).bind(entry.id,event.merchant_id,paymentId,payoutId,contribution,currency,payoutBankAmount).run();
     const tx=await findSquareTransaction(env,event.merchant_id,paymentId,null);
     if(!tx||!tx.payment_at)continue;
-    await applySquarePayoutFact(env,tx,{payout_id:payoutId,net_cents:contribution,payout_entry_id:entry.id},'SQUARE:'+event.event_id+':'+tx.id);
+    await applySquarePayoutFact(env,tx,{payout_id:payoutId,net_cents:contribution,
+      payout_amount_cents:payoutBankAmount,payout_entry_id:entry.id},'SQUARE:'+event.event_id+':'+tx.id);
     matched++;
   }
   return 'payout_entries_matched:'+matched;
@@ -259,9 +271,11 @@ async function applySquarePayoutFact(env,tx,fact,eventId) {
   await env.DB.prepare(`
     UPDATE transactions SET processor_payout_id=?,processor_payout_status='paid',
       payout_accounted=1,transaction_payout_contribution_cents=?,
-      actual_merchant_net_cents=?,last_reconciled_at=CURRENT_TIMESTAMP,
+      actual_merchant_net_cents=?,payout_batch_total_cents=COALESCE(?,payout_batch_total_cents),
+      last_reconciled_at=CURRENT_TIMESTAMP,
       updated_at=CURRENT_TIMESTAMP WHERE id=? AND processor='SQUARE'
-  `).bind(fact.payout_id,fact.net_cents,fact.net_cents,tx.id).run();
+  `).bind(fact.payout_id,fact.net_cents,fact.net_cents,
+    fact.payout_amount_cents??null,tx.id).run();
   await advanceLifecycle(env,tx.id,'COMPLETE');
   await resolveException(env,tx.id,'SQUARE_PAYOUT_UNVERIFIED_FEE','Square payment fee was verified and payout matched');
   await resolveException(env,tx.id,'PAYOUT_FAILED','Square subsequently reported a paid payout');
@@ -273,7 +287,7 @@ async function applySquarePayoutFact(env,tx,fact,eventId) {
 }
 async function replaySquarePayoutFacts(env,txId,merchantProviderId,paymentId) {
   const facts=await env.DB.prepare(`
-    SELECT payout_id,net_cents,payout_entry_id FROM square_payout_entry_facts
+    SELECT payout_id,net_cents,payout_entry_id,payout_amount_cents FROM square_payout_entry_facts
     WHERE processor_merchant_id=? AND processor_payment_id=? AND payout_status='PAID'
     ORDER BY first_seen_at ASC LIMIT 3
   `).bind(merchantProviderId,paymentId).all();
