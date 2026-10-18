@@ -18,6 +18,7 @@ import { createSquareCheckout } from './square.js';
 import { squareConnection } from './square-oauth.js';
 import { priceTransaction } from './pricing.js';
 import { listMerchantFieldDefinitions, normalizeMerchantFieldValue } from './merchant-custom-data.js';
+import {queueMerchantRecordEmail} from './merchant-record-links.js';
 import { assertMerchantProcessorEconomicsSafe } from './financial-safety.js';
 import { handleCompanyBooksRoute } from './company-books-runtime.js';
 import {
