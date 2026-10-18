@@ -212,7 +212,7 @@ export async function rotateMerchantSyncSource(env,merchantId,id){
  const row=await env.DB.prepare(`SELECT id,source_kind FROM merchant_custom_sync_sources
  WHERE merchant_id=? AND id=? AND status='ACTIVE'`).bind(merchantId,id).first();
  if(!row||row.source_kind==='FILE')throw err('Source does not support keys',404);
- const token='bg_sync_'+crypto.randomUUID().replaceAll('-')+crypto.randomUUID().replaceAll('-');
+ const token='bg_sync_'+crypto.randomUUID().replaceAll('-','')+crypto.randomUUID().replaceAll('-','');
  const hash=await sha256Hex(token);
  await env.DB.prepare(`UPDATE merchant_custom_sync_sources SET key_hash=?,
  updated_at=CURRENT_TIMESTAMP WHERE id=? AND merchant_id=?`).bind(hash,id,merchantId).run();
