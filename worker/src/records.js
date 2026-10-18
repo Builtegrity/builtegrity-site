@@ -1,4 +1,5 @@
 import { getTransaction } from './db.js';
+import { getTransactionGraph } from './transaction-intelligence.js';
 import { serveTransactionPdf } from './pdf.js';
 import { authenticateClerkSession } from './clerk-auth.js';
 import { requireMerchantMembership } from './authorization.js';
@@ -35,7 +36,8 @@ export async function handlePublicRecordRoute(request, env) {
       const full=await getTransaction(env,merchantPdf[1]);
       if(!full)return json({error:'Transaction not found'},404);
       await requireMerchantMembership(env,principal,full.merchant_id,'VIEWER');
-      return serveTransactionPdf(env,full,{type:'MERCHANT',ref:principal.sub,view:url.searchParams.get('view')==='1'});
+      return serveTransactionPdf(env,await fullMerchantPdfEvidence(env,full),
+        {type:'MERCHANT',ref:principal.sub,view:url.searchParams.get('view')==='1'});
     }
     const result=await env.DB.prepare(`
       SELECT t.id,t.merchant_id,t.processor,t.amount_cents,t.currency,
@@ -68,10 +70,16 @@ export async function handlePublicRecordRoute(request, env) {
   return json(publicRecord(tx));
 }
 
+async function fullMerchantPdfEvidence(env,tx) {
+  const graph=await getTransactionGraph(env,tx.id);
+  return {...tx,components:graph.visible_components||[],
+    artifacts:graph.artifacts||[],source_objects:graph.source_objects||[]};
+}
+
 export async function serveOperatorTransactionPdf(env, txId, principal, options={}) {
   const tx = await getTransaction(env, txId);
   if (!tx) return json({ error: 'Transaction not found' }, 404);
-  return serveTransactionPdf(env, tx, {
+  return serveTransactionPdf(env, await fullMerchantPdfEvidence(env,tx), {
     type: 'OPERATOR',
     ref: principal?.sub || null,
     view: Boolean(options.view),
