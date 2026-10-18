@@ -117,7 +117,9 @@ $('#createSource').addEventListener('click',async()=>{
  try{
   const source_kind=$('#sourceKind').value;
   if(source_kind!=='FILE'&&!syncEnabled)throw Error('Automatic source feed has not yet been activated.');
-  const result=await request('source/create',{merchant_id:merchantId,title:$('#sourceTitle').value,source_kind});
+  const interval=$('#sourceInterval').value;
+  const result=await request('source/create',{merchant_id:merchantId,title:$('#sourceTitle').value,
+    source_kind,...(interval?{expected_interval_minutes:Number(interval)}:{})});
   if(result.source.token_once)oneTimeSecret(result.source.token_once,result.source.id);
   await refresh();message('Source created. Configure an outgoing feed or upload a structured file.');
  }catch(e){message(e.message);}
