@@ -121,7 +121,7 @@ export async function handlePublicRecordRoute(request, env, ctx) {
       ...milestones,
       // Intentionally omit bank fields entirely for unlinked or revoked accounts.
       ...(bank?{bank_evidence:bank}:{})
-    },custom_fields:customFields,deliveries,events:(tx.events||[]).map(e=>({
+    },custom_fields:customFields,customization:visuals,deliveries,events:(tx.events||[]).map(e=>({
       id:e.id,type:e.event_type,occurred_at:e.event_at,source:e.source
     })),exceptions:(tx.exceptions||[]).map(e=>({
       id:e.id,type:e.exception_type,status:e.status,summary:e.summary
