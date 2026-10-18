@@ -24,6 +24,8 @@ export async function handlePublicRecordRoute(request, env, ctx) {
   const url = new URL(request.url);
   const helpGuide=await handleHelpSolutionRoute(request);
   if(helpGuide)return helpGuide;
+  const refundDocument=await handleMerchantRefundPdf(request,env);
+  if(refundDocument)return refundDocument;
   const mediaRoute=await handleMerchantMediaRoute(request,env);
   if(mediaRoute)return mediaRoute;
   const accountless=await handleMerchantEmailAccess(request,env);
