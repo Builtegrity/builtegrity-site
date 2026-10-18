@@ -21,6 +21,11 @@ async function load(){
    const x=list.find(item=>item.id===business.value);
    if(!x)return;
    status.textContent=x.name+' · '+x.role+' access';
+   const link=document.querySelector('#merchantDashboardLink');
+   if(link){
+     link.href=x.dashboard_url||'/merchant/';
+     link.textContent=location.origin+(x.dashboard_url||'/merchant/');
+   }
    summary.replaceChildren();
    for(const [count,description] of [[x.transaction_count,'transactions'],[x.custom_field_count,'custom fields']]){
     const el=document.createElement('span');el.textContent=String(count)+' '+description;summary.append(el);
