@@ -1,3 +1,4 @@
+import {handleMerchantHomeRoute} from './merchant-home.js';
 import {handleMerchantHelpRoute} from './merchant-help.js';
 import { handleMerchantBankRoute } from './bank-routes.js';
 import { payoutBankEvidence } from './bank-evidence.js';
@@ -18,6 +19,8 @@ export async function handlePublicRecordRoute(request, env, ctx) {
   // the network sense: each has its own cryptographic signature/secret boundary. Email/provider
   // content remains untrusted evidence and can never inherit operator privileges.
   const url = new URL(request.url);
+  const homeResponse=await handleMerchantHomeRoute(request,env);
+  if(homeResponse)return homeResponse;
   const helpResponse=await handleMerchantHelpRoute(request,env);
   if(helpResponse)return helpResponse;
   const customResponse=await handleMerchantCustomRoute(request,env);
