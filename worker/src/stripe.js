@@ -1,3 +1,4 @@
+import { assertStripeStageCredential } from './stripe-stage-guard.js';
 import { assertMerchantLegalReadyForLiveAction } from './legal-enforcement.js';
 import { reserveAvailableFeeCarry } from './pricing.js';
 import {
@@ -21,6 +22,7 @@ function addParam(search, key, value) {
 }
 
 export async function stripeRequest(env, path, options = {}) {
+  assertStripeStageCredential(env);
   const secret = requireSecret(env, 'STRIPE_SECRET_KEY');
   const method = options.method || 'GET';
   const accountId = options.accountId || null;
@@ -55,6 +57,7 @@ export async function stripeRequest(env, path, options = {}) {
 }
 
 export async function createTrackedCheckout(env, tx) {
+  assertStripeStageCredential(env);
   await assertMerchantLegalReadyForLiveAction(env, tx.merchant_id, 'Stripe Checkout creation');
   await assertCustomerStateReady(env, tx.customer_attested_state_code);
 
