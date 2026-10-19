@@ -16,6 +16,7 @@ jobs:
       - name: Confirm private application trees are excluded
         run: |
           test -f _site/index.html
-          for path in worker public migrations transaction-engine scripts ops docs templates assets tests node_modules .github package.json package-lock.json wrangler.toml.example; do
+          for path in worker public migrations transaction-engine scripts ops docs templates tests node_modules .github package.json package-lock.json wrangler.toml.example; do
             if test -e "_site/$path"; then echo "Forbidden Pages path: $path"; exit 1; fi
           done
+          test ! -e _site/assets/fonts
