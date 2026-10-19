@@ -145,14 +145,24 @@ export async function openException(env, transactionId, exceptionType, summary =
   }
 
   const exceptionId = await allocateId(env, 'EXC', 6);
-  await env.DB.prepare(`
-    INSERT INTO transaction_exceptions
+  const inserted = await env.DB.prepare(`
+    INSERT OR IGNORE INTO transaction_exceptions
       (id, transaction_id, exception_type, status, summary)
     VALUES (?, ?, ?, 'OPEN', ?)
   `).bind(exceptionId, transactionId, exceptionType, summary).run();
 
+  let canonicalId=exceptionId;
+  if(Number(inserted.meta?.changes||0)===0){
+    const winner=await env.DB.prepare(`
+      SELECT id FROM transaction_exceptions
+      WHERE transaction_id=? AND exception_type=? AND status='OPEN'
+      LIMIT 1
+    `).bind(transactionId,exceptionType).first();
+    if(!winner)throw new Error('Exception insert was ignored without a canonical open exception');
+    canonicalId=winner.id;
+  }
   await recomputeIntegrity(env, transactionId);
-  return exceptionId;
+  return canonicalId;
 }
 
 export async function resolveException(env, transactionId, exceptionType, resolution = null) {
