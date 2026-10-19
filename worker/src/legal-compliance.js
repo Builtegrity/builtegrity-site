@@ -1,3 +1,4 @@
+import {launchAssuranceBlockers} from './launch-assurance.js';
 const REQUIRED_MERCHANT_DOCUMENTS = [
   'PLATFORM_AGREEMENT',
   'DATA_PROCESSING_ADDENDUM',
@@ -53,7 +54,7 @@ export async function evaluateLegalReadiness(env) {
     SELECT * FROM state_jurisdiction_support WHERE state_code='RI'
   `).first().catch(() => null);
 
-  const reasons = [];
+  const reasons = await launchAssuranceBlockers(env);
   if (controls.legal_entity_status !== 'CONFIRMED') reasons.push('LEGAL_ENTITY_UNCONFIRMED');
   if (controls.money_transmission_review_status !== 'CONFIRMED_NON_MSB') reasons.push('MONEY_TRANSMISSION_REVIEW_INCOMPLETE');
   if (!['ACTIVE','NOT_APPLICABLE'].includes(controls.ri_sales_tax_permit_status)) reasons.push('RI_SALES_TAX_PERMIT_NOT_ACTIVE');
@@ -109,7 +110,7 @@ export async function evaluateLegalReadiness(env) {
 }
 
 export async function assertLegalReadyForLiveAction(env, actionLabel='Live platform activity') {
-  const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').toUpperCase();
+  const stage = String(env.WATCHDOG_STAGE || 'PREVIEW').trim().toUpperCase();
   if (!['PILOT','LIVE'].includes(stage)) return { enforced: false, stage };
   const status = await evaluateLegalReadiness(env);
   if (status.state !== 'READY') {
