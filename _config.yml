@@ -1,0 +1,22 @@
+title: Builtegrity
+url: https://builtegrity.com
+# Limit the temporary GitHub Pages artifact. The Cloudflare Worker serves public/.
+exclude:
+  - README.md
+  - package.json
+  - package-lock.json
+  - wrangler.toml.example
+  - worker
+  - public
+  - migrations
+  - transaction-engine
+  - scripts
+  - ops
+  - docs
+  - templates
+  - assets
+  - tests
+  - node_modules
+  - .github
+  - .gitignore
+  - .dev.vars.example

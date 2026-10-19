@@ -1,0 +1,22 @@
+name: Pages Publication Boundary
+on:
+  pull_request:
+    paths: ['_config.yml','.github/workflows/pages-publication-boundary.yml']
+  push:
+    branches: [main]
+jobs:
+  pages-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+      - name: Confirm private application trees are excluded
+        run: |
+          test -f _site/index.html
+          for path in worker public migrations transaction-engine scripts ops docs templates tests node_modules .github package.json package-lock.json wrangler.toml.example; do
+            if test -e "_site/$path"; then echo "Forbidden Pages path: $path"; exit 1; fi
+          done
+          test ! -e _site/assets/fonts
