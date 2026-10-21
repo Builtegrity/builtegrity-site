@@ -12,12 +12,12 @@
  * This module does not send mail, grant PDF access, or process raw HTML.
  */
 const THEMES = Object.freeze({
-  default: { accent: "#171717", ink: "#171717", background: "#ffffff", surface: "#f5f5f5" },
-  emerald: { accent: "#147d54", ink: "#16352b", background: "#ffffff", surface: "#eef7f1" },
-  ocean: { accent: "#1959a6", ink: "#152e48", background: "#ffffff", surface: "#eff6fd" },
-  violet: { accent: "#7045a3", ink: "#332345", background: "#ffffff", surface: "#f6f1fa" },
-  slate: { accent: "#475569", ink: "#1e293b", background: "#ffffff", surface: "#f1f5f9" },
-  neon: { accent: "#6d9900", ink: "#111111", background: "#ffffff", surface: "#f2f8e4" }
+  builtegrity: { accent: "#578200", ink: "#171717", background: "#ffffff", surface: "#f2f8e4" },
+  forest: { accent: "#27683d", ink: "#1c3326", background: "#ffffff", surface: "#f0f6ed" },
+  ocean: { accent: "#006985", ink: "#102f40", background: "#ffffff", surface: "#eaf5f9" },
+  plum: { accent: "#74328e", ink: "#35213e", background: "#ffffff", surface: "#f6f0fa" },
+  slate: { accent: "#2759a5", ink: "#162437", background: "#ffffff", surface: "#f3f6fa" },
+  sand: { accent: "#875319", ink: "#413020", background: "#ffffff", surface: "#faf4e9" }
 });
 export const MERCHANT_TRANSACTION_THEMES = Object.keys(THEMES);
 const safe = value => String(value ?? "").replace(/[&<>"']/g, c => ({
@@ -28,7 +28,7 @@ const opt = value => value === true;
 /** Separate opt-ins; preserve existing behavior when settings are absent. */
 export function validateMerchantDeliveryPreferences(input = {}) {
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new TypeError("Invalid merchant preferences");
-  const theme = String(input.theme ?? "default");
+  const theme = String(input.theme ?? "builtegrity");
   if (!Object.hasOwn(THEMES, theme)) throw new RangeError("Unsupported merchant theme");
   for (const key of ["themePdfEnabled", "customerTransactionEmailEnabled", "themeEmailEnabled"]) {
     if (input[key] !== undefined && typeof input[key] !== "boolean") throw new TypeError(key + " must be boolean");
@@ -44,7 +44,7 @@ export function validateMerchantDeliveryPreferences(input = {}) {
 /** Static whitelist; no merchant-authored CSS or arbitrary remote imagery. */
 export function resolveDocumentBranding(preferences, merchant = {}) {
   const p = validateMerchantDeliveryPreferences(preferences);
-  const chosen = p.themePdfEnabled ? p.theme : "default";
+  const chosen = p.themePdfEnabled ? p.theme : "builtegrity";
   return {
     theme: chosen,
     colors: { ...THEMES[chosen] },
@@ -79,7 +79,7 @@ export function buildCustomerDeliveryDecision({ preferences, transaction, custom
   return {
     send: p.customerTransactionEmailEnabled && eligible && validEmail,
     reason: !p.customerTransactionEmailEnabled ? "merchant_opted_out" : !eligible ? "transaction_not_eligible" : !validEmail ? "missing_recipient" : "eligible",
-    theme: p.themeEmailEnabled ? p.theme : "default",
+    theme: p.themeEmailEnabled ? p.theme : "builtegrity",
     recipient: validEmail ? email : null,
     idempotencyKey: transaction?.id && status ? "customer-transaction:" + transaction.id + ":" + status : null
   };
