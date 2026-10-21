@@ -84,6 +84,8 @@ export async function dispatchCustomerTransactionEmails(env,{limit=8}={}){
   JOIN merchant_transaction_delivery_preferences p ON p.merchant_id=d.merchant_id
   JOIN merchants m ON m.id=d.merchant_id
   JOIN transactions t ON t.id=d.transaction_id AND t.merchant_id=d.merchant_id
+  JOIN customers customer ON customer.id=t.customer_id AND customer.merchant_id=d.merchant_id
+    AND LOWER(customer.email)=LOWER(d.recipient_email)
   LEFT JOIN merchant_dashboard_appearance a ON a.merchant_id=d.merchant_id
   WHERE d.state IN ('PENDING','RETRY') AND d.attempts<4 AND p.customer_email_opt_in=1
     AND (d.next_attempt_at IS NULL OR datetime(d.next_attempt_at)<=CURRENT_TIMESTAMP)
