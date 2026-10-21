@@ -75,7 +75,7 @@ export function buildCustomerDeliveryDecision({ preferences, transaction, custom
   const email = String(customer?.email ?? "").trim();
   const status = String(transaction?.status ?? "").toLowerCase();
   const eligible = ["succeeded", "paid", "refunded", "partially_refunded"].includes(status);
-  const validEmail = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email);
+  const validEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   return {
     send: p.customerTransactionEmailEnabled && eligible && validEmail,
     reason: !p.customerTransactionEmailEnabled ? "merchant_opted_out" : !eligible ? "transaction_not_eligible" : !validEmail ? "missing_recipient" : "eligible",
