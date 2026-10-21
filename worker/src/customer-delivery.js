@@ -124,3 +124,24 @@ export async function dispatchCustomerTransactionEmails(env,{limit=8}={}){
  }
  return {enabled:true,sent,failed};
 }
+
+/** Find verified completed payments each scheduled cycle. Database uniqueness prevents repeats. */
+export async function enqueueEligibleCustomerTransactions(env,{limit=30}={}){
+ if(env.CUSTOMER_TRANSACTION_EMAILS_ENABLED!=='true')return {enabled:false,queued:0};
+ const eligible=await env.DB.prepare(`SELECT t.id
+   FROM transactions t
+   JOIN merchant_transaction_delivery_preferences p ON p.merchant_id=t.merchant_id
+   WHERE p.customer_email_opt_in=1 AND t.payment_at IS NOT NULL
+     AND UPPER(t.payment_status) IN ('PAID','SUCCEEDED')
+     AND NOT EXISTS(
+       SELECT 1 FROM customer_transaction_email_deliveries d
+       WHERE d.transaction_id=t.id AND d.event_kind='PAYMENT_SUCCEEDED')
+   ORDER BY t.payment_at DESC LIMIT ?`)
+   .bind(Math.max(1,Math.min(100,limit))).all();
+ let queued=0;
+ for(const row of eligible.results||[]){
+   const result=await enqueueCustomerTransactionConfirmation(env,row.id);
+   if(result.queued)queued++;
+ }
+ return {enabled:true,queued};
+}
