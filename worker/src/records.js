@@ -1,4 +1,5 @@
 import {handleMerchantRefundPdf} from './merchant-refund-pdf.js';
+import {handleCustomerDeliveryPreferences} from './customer-delivery.js';
 import {handleMerchantMediaRoute,listMedia} from './merchant-media.js';
 import {handleHelpSolutionRoute} from './help-playbooks.js';
 import {handleMerchantEmailAccess} from './merchant-record-access.js';
@@ -22,6 +23,8 @@ export async function handlePublicRecordRoute(request, env, ctx) {
   // the network sense: each has its own cryptographic signature/secret boundary. Email/provider
   // content remains untrusted evidence and can never inherit operator privileges.
   const url = new URL(request.url);
+  const customerDeliverySettings=await handleCustomerDeliveryPreferences(request,env);
+  if(customerDeliverySettings)return customerDeliverySettings;
   const helpGuide=await handleHelpSolutionRoute(request);
   if(helpGuide)return helpGuide;
   const refundDocument=await handleMerchantRefundPdf(request,env);
