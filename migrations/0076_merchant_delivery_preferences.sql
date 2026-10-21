@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS merchant_transaction_delivery_preferences (
  merchant_id TEXT PRIMARY KEY REFERENCES merchants(id) ON DELETE CASCADE,
  pdf_theme_opt_in INTEGER NOT NULL DEFAULT 0 CHECK(pdf_theme_opt_in IN(0,1)),
  customer_email_opt_in INTEGER NOT NULL DEFAULT 0 CHECK(customer_email_opt_in IN(0,1)),
+ customer_email_enabled_at TEXT,
  email_theme_opt_in INTEGER NOT NULL DEFAULT 0 CHECK(email_theme_opt_in IN(0,1)),
  receipt_mode TEXT NOT NULL DEFAULT 'SUPPLEMENT' CHECK(receipt_mode IN ('SUPPLEMENT','PRIMARY')),
  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
