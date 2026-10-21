@@ -33,14 +33,17 @@ export async function handleCustomerDeliveryPreferences(request,env){
    // Builtegrity confirmation supplements the processor receipt. PRIMARY is
    // reserved until verified suppression/replacement of processor receipts exists.
    await env.DB.prepare(`INSERT INTO merchant_transaction_delivery_preferences
-      (merchant_id,pdf_theme_opt_in,customer_email_opt_in,email_theme_opt_in,receipt_mode,updated_at)
-      VALUES(?,?,?,?,'SUPPLEMENT',CURRENT_TIMESTAMP)
+      (merchant_id,pdf_theme_opt_in,customer_email_opt_in,customer_email_enabled_at,email_theme_opt_in,receipt_mode,updated_at)
+      VALUES(?,?,?,CASE WHEN ?=1 THEN CURRENT_TIMESTAMP ELSE NULL END,?,'SUPPLEMENT',CURRENT_TIMESTAMP)
       ON CONFLICT(merchant_id) DO UPDATE SET
       pdf_theme_opt_in=excluded.pdf_theme_opt_in,
+      customer_email_enabled_at=CASE WHEN excluded.customer_email_opt_in=0 THEN NULL
+        WHEN merchant_transaction_delivery_preferences.customer_email_opt_in=0 THEN CURRENT_TIMESTAMP
+        ELSE merchant_transaction_delivery_preferences.customer_email_enabled_at END,
       customer_email_opt_in=excluded.customer_email_opt_in,
       email_theme_opt_in=excluded.email_theme_opt_in,updated_at=CURRENT_TIMESTAMP`)
       .bind(merchantId,bool(body.pdf_theme_opt_in),bool(body.customer_email_opt_in),
-         bool(body.email_theme_opt_in)).run();
+         bool(body.customer_email_opt_in),bool(body.email_theme_opt_in)).run();
  }
  const p=await env.DB.prepare('SELECT * FROM merchant_transaction_delivery_preferences WHERE merchant_id=?')
    .bind(merchantId).first();
@@ -55,13 +58,14 @@ export async function handleCustomerDeliveryPreferences(request,env){
  */
 export async function enqueueCustomerTransactionConfirmation(env,txId){
  const row=await env.DB.prepare(`SELECT t.id,t.merchant_id,t.amount_cents,t.currency,t.payment_status,
-   t.payment_at,t.processor,c.email,m.name,p.customer_email_opt_in
+   t.payment_at,t.processor,c.email,m.name,p.customer_email_opt_in,p.customer_email_enabled_at
    FROM transactions t JOIN customers c ON c.id=t.customer_id AND c.merchant_id=t.merchant_id
    JOIN merchants m ON m.id=t.merchant_id
    JOIN merchant_transaction_delivery_preferences p ON p.merchant_id=t.merchant_id
    WHERE t.id=?`).bind(txId).first();
  if(!row||!row.customer_email_opt_in||!row.payment_at||
-     !['PAID','SUCCEEDED'].includes(String(row.payment_status).toUpperCase()))return {queued:false};
+     !row.customer_email_enabled_at||Date.parse(row.payment_at)<Date.parse(row.customer_email_enabled_at)||
+     !['PAID','SUCCEEDED','COMPLETED'].includes(String(row.payment_status).toUpperCase()))return {queued:false};
  const decision=buildCustomerDeliveryDecision({preferences:{customerTransactionEmailEnabled:true},
    transaction:{id:txId,status:'succeeded'},customer:{email:row.email}});
  if(!decision.send)return {queued:false};
@@ -88,6 +92,7 @@ export async function dispatchCustomerTransactionEmails(env,{limit=8}={}){
     AND LOWER(customer.email)=LOWER(d.recipient_email)
   LEFT JOIN merchant_dashboard_appearance a ON a.merchant_id=d.merchant_id
   WHERE d.state IN ('PENDING','RETRY') AND d.attempts<4 AND p.customer_email_opt_in=1
+    AND p.customer_email_enabled_at IS NOT NULL AND datetime(t.payment_at)>=datetime(p.customer_email_enabled_at)
     AND (d.next_attempt_at IS NULL OR datetime(d.next_attempt_at)<=CURRENT_TIMESTAMP)
   ORDER BY d.created_at LIMIT ?`).bind(Math.max(1,Math.min(8,limit))).all();
  let sent=0,failed=0;
@@ -134,7 +139,9 @@ export async function enqueueEligibleCustomerTransactions(env,{limit=30}={}){
    FROM transactions t
    JOIN merchant_transaction_delivery_preferences p ON p.merchant_id=t.merchant_id
    WHERE p.customer_email_opt_in=1 AND t.payment_at IS NOT NULL
-     AND UPPER(t.payment_status) IN ('PAID','SUCCEEDED')
+     AND UPPER(t.payment_status) IN ('PAID','SUCCEEDED','COMPLETED')
+     AND p.customer_email_enabled_at IS NOT NULL
+     AND datetime(t.payment_at)>=datetime(p.customer_email_enabled_at)
      AND NOT EXISTS(
        SELECT 1 FROM customer_transaction_email_deliveries d
        WHERE d.transaction_id=t.id AND d.event_kind='PAYMENT_SUCCEEDED')
