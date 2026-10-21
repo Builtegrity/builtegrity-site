@@ -83,7 +83,11 @@ export async function dispatchCustomerTransactionEmails(env,{limit=8}={}){
  const pending=await env.DB.prepare(`SELECT d.id,d.transaction_id,d.merchant_id,d.recipient_email,
   d.event_kind,d.event_reference,p.email_theme_opt_in,p.customer_email_opt_in,
   COALESCE(a.template,'builtegrity') AS theme,m.name,t.payment_status,t.payment_at,
-  t.amount_cents,t.currency,t.created_at
+  t.amount_cents,t.currency,t.created_at,
+  (SELECT a.amount_cents FROM transaction_financial_adjustments a
+    WHERE a.id=d.event_reference AND a.merchant_id=d.merchant_id AND a.adjustment_type='REFUND' AND a.processor='STRIPE') AS stripe_refund_amount,
+  (SELECT s.amount_cents FROM square_refund_facts s
+    WHERE s.refund_id=d.event_reference AND s.transaction_id=d.transaction_id AND s.status='COMPLETED') AS square_refund_amount
   FROM customer_transaction_email_deliveries d
   JOIN merchant_transaction_delivery_preferences p ON p.merchant_id=d.merchant_id
   JOIN merchants m ON m.id=d.merchant_id
@@ -92,7 +96,8 @@ export async function dispatchCustomerTransactionEmails(env,{limit=8}={}){
     AND LOWER(customer.email)=LOWER(d.recipient_email)
   LEFT JOIN merchant_dashboard_appearance a ON a.merchant_id=d.merchant_id
   WHERE d.state IN ('PENDING','RETRY') AND d.attempts<4 AND p.customer_email_opt_in=1
-    AND p.customer_email_enabled_at IS NOT NULL AND datetime(t.payment_at)>=datetime(p.customer_email_enabled_at)
+    AND p.customer_email_enabled_at IS NOT NULL
+    AND (d.event_kind<>'PAYMENT_SUCCEEDED' OR datetime(t.payment_at)>=datetime(p.customer_email_enabled_at))
     AND (d.next_attempt_at IS NULL OR datetime(d.next_attempt_at)<=CURRENT_TIMESTAMP)
   ORDER BY d.created_at LIMIT ?`).bind(Math.max(1,Math.min(8,limit))).all();
  let sent=0,failed=0;
@@ -103,13 +108,16 @@ export async function dispatchCustomerTransactionEmails(env,{limit=8}={}){
     RETURNING id`).bind(d.id).first();
   if(!claim)continue;
   try{
-   if(!d.payment_at||!['PAID','SUCCEEDED'].includes(String(d.payment_status).toUpperCase()))
+   if(!d.payment_at||!['PAID','SUCCEEDED','COMPLETED','REFUNDED','PARTIALLY_REFUNDED'].includes(String(d.payment_status).toUpperCase()))
      throw new Error('Processor payment confirmation missing');
-   const amount=(Number(d.amount_cents)/100).toFixed(2)+' '+String(d.currency||'USD');
+   const refund=d.event_kind!=='PAYMENT_SUCCEEDED';
+   const cents=refund?(d.stripe_refund_amount??d.square_refund_amount):d.amount_cents;
+   if(cents===null||cents===undefined||!Number.isFinite(Number(cents)))throw new Error('Verified refund evidence missing');
+   const amount=(Number(cents)/100).toFixed(2)+' '+String(d.currency||'USD');
    const mail=renderTransactionEmail({preferences:{theme:d.theme,
      customerTransactionEmailEnabled:true,themeEmailEnabled:Boolean(d.email_theme_opt_in)},
-     merchant:{name:d.name},transaction:{id:d.transaction_id,status:'succeeded',
-       reference:d.transaction_id,formattedAmount:amount,formattedDate:d.payment_at},
+     merchant:{name:d.name},transaction:{id:d.transaction_id,status:refund?'refunded':'succeeded',
+       reference:d.transaction_id,formattedAmount:amount,formattedDate:refund?null:d.payment_at},
        customer:{email:d.recipient_email}});
    if(!mail)throw new Error('Recipient is not eligible');
    const res=await fetch('https://api.resend.com/emails',{method:'POST',
@@ -151,6 +159,47 @@ export async function enqueueEligibleCustomerTransactions(env,{limit=30}={}){
  for(const row of eligible.results||[]){
    const result=await enqueueCustomerTransactionConfirmation(env,row.id);
    if(result.queued)queued++;
+ }
+ return {enabled:true,queued};
+}
+
+/** Enqueue only successful recorded refund facts newer than customer-email opt-in. */
+export async function enqueueEligibleCustomerRefunds(env,{limit=30}={}){
+ if(env.CUSTOMER_TRANSACTION_EMAILS_ENABLED!=='true')return {enabled:false,queued:0};
+ const rows=await env.DB.prepare(`
+  SELECT source.* FROM (
+    SELECT a.transaction_id,a.merchant_id,a.id AS event_reference,
+      a.adjustment_at AS completed_at,c.email AS recipient_email,'REFUND_SUCCEEDED' AS event_kind
+    FROM transaction_financial_adjustments a
+    JOIN transactions t ON t.id=a.transaction_id AND t.merchant_id=a.merchant_id
+    JOIN customers c ON c.id=t.customer_id AND c.merchant_id=t.merchant_id
+    JOIN merchant_transaction_delivery_preferences p ON p.merchant_id=a.merchant_id
+    WHERE a.processor='STRIPE' AND a.adjustment_type='REFUND' AND p.customer_email_opt_in=1
+      AND p.customer_email_enabled_at IS NOT NULL
+      AND datetime(a.adjustment_at)>=datetime(p.customer_email_enabled_at)
+    UNION ALL
+    SELECT s.transaction_id,t.merchant_id,s.refund_id AS event_reference,
+      s.updated_at AS completed_at,c.email AS recipient_email,'REFUND_SUCCEEDED' AS event_kind
+    FROM square_refund_facts s
+    JOIN transactions t ON t.id=s.transaction_id AND t.processor='SQUARE'
+    JOIN customers c ON c.id=t.customer_id AND c.merchant_id=t.merchant_id
+    JOIN merchant_transaction_delivery_preferences p ON p.merchant_id=t.merchant_id
+    WHERE s.status='COMPLETED' AND p.customer_email_opt_in=1
+      AND p.customer_email_enabled_at IS NOT NULL
+      AND datetime(s.updated_at)>=datetime(p.customer_email_enabled_at)
+  ) source
+  WHERE NOT EXISTS (SELECT 1 FROM customer_transaction_email_deliveries d
+    WHERE d.transaction_id=source.transaction_id AND d.event_kind=source.event_kind
+    AND d.event_reference=source.event_reference)
+  ORDER BY source.completed_at DESC LIMIT ?`).bind(Math.min(100,Math.max(1,limit))).all();
+ let queued=0;
+ for(const row of rows.results||[]){
+  if(!row.recipient_email||!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(row.recipient_email))continue;
+  const result=await env.DB.prepare(`INSERT OR IGNORE INTO customer_transaction_email_deliveries
+    (merchant_id,transaction_id,event_kind,event_reference,recipient_email)
+    VALUES(?,?,?,?,?)`).bind(row.merchant_id,row.transaction_id,row.event_kind,
+      row.event_reference,row.recipient_email).run();
+  if(Number(result.meta?.changes||0)>0)queued++;
  }
  return {enabled:true,queued};
 }
