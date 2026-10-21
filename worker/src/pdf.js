@@ -114,11 +114,11 @@ export function refundPdfLines(refund,transaction){
   'Refund records do not prove irreversible arrival in any bank account.');
  return lines;
 }
-export function buildRefundPdf(refund,transaction){
- return createSimplePdf(refundPdfLines(refund,transaction));
+export function buildRefundPdf(refund,transaction,options={}){
+ return createSimplePdf(refundPdfLines(refund,transaction),options.branding);
 }
 
-async function merchantPdfBranding(env, merchantId) {
+export async function merchantPdfBranding(env, merchantId) {
   if (!merchantId) return null;
   const row = await env.DB.prepare(`SELECT p.pdf_theme_opt_in, a.template, m.name
     FROM merchants m
