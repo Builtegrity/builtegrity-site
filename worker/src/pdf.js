@@ -1,4 +1,5 @@
 import { transactionPdfLines } from './pdf-evidence.js';
+import { resolveDocumentBranding } from '../../transaction-engine/merchant-themed-delivery.mjs';
 import {
   completePdfRequest,
   createPdfRequest,
@@ -13,7 +14,8 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
 
   try {
     const audience = requestedByType === 'CUSTOMER_TOKEN' ? 'customer' : 'merchant';
-    const bytes = buildTransactionPdf(tx,{audience});
+    const branding = audience === 'merchant' ? await merchantPdfBranding(env, tx.merchant_id) : null;
+    const bytes = buildTransactionPdf(tx,{audience,branding});
     const digest=await crypto.subtle.digest('SHA-256',bytes);
     const version=Array.from(new Uint8Array(digest),n=>n.toString(16).padStart(2,'0')).join('');
     const objectKey=`transaction-records/${tx.id}/${audience}/${version}.pdf`;
@@ -57,7 +59,7 @@ export async function serveTransactionPdf(env, tx, requester = {}) {
 }
 
 export function buildTransactionPdf(tx,options={}) {
-  return createSimplePdf(transactionPdfLines(tx,options));
+  return createSimplePdf(transactionPdfLines(tx,options),options.branding);
 }
 
 export function refundPdfLines(refund,transaction){
@@ -112,11 +114,22 @@ export function refundPdfLines(refund,transaction){
   'Refund records do not prove irreversible arrival in any bank account.');
  return lines;
 }
-export function buildRefundPdf(refund,transaction){
- return createSimplePdf(refundPdfLines(refund,transaction));
+export function buildRefundPdf(refund,transaction,options={}){
+ return createSimplePdf(refundPdfLines(refund,transaction),options.branding);
 }
 
-function createSimplePdf(lines) {
+export async function merchantPdfBranding(env, merchantId) {
+  if (!merchantId) return null;
+  const row = await env.DB.prepare(`SELECT p.pdf_theme_opt_in, a.template, m.name
+    FROM merchants m
+    LEFT JOIN merchant_transaction_delivery_preferences p ON p.merchant_id=m.id
+    LEFT JOIN merchant_dashboard_appearance a ON a.merchant_id=m.id
+    WHERE m.id=?`).bind(merchantId).first().catch(() => null);
+  if (!row || Number(row.pdf_theme_opt_in) !== 1) return null;
+  return resolveDocumentBranding({theme:row.template || 'builtegrity',themePdfEnabled:true},{name:row.name});
+}
+
+function createSimplePdf(lines, branding = null) {
   const wrapped = lines.flatMap((line) => wrapLine(line, 92));
   const pageSize = 46;
   const pages = [];
@@ -138,7 +151,7 @@ function createSimplePdf(lines) {
     const pageId = reserve();
     pageIds.push(pageId);
 
-    const stream = pageStream(pageLines);
+    const stream = pageStream(pageLines,branding);
     set(contentId, `<< /Length ${byteLength(stream)} >>\nstream\n${stream}\nendstream`);
     set(pageId, `<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
   }
@@ -163,10 +176,13 @@ function createSimplePdf(lines) {
   return new TextEncoder().encode(pdf);
 }
 
-function pageStream(lines) {
+function pageStream(lines, branding = null) {
+  const accent = branding?.colors?.accent;
+  const rgb = accent && /^#[0-9a-f]{6}$/i.test(accent) ? [1,3,5].map(i=>(parseInt(accent.slice(i,i+2),16)/255).toFixed(3)).join(' ') : null;
   const commands = ['BT', '/F1 10 Tf', '48 744 Td', '13 TL'];
+  if(rgb) commands.push(rgb + ' rg');
   lines.forEach((line, index) => {
-    if (index > 0) commands.push('T*');
+    if (index > 0) { commands.push('T*'); if(index===1 && rgb) commands.push('0 0 0 rg'); }
     commands.push(`(${escapePdf(line)}) Tj`);
   });
   commands.push('ET');

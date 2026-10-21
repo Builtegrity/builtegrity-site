@@ -77,6 +77,17 @@ body[data-merchant-theme="plum"]{--theme-bg:#f6f0fa;--theme-surface:#fff;--theme
 <div class="appearance-preview" aria-hidden="true"><span class="color-bg"></span><span class="color-surface"></span><span class="color-accent"></span></div>
 <p id="themeStatus" class="profile-lede" role="status" aria-live="polite">Select a business to customize its dashboard.</p>
 </section>
+<section class="appearance-panel" aria-labelledby="deliveryTitle">
+<h2 id="deliveryTitle">Transaction documents & customer emails</h2>
+<p class="profile-lede">Keep Builtegrity's verified transaction evidence unchanged. Optionally match the business template on PDFs and on payment confirmation messages. Customer emails supplement your processor's normal receipt and remain off by default.</p>
+<div style="display:grid;gap:12px;margin-top:12px">
+<label><input type="checkbox" id="pdfThemeOptIn"> Lightly apply my business theme to authenticated transaction PDFs</label>
+<label><input type="checkbox" id="customerEmailOptIn"> Email customers their successful transaction information through Builtegrity</label>
+<label><input type="checkbox" id="emailThemeOptIn"> Apply my business theme to customer transaction emails</label>
+</div>
+<div class="appearance-actions"><button type="button" id="saveDeliveryPreferences">Save transaction delivery preferences</button></div>
+<p class="profile-lede" id="deliveryPreferencesStatus" role="status" aria-live="polite">Select a business to load its preferences.</p>
+</section>
 <p><a id="dashboardLink" href="/merchant/">Open my dedicated dashboard URL ↗</a></p>
 <nav class="profile-cards" aria-label="Merchant tools">
 <a class="profile-card" href="/merchant/transactions/"><strong>↗ Transactions & refunds</strong>

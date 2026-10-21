@@ -6,6 +6,48 @@ const themeStatus=document.querySelector('#themeStatus');
 const saveTheme=document.querySelector('#saveTheme');
 const allowedThemes=new Set(['builtegrity','slate','ocean','forest','sand','plum']);
 let activeMerchant=null,activeRole='VIEWER';
+const pdfThemeOptIn=document.querySelector('#pdfThemeOptIn');
+const customerEmailOptIn=document.querySelector('#customerEmailOptIn');
+const emailThemeOptIn=document.querySelector('#emailThemeOptIn');
+const saveDeliveryPreferences=document.querySelector('#saveDeliveryPreferences');
+const deliveryPreferencesStatus=document.querySelector('#deliveryPreferencesStatus');
+async function loadDeliveryPreferences(merchantId,canEdit){
+ for(const control of [pdfThemeOptIn,customerEmailOptIn,emailThemeOptIn]){
+  control.disabled=true;control.checked=false;
+ }
+ saveDeliveryPreferences.disabled=true;
+ deliveryPreferencesStatus.textContent='Loading delivery preferences…';
+ try{
+  const r=await fetch('/api/merchant/customer-delivery?merchant_id='+encodeURIComponent(merchantId),{credentials:'same-origin',cache:'no-store'});
+  const p=await r.json();
+  if(!r.ok)throw new Error(p.error||'Unable to load preferences');
+  if(activeMerchant!==merchantId)return;
+  pdfThemeOptIn.checked=!!p.pdf_theme_opt_in;
+  customerEmailOptIn.checked=!!p.customer_email_opt_in;
+  emailThemeOptIn.checked=!!p.email_theme_opt_in;
+  for(const control of [pdfThemeOptIn,customerEmailOptIn,emailThemeOptIn])control.disabled=!canEdit;
+  saveDeliveryPreferences.disabled=!canEdit;
+  deliveryPreferencesStatus.textContent=canEdit?'All delivery features default off until you turn them on.':'Only owners and admins can change delivery preferences.';
+ }catch(e){deliveryPreferencesStatus.textContent=String(e.message||e);}
+}
+customerEmailOptIn?.addEventListener('change',()=>{
+ if(!customerEmailOptIn.checked)emailThemeOptIn.checked=false;
+});
+saveDeliveryPreferences?.addEventListener('click',async()=>{
+ if(!activeMerchant||!['OWNER','ADMIN'].includes(activeRole))return;
+ saveDeliveryPreferences.disabled=true;
+ deliveryPreferencesStatus.textContent='Saving preferences…';
+ try{
+  const r=await fetch('/api/merchant/customer-delivery',{method:'PUT',credentials:'same-origin',
+   headers:{'content-type':'application/json'},
+   body:JSON.stringify({merchant_id:activeMerchant,pdf_theme_opt_in:pdfThemeOptIn.checked,
+    customer_email_opt_in:customerEmailOptIn.checked,email_theme_opt_in:emailThemeOptIn.checked})});
+  const result=await r.json();
+  if(!r.ok)throw new Error(result.error||'Unable to save preferences');
+  deliveryPreferencesStatus.textContent='Preferences saved. Customer notifications require configured live delivery before sending.';
+ }catch(e){deliveryPreferencesStatus.textContent=String(e.message||e);}
+ finally{saveDeliveryPreferences.disabled=false;}
+});
 function previewTheme(value){document.body.dataset.merchantTheme=allowedThemes.has(value)?value:'builtegrity';}
 themeSelect.addEventListener('change',()=>{previewTheme(themeSelect.value);themeStatus.textContent='Preview only — save to apply for everyone on this business.';});
 saveTheme.addEventListener('click',async()=>{
@@ -43,6 +85,7 @@ async function load(){
    const x=list.find(item=>item.id===business.value);
    if(!x)return;
    activeMerchant=x.id;activeRole=x.role;
+   loadDeliveryPreferences(x.id,['OWNER','ADMIN'].includes(x.role));
    themeSelect.value=allowedThemes.has(x.template)?x.template:'builtegrity';
    previewTheme(themeSelect.value);
    const canEdit=['OWNER','ADMIN'].includes(x.role);

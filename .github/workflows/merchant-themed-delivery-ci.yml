@@ -1,0 +1,28 @@
+name: Merchant themed delivery
+on:
+  pull_request:
+    paths:
+      - 'worker/src/customer-delivery.js'
+      - 'worker/src/pdf.js'
+      - 'worker/src/merchant-refund-pdf.js'
+      - 'worker/src/records.js'
+      - 'worker/src/runtime.js'
+      - 'transaction-engine/merchant-themed-delivery*'
+      - 'migrations/0076_merchant_delivery_preferences.sql'
+      - '.github/workflows/merchant-themed-delivery-ci.yml'
+  push:
+    branches: [main]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --check worker/src/customer-delivery.js
+      - run: node --check worker/src/pdf.js
+      - run: node --check worker/src/merchant-refund-pdf.js
+      - run: node --check worker/src/records.js
+      - run: node --check worker/src/runtime.js
+      - run: node --test transaction-engine/merchant-themed-delivery.test.mjs

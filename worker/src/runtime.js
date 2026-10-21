@@ -18,6 +18,7 @@ import { runMerchantSetupNotifications } from './merchant-setup-autopilot.js';
 import {handleVanityMerchantDashboard,merchantAdoptionMetrics} from './merchant-dashboard-adoption.js';
 import { deliverMerchantHelpRequests } from './merchant-help.js';
 import {dispatchMerchantRecordEmails} from './merchant-record-links.js';
+import {dispatchCustomerTransactionEmails,enqueueEligibleCustomerTransactions,enqueueEligibleCustomerRefunds} from './customer-delivery.js';
 import { normalizeProviderEvent, recordProviderReceipt, recordProviderResult, webhookTimingSummary } from './processor-event-delivery.js';
 import { verifyIntegritySnapshotBatch } from './integrity-verifier.js';
 import { processStripeAccountWebhook } from './stripe-account-events.js';
