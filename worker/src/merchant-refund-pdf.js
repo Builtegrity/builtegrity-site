@@ -1,4 +1,4 @@
-import {buildRefundPdf} from './pdf.js';
+import {buildRefundPdf,merchantPdfBranding} from './pdf.js';
 import {authenticateClerkSession} from './clerk-auth.js';
 import {requireMerchantMembership} from './authorization.js';
 
@@ -49,7 +49,8 @@ export async function handleMerchantRefundPdf(request,env){
   JOIN purchases p ON p.id=t.purchase_id
   WHERE t.id=? AND t.merchant_id=? LIMIT 1`).bind(refund.transaction_id,refund.merchant_id).first();
  if(!transaction)return json({error:'Original transaction unavailable'},404);
- const bytes=buildRefundPdf(refund,transaction);
+ const branding=await merchantPdfBranding(env,refund.merchant_id);
+ const bytes=buildRefundPdf(refund,transaction,{branding});
  await env.DB.prepare(`INSERT INTO merchant_pdf_access_events
     (id,merchant_id,transaction_id,refund_id,event_type,actor_id)
     VALUES(?,?,?,?,?,?)`).bind('PAE-'+crypto.randomUUID(),refund.merchant_id,
