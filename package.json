@@ -20,7 +20,7 @@
     "system:gate:live": "npm run security:secret-hygiene && npm run docs:check && node scripts/check-system-coherence.mjs --mode=live && npm run db:lineage && node scripts/check-owner-independence.mjs --mode=live"
   },
   "dependencies": {
-    "resend": "^6.9.2"
+    "resend": "^6.34.1"
   },
   "devDependencies": {
     "wrangler": "^4.0.0"
