@@ -165,7 +165,7 @@ export async function reconcileMerchantImpact(env, { limit = 100 } = {}) {
     "AND p.enabled=1 AND datetime(t.payment_at)>=datetime(p.effective_at) " +
     "AND (p.ended_at IS NULL OR datetime(t.payment_at)<datetime(p.ended_at)) " +
     "WHERE t.currency='USD' AND t.payment_at IS NOT NULL AND t.customer_paid_cents>0 " +
-    "AND LOWER(COALESCE(t.payment_status,'')) IN ('succeeded','paid','partially_refunded','refunded') " +
+    "AND LOWER(COALESCE(t.payment_status,'')) IN ('succeeded','paid','completed','partially_refunded','refunded') " +
     "AND NOT EXISTS (SELECT 1 FROM merchant_impact_commitments c WHERE c.transaction_id=t.id) " +
     "ORDER BY t.payment_at ASC,t.id ASC LIMIT ?"
   ).bind(batchLimit).all();
