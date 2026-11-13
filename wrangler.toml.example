@@ -37,6 +37,9 @@ APP_BASE_URL = "https://builtegrity.com"
 ADMIN_BASE_URL = "https://admin.builtegrity.com"
 ADMIN_HOSTNAME = "admin.builtegrity.com"
 DEV_MODE = "false"
+# Impact is entirely optional and separate from transaction billing.
+# Enable only AFTER migration 0076 is applied and staging tests pass.
+IMPACT_RECONCILIATION_ENABLED = "false"
 
 # QuickBooks Online read-only company-books adapter.
 # Register this redirect URI in the Intuit app:

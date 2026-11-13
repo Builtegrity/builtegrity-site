@@ -1,4 +1,5 @@
 import core from './index.js';
+import { handleMerchantImpactRoute, reconcileMerchantImpact } from './merchant-impact.js';
 import { authProvider, handleAuthRoute, requireOperator } from './auth.js';
 import {
   buildStripeOAuthUrl,
@@ -95,6 +96,8 @@ export default {
         }, readiness.ok ? 200 : 503);
       }
 
+      const impactResponse = await handleMerchantImpactRoute(request,env);
+      if (impactResponse) return impactResponse;
       const vanityResponse=await handleVanityMerchantDashboard(request,env);
       if(vanityResponse)return vanityResponse;
       if(path==='/api/operations/merchant-profile-adoption'&&request.method==='GET'){
@@ -430,6 +433,7 @@ export default {
     const bankRecovery = await runBankSyncRecovery(env);
     const merchantSetup = await runMerchantSetupNotifications(env);
     const merchantHelp = await deliverMerchantHelpRequests(env);
+    const merchantImpact = await reconcileMerchantImpact(env);
     const merchantRecordEmail=await dispatchMerchantRecordEmails(env);
     const financial = await monitorFinancialSafety(env, { refreshProcessorBalance: true });
     const statements = await runMonthlyStatementPipeline(env);
@@ -449,6 +453,7 @@ export default {
       merchant_self_service_notifications:merchantSetup,
       merchant_record_email:merchantRecordEmail,
       merchant_help_mail:merchantHelp,
+      merchant_impact:merchantImpact,
     });
     if(squareRecovery?.errors>0 && ['PILOT','LIVE'].includes(String(env.WATCHDOG_STAGE||'').toUpperCase())) throw new Error('Square payout reconciliation errors require review');
     if (result.status === 'FAIL' || financial.state === 'RED' || statements.generated.failed > 0 || statements.delivered.failed > 0 || taxDocuments.delivered.failed > 0) {
@@ -460,6 +465,7 @@ export default {
 function isInternalApi(path) {
   if (!path.startsWith('/api/')) return false;
   if (path.startsWith('/api/health')) return false;
+  if (path === '/api/merchant/impact' || path.startsWith('/api/merchant/impact/')) return false;
   if (path === '/api/webhooks/stripe' || path === '/api/webhooks/square') return false;
   if (path.startsWith('/api/payments/')) return false;
   if (path.startsWith('/api/records/')) return false;

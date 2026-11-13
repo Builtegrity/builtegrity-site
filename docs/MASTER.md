@@ -146,6 +146,7 @@ See `docs/provider-procurement-standard.md` before requesting quotes or enabling
 | Document | Authority | Required | Purpose |
 | --- | --- | ---: | --- |
 | [Brand System](../docs/brand-system.md) | REFERENCE | No | Current launch-shell brand reference. |
+| [Builtegrity Impact](../docs/merchant-impact.md) | RUNBOOK | No | Optional merchant-funded contribution settings, non-billable ledger, and external funding activation gates. |
 | [Comparison Model](../docs/comparison-model.md) | REFERENCE | No | Product comparison reference; non-canonical business logic. |
 
 ### Provider Setup
