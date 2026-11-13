@@ -1,0 +1,29 @@
+name: Merchant Impact isolation and schema
+on:
+  pull_request:
+    paths:
+      - 'migrations/0076_merchant_impact.sql'
+      - 'worker/src/merchant-impact.js'
+      - 'worker/src/runtime.js'
+      - 'public/merchant/impact/**'
+      - 'tests/merchant-impact*'
+      - '.github/workflows/merchant-impact-ci.yml'
+  workflow_dispatch:
+jobs:
+  impact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Validate JS syntax and contribution rules
+        run: |
+          node --check worker/src/merchant-impact.js
+          node --check worker/src/runtime.js
+          node --check public/merchant/impact/app.js
+          node --test tests/merchant-impact.test.mjs
+      - name: Check database migration, refund snapshot and isolation invariants
+        run: python3 tests/test_merchant_impact_schema.py
+      - name: Check frozen migration lineage
+        run: node scripts/check-migration-lineage.mjs
