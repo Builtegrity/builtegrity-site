@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex"><title>Builtegrity Impact · Merchant</title>
+<link rel="stylesheet" href="/styles.css">
+<style>
+main{max-width:950px;margin:auto;padding:32px 18px 80px}
+h1{font-size:clamp(30px,4vw,46px);margin:8px 0}
+.muted{opacity:.8;line-height:1.6}.panel{margin:22px 0;padding:22px;border:1px solid #cad5dc;border-radius:16px;background:#f9fbfc;color:#17283b}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(185px,1fr));gap:16px}
+label{display:block;margin-bottom:6px;font-weight:700}
+select,input,button{font:inherit;padding:10px;border:1px solid #9aafc3;border-radius:9px;max-width:100%}
+input[type="number"]{width:160px}button{background:#163c27;color:white;border-color:#163c27;cursor:pointer}
+button:disabled{opacity:.55;cursor:default}.stat{font-size:27px;font-weight:800}
+small{display:block;line-height:1.55}.row{display:flex;flex-wrap:wrap;gap:16px;align-items:end}
+table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:left;border-bottom:1px solid #dce5ee;padding:9px 6px}th{font-size:12px}
+.overflow{overflow-x:auto}#status{min-height:24px}
+</style>
+</head>
+<body><main>
+<p><a href="/merchant/">← Merchant dashboard</a></p>
+<h1>Builtegrity Impact</h1>
+<p class="muted">Optional, merchant-funded positive impact tracked alongside transaction activity. Builtegrity does not take a percentage of contributions. This feature does not modify checkout or your existing Builtegrity fees.</p>
+<section class="panel">
+<label for="merchantSelect">Business</label>
+<select id="merchantSelect"><option>Loading your businesses…</option></select>
+<p id="status" role="status" aria-live="polite"></p>
+</section>
+<section class="panel" aria-labelledby="configureTitle">
+<h2 id="configureTitle">Contribution preferences</h2>
+<p class="muted">The merchant chooses whether to participate. Changes apply only to qualifying payments made during the selected policy period, never earlier payments.</p>
+<form id="impactForm">
+<div class="row">
+<div><label for="enabled">Participation</label><select id="enabled"><option value="false">Off (default)</option><option value="true">On</option></select></div>
+<div><label for="cause">Cause</label><select id="cause"><option value="REFORESTATION">Reforestation</option><option value="CARBON_REMOVAL">Carbon removal</option><option value="COMMUNITY_RELIEF">Community relief</option></select></div>
+<div><label for="mode">Contribution calculation</label><select id="mode"><option value="BPS">Percentage of unrefunded sales</option><option value="FLAT_CENTS">Flat amount per sale</option></select></div>
+<div><label for="rate">Amount</label><input id="rate" type="number" min="0.01" max="10" step="0.01" value="0.25" required><small id="rateHelp">Percent per paid transaction (max 10%)</small></div>
+</div>
+<p><button id="save" type="submit">Save impact preferences</button></p>
+</form>
+<p id="tracking" class="muted"></p>
+</section>
+<section class="panel">
+<h2>Impact accountability</h2>
+<div class="grid">
+<div><small>Eligible transactions</small><div class="stat" id="transactions">0</div></div>
+<div><small>Tracked commitment</small><div class="stat" id="committed">$0.00</div></div>
+<div><small>Verified funding</small><div class="stat" id="funded">$0.00</div></div>
+</div>
+<p class="muted">Tracked commitments are calculations, not completed donations. Funding stays at $0 until independently verified partner receipts exist. No funds are currently collected or transmitted through this module.</p>
+</section>
+<section class="panel"><h2>Recent transaction calculations</h2><div class="overflow">
+<table><thead><tr><th>Transaction</th><th>Payment time</th><th>Cause</th><th>Customer refunds</th><th>Tracked contribution</th></tr></thead><tbody id="entries"><tr><td colspan="5">No eligible transactions yet.</td></tr></tbody></table>
+</div></section>
+</main>
+<script type="module" src="/merchant/impact/app.js"></script>
+</body></html>
